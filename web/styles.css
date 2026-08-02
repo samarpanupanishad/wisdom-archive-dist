@@ -1890,14 +1890,32 @@ body.m-mode.m-readermode .content {
   bottom: calc(64px + env(safe-area-inset-bottom));
   overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch; overflow-anchor: none;
+  /* the band's own height, reusable by children as an absolute length */
+  --mr-band: calc(100vh - (52px + env(safe-area-inset-top)) - (64px + env(safe-area-inset-bottom)));
 }
-/* Every message fills exactly one band (top panel -> bottom panel). The head is
-   one compact line and the dots are a few px, so almost the whole band belongs
-   to .pc — that is the space freed by dropping the date sub-line and the
-   "Read text" button. */
+/* Message height is deliberately NOT uniform.
+   TEXT messages fill the band exactly — their CSS columns need a definite
+   height to paginate against (see .pc-text).
+   IMAGE messages hug their scan instead. A letterpad page is ~0.72 w/h while
+   the band is ~0.58, so a full-width scan is ~120px shorter than the band;
+   forcing the block to a full band just letterboxed it with dead space above
+   and below. Hugging puts the scan directly under the subject with the dots
+   directly beneath it, and the next message peeks in below. Filling the band
+   instead would mean cropping ~19% of the width, and these scans have no blank
+   side margin to give (measured: median 0.0% left, 0.4% right) — it would cut
+   the letterhead on every page. */
 .mr-msg {
-  height: 100%; display: flex; flex-direction: column;
+  display: flex; flex-direction: column;
   padding: 6px 0 4px; border-bottom: 1px solid var(--border);
+}
+.mr-msg.mr-textmsg { height: 100%; }
+.mr-msg:not(.mr-textmsg) .pc { flex: 0 0 auto; }   /* hug the scan, don't stretch */
+/* Scans go edge to edge — on a 375px phone the width is what caps the size. */
+.mr-msg .pc-page { padding: 0; }
+.mr-msg .pc-page img {
+  width: auto; height: auto;                       /* let the aspect ratio decide */
+  max-width: 100%;
+  max-height: calc(var(--mr-band) - 52px);         /* safety net for an unusually tall page */
 }
 .mr-head { display: flex; align-items: center; gap: 8px; padding: 0 12px 4px; }
 .mr-title {

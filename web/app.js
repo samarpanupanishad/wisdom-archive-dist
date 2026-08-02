@@ -3336,19 +3336,17 @@ const MOBILE_UI = (() => {
     <aside class="m-drawer" id="m-drawer" aria-label="Menu">
       <a class="m-account" id="m-account-row" href="#/m/account"></a>
       <nav class="m-menu">
+        <a href="#/m/search"><span class="mi">🔍</span> Search By</a>
+        <a href="#/m/community"><span class="mi">💬</span> Community</a>
         <a href="#/m/special"><span class="mi">✨</span> Special Telegram Msg <span class="m-badge" data-special-badge hidden></span></a>
         <a href="#/m/letterpad"><span class="mi">✍️</span> Guru's Letterpad Msg <span class="m-badge" data-letterpad-badge hidden></span></a>
         <a href="#/m/anushthan"><span class="mi">🪔</span> Anushthan Msg</a>
-        <a href="#/m/search"><span class="mi">🔍</span> Search By</a>
-        <a href="#/m/community"><span class="mi">💬</span> Community</a>
         <a href="#/random" class="m-lucky"><span class="mi m-lucky-ico">🌟</span>
           <span class="m-lucky-text">Your Lucky Msg for Today</span>
           <span class="m-lucky-spark s1">✨</span><span class="m-lucky-spark s2">✨</span><span class="m-lucky-spark s3">⭐</span></a>
         <button class="m-menu-group" data-group="more"><span class="mi">➕</span> More <span class="m-caret">▾</span></button>
         <div class="m-submenu" data-sub="more" hidden>
-          <a href="#/?latest=1"><span class="mi">🌅</span> Today's Guru's Msg</a>
           <a href="#/favorites"><span class="mi">♥</span> Favorites</a>
-          <a href="#/browse/date"><span class="mi">📅</span> Browse by Date</a>
           <a href="#/stats"><span class="mi">📊</span> Statistics</a>
           <a href="#/m/contact"><span class="mi">✉️</span> Message to Admin</a>
           <a href="#/settings"><span class="mi">⚙️</span> Settings</a>
@@ -5103,7 +5101,10 @@ const MOBILE_UI = (() => {
     $view.replaceChildren(box);
 
     const WIN = 3;                  // messages added per extension
-    let rows = [], lo = 0, hi = 0, curArt = null, rafC = 0;
+    let rows = [], lo = 0, hi = 0, curArt = null, rafC = 0, _sig = "";
+    // Cheap identity for a row set — length plus the end ids is enough to tell
+    // "same feed" from "something published/retracted".
+    const rowsSig = (l) => l.length + ":" + (l.length ? sec.idOf(l[0]) + "|" + sec.idOf(l[l.length - 1]) : "");
 
     function build(row) {
       const v = sec.norm(row, prefLang);
@@ -5236,11 +5237,18 @@ const MOBILE_UI = (() => {
       }
     }
 
+    // An image message's height is its scan's height, and scans decode AFTER
+    // mount — so blocks above the focused one grow late and would slide it out
+    // of view. Re-anchor on each decode until the reader is handed to the user.
+    let userTook = false;
+    ["touchstart", "wheel", "keydown"].forEach((ev) =>
+      box.addEventListener(ev, () => { userTook = true; }, { passive: true, once: true }));
+
     function mount(list, focus) {
       if (!current(nav)) return;
       rows = list || [];
       curArt = null;
-      if (!rows.length) { box.innerHTML = msgHolderHtml(sec); return; }
+      if (!rows.length) { box.innerHTML = msgHolderHtml(sec); _sig = rowsSig(rows); return; }
       let idx = rows.findIndex((r) => sec.idOf(r) === focus);
       if (idx < 0) idx = 0;
       lo = Math.max(0, idx - 1);
@@ -5248,7 +5256,14 @@ const MOBILE_UI = (() => {
       box.innerHTML = "";
       insert(lo, hi, null);
       const focusEl = box.querySelectorAll(".mr-msg")[idx - lo];
-      if (focusEl) box.scrollTop = focusEl.offsetTop;
+      if (focusEl) {
+        const anchor = () => { if (!userTook && focusEl.isConnected) box.scrollTop = focusEl.offsetTop; };
+        anchor();
+        box.querySelectorAll(".pc-page img").forEach((im) => {
+          if (!im.complete) im.addEventListener("load", anchor, { once: true });
+        });
+      }
+      _sig = rowsSig(rows);
       syncCurrent();
     }
 
@@ -5258,17 +5273,24 @@ const MOBILE_UI = (() => {
     }, { passive: true });
 
     const focusNow = () => (curArt ? curArt.dataset.id : focusId);
+    // Re-mounting tears down and rebuilds the window, so only do it when the
+    // data actually moved. A no-op refresh (the common case — the index or the
+    // delta sync returning nothing new) must never yank the reader around.
+    const remountIfChanged = (list) => {
+      if (!current(nav) || rowsSig(list || []) === _sig) return;
+      mount(list, focusNow());
+    };
     mount(sec.cached(), focusId);                     // cache first — instant + offline
     sec.markSeen();
     // Same reason as the index page: the APK seed may only have landed during
     // refresh(), so a failure still re-mounts from whatever the cache now holds.
     sec.refresh()
-      .then((list) => { if (current(nav)) mount(list, focusNow()); })
-      .catch(() => { if (current(nav)) mount(sec.cached(), focusNow()); });
-    _pageLangHook = () => mount(rows, focusNow());
+      .then(remountIfChanged)
+      .catch(() => remountIfChanged(sec.cached()));
+    _pageLangHook = () => mount(rows, focusNow());    // language flip always repaints
     if (sec.subscribe) {
       _specialStream = sec.subscribe(() => sec.refresh()
-        .then((list) => { if (current(nav)) { mount(list, focusNow()); sec.markSeen(); } })
+        .then((list) => { remountIfChanged(list); sec.markSeen(); })
         .catch(() => {}));
     }
   }
