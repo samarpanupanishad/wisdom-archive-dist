@@ -1152,6 +1152,11 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
   font: 600 15px var(--sans); padding: 10px 16px; cursor: pointer;
 }
 .m-langseg button.active { background: var(--accent); color: #fff; }
+/* Greyed out when the message on screen has no English version (see
+   setEnglishAvailable in app.js) — Hindi-only posts are normal, not an error. */
+.m-langseg button:disabled, .m-langseg button.m-lang-off {
+  opacity: .35; cursor: default; background: var(--surface); color: var(--muted);
+}
 
 /* ---- drawer ---- */
 .m-scrim {
@@ -1648,7 +1653,7 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
   display: inline-block; animation: mluckytwinkle 1.9s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .m-lucky-ico, .m-lucky-text, .m-lucky-spark,
+  .m-lucky-ico, .m-lucky-text, .m-lucky-spark, .mx-thumb-txt .mx-ico, .mx-spark,
   #nav a[data-route="random"] .label, #nav a[data-route="random"] .label::after {
     animation: none !important; opacity: 1;
   }
@@ -1824,14 +1829,6 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
   display: block; column-fill: auto; padding: 0 16px;
   white-space: pre-wrap; font-size: 16px; line-height: 1.75;
 }
-.pc-arrow {
-  position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
-  width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer;
-  background: rgba(255, 255, 255, .82); color: var(--accent);
-  font: 400 24px/1 var(--sans); box-shadow: 0 2px 10px rgba(40, 30, 60, .18);
-}
-.pc-prev { left: 2px; }
-.pc-next { right: 2px; }
 .pc-count {
   margin-left: auto; flex: none; align-self: flex-start;
   background: var(--accent-soft); color: var(--accent);
@@ -1855,7 +1852,15 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
   width: 56px; height: 72px; flex: none; object-fit: cover;
   border-radius: 6px; border: 1px solid var(--border-soft); background: #faf8f4;
 }
-.mx-thumb-txt { display: flex; align-items: center; justify-content: center; font-size: 24px; }
+.mx-thumb-txt {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  font-size: 24px; overflow: visible;
+}
+.mx-thumb-txt .mx-ico { animation: mluckyswing 1.4s ease-in-out infinite; }
+.mx-spark { position: absolute; pointer-events: none; opacity: 0; font-size: 10px; }
+.mx-spark.s1 { right: 4px;  top: 7px;     animation: mluckytwinkle 1.9s ease-in-out infinite; }
+.mx-spark.s2 { left: 5px;   bottom: 10px; animation: mluckytwinkle 1.9s ease-in-out .63s infinite; }
+.mx-spark.s3 { right: 7px;  bottom: 16px; font-size: 8px; animation: mluckytwinkle 1.9s ease-in-out 1.27s infinite; }
 .mx-meta { min-width: 0; flex: 1; }
 .mx-top { color: var(--muted); font: 500 12px var(--sans); }
 .mx-new {
@@ -1886,30 +1891,22 @@ body.m-mode.m-readermode .content {
   overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch; overflow-anchor: none;
 }
+/* Every message fills exactly one band (top panel -> bottom panel). The head is
+   one compact line and the dots are a few px, so almost the whole band belongs
+   to .pc — that is the space freed by dropping the date sub-line and the
+   "Read text" button. */
 .mr-msg {
-  min-height: 100%; display: flex; flex-direction: column;
-  padding: 10px 0 16px; border-bottom: 1px solid var(--border);
+  height: 100%; display: flex; flex-direction: column;
+  padding: 6px 0 4px; border-bottom: 1px solid var(--border);
 }
-/* Text messages are pinned to exactly one band so their CSS columns have a
-   definite height to paginate against (see .pc-text). Image messages keep
-   min-height, so revealing the OCR text can grow the block. */
-.mr-msg.mr-textmsg { height: 100%; }
-.mr-head { display: flex; align-items: flex-start; gap: 8px; padding: 0 14px 8px; }
-.mr-htext { min-width: 0; flex: 1; }
-.mr-title { font: 700 16.5px var(--serif); color: var(--accent); }
-.mr-sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
-.mr-head .sp-hitag { position: static; flex: none; align-self: flex-start; }
+.mr-head { display: flex; align-items: center; gap: 8px; padding: 0 12px 4px; }
+.mr-title {
+  font: 700 16px var(--serif); color: var(--accent); min-width: 0; flex: 1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mr-head .sp-hitag { position: static; flex: none; }
 .mr-msg .pc { flex: 1; min-height: 0; }
-.mr-foot { flex: none; }
-.mr-textbtn {
-  display: block; margin: 6px auto 0; border: 1px solid var(--border);
-  background: var(--surface); color: var(--accent);
-  font: 600 13px var(--sans); padding: 6px 16px; border-radius: 999px; cursor: pointer;
-}
-.mr-text {
-  white-space: pre-wrap; font-size: 15px; line-height: 1.7;
-  margin: 10px 14px 0; padding-top: 10px; border-top: 1px solid var(--border-soft);
-}
+.mr-msg .pc-dots { flex: none; padding: 5px 0 2px; }
 /* Reader panel: back + date group left, the actions stay right. */
 body.m-mode.m-readermode .m-vpanel { justify-content: flex-start; }
 body.m-mode.m-readermode .m-vpanel .m-vacts { margin-left: auto; }

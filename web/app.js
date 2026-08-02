@@ -177,7 +177,7 @@ const NAV = [
   { route: "favorites", label: "Favorites", hash: "#/favorites", icon: "heart" },
   { route: "browse-date", label: "Browse by Date", hash: "#/browse/date", icon: "calendar" },
   { route: "random", label: "Your Lucky Msg for Today", hash: "#/random", icon: "shuffle" },
-  { route: "special", label: "Special Messages", hash: "#/special", icon: "spark" },
+  { route: "special", label: "Special Telegram Messages", hash: "#/special", icon: "spark" },
   { route: "letterpad", label: "Guru's Letterpad Messages", hash: "#/letterpad", icon: "letter" },
   { divider: true },
   { route: "admin", label: "Add Guru's Msg", hash: "#/admin", icon: "upload" },
@@ -2800,8 +2800,11 @@ document.addEventListener("click", (e) => {
 //            scrollLeft = k·W frames it perfectly. Multicol has no element
 //            snap targets, so text mode settles with a JS snap instead.
 //
+// Paging is by SWIPE only (plus the dots) - there are deliberately no arrow
+// buttons overlaying the page.
+//
 // Expects, anywhere inside `root`: .pc-track (required), and optionally
-// .pc-count ("2/5"), .pc-dots, .pc-prev, .pc-next.
+// .pc-count ("2/5") and .pc-dots.
 // ==========================================================================
 let hapticTickHook = () => {};   // set by MOBILE_UI; no-op in the browser shell
 
@@ -2812,8 +2815,6 @@ function wireCarousel(root, opts) {
   const isText = track.classList.contains("pc-text");
   const count = root.querySelector(".pc-count");
   const dots = root.querySelector(".pc-dots");
-  const prev = root.querySelector(".pc-prev");
-  const next = root.querySelector(".pc-next");
   const fixed = o.pages || 0;              // known up front in image mode
   const PAD = o.pad == null ? 16 : o.pad;  // must match .pc-text's CSS padding
   const MAX_DOTS = 12;                     // beyond this the dots row is noise
@@ -2843,8 +2844,6 @@ function wireCarousel(root, opts) {
       dots.hidden = !dots.children.length;
       [...dots.children].forEach((d, i) => d.classList.toggle("on", i === cur));
     }
-    if (prev) prev.hidden = n < 2 || cur === 0;
-    if (next) next.hidden = n < 2 || cur >= n - 1;
     if (was !== cur && o.onPage) o.onPage(cur, n);
     return was !== cur;
   }
@@ -2864,8 +2863,6 @@ function wireCarousel(root, opts) {
     }, 150);
   }, { passive: true });
 
-  if (prev) prev.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); goTo(cur - 1); });
-  if (next) next.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); goTo(cur + 1); });
   if (dots) dots.addEventListener("click", (e) => {
     const d = e.target.closest("[data-p]"); if (!d) return;
     e.preventDefault(); e.stopPropagation(); goTo(+d.dataset.p);
@@ -3053,14 +3050,14 @@ let _specialStream = null;
 function closeSpecialStream() { if (_specialStream) { try { _specialStream.close(); } catch {} _specialStream = null; } }
 
 const SPECIAL_EMPTY_MSG =
-  "No special messages yet. New messages from Baba Swami will appear here.";
+  "No special telegram messages yet. New messages from Baba Swami will appear here.";
 
 async function renderSpecial() {
   const nav = _nav;
   let painter = null;
   const paint = (rows) => {
     if (!current(nav)) return;
-    $view.innerHTML = `<div class="sp-page"><h2 class="sp-head">✨ Special Messages</h2>
+    $view.innerHTML = `<div class="sp-page"><h2 class="sp-head">✨ Special Telegram Messages</h2>
       <div class="sp-list"></div></div>`;
     const list = $view.querySelector(".sp-list");
     if (!rows.length) { list.innerHTML = `<div class="empty">${SPECIAL_EMPTY_MSG}</div>`; return; }
@@ -3073,7 +3070,7 @@ async function renderSpecial() {
     // Offline / not set up yet: the cache (or the empty state) is already
     // painted; only surface the error when there's nothing at all to show.
     if (current(nav) && !SPECIAL.cached().length) {
-      $view.innerHTML = `<div class="sp-page"><h2 class="sp-head">✨ Special Messages</h2>
+      $view.innerHTML = `<div class="sp-page"><h2 class="sp-head">✨ Special Telegram Messages</h2>
         <div class="empty">${escapeHtml(err.message)}</div></div>`;
     }
   }
@@ -3228,11 +3225,7 @@ function letterpadCardHtml(m, lang) {
         ${toggle}
         <div class="pc-count" hidden></div>
       </div>
-      <div class="lp-pages pc">
-        <div class="pc-track">${imgs}</div>
-        <button class="pc-arrow pc-prev" type="button" hidden aria-label="Previous page">‹</button>
-        <button class="pc-arrow pc-next" type="button" hidden aria-label="Next page">›</button>
-      </div>
+      <div class="lp-pages pc"><div class="pc-track">${imgs}</div></div>
       <div class="pc-dots" hidden></div>
       ${body ? `<details class="lp-text"><summary>Read text</summary><div class="lp-body">${escapeHtml(body)}</div></details>` : ""}
     </article>`;
@@ -3343,14 +3336,11 @@ const MOBILE_UI = (() => {
     <aside class="m-drawer" id="m-drawer" aria-label="Menu">
       <a class="m-account" id="m-account-row" href="#/m/account"></a>
       <nav class="m-menu">
+        <a href="#/m/special"><span class="mi">✨</span> Special Telegram Msg <span class="m-badge" data-special-badge hidden></span></a>
+        <a href="#/m/letterpad"><span class="mi">✍️</span> Guru's Letterpad Msg <span class="m-badge" data-letterpad-badge hidden></span></a>
+        <a href="#/m/anushthan"><span class="mi">🪔</span> Anushthan Msg</a>
         <a href="#/m/search"><span class="mi">🔍</span> Search By</a>
         <a href="#/m/community"><span class="mi">💬</span> Community</a>
-        <button class="m-menu-group" data-group="other"><span class="mi">🗂️</span> Other Messages <span class="m-menudot m-dot-inline" data-anymsg-dot hidden></span><span class="m-caret">▾</span></button>
-        <div class="m-submenu" data-sub="other" hidden>
-          <a href="#/m/anushthan"><span class="mi">🪔</span> Anushthan Msg</a>
-          <a href="#/m/special"><span class="mi">✨</span> Special Msg <span class="m-badge" data-special-badge hidden></span></a>
-          <a href="#/m/letterpad"><span class="mi">✍️</span> Guru's Letterpad Msg <span class="m-badge" data-letterpad-badge hidden></span></a>
-        </div>
         <a href="#/random" class="m-lucky"><span class="mi m-lucky-ico">🌟</span>
           <span class="m-lucky-text">Your Lucky Msg for Today</span>
           <span class="m-lucky-spark s1">✨</span><span class="m-lucky-spark s2">✨</span><span class="m-lucky-spark s3">⭐</span></a>
@@ -3478,7 +3468,7 @@ const MOBILE_UI = (() => {
       if (perm.receive !== "granted") { _pdiag({ result: "permission not granted" }); return; }
       try {
         await Push.createChannel({
-          id: "special_messages", name: "Special Messages",
+          id: "special_messages", name: "Special Telegram Messages",
           description: "New messages from Baba Swami", importance: 5, visibility: 1,
         });
         _pdiag({ channel: "created" });
@@ -3972,6 +3962,20 @@ const MOBILE_UI = (() => {
   function setActiveList(ids, index) { _activeList = { ids: ids.slice(), index }; }
   function paintLang(lang) {
     $("m-langseg").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.lang === lang));
+  }
+  // Grey out the bottom bar's English button when the message on screen has no
+  // English version — several Telegram posts are Hindi-only (permanently so for
+  // pre-2020 history), and offering a toggle that silently shows Hindi anyway
+  // reads as a bug. Reset to available on every route change (see route()), so
+  // the restriction can never leak onto the daily feed.
+  function setEnglishAvailable(ok) {
+    const b = $("m-langseg").querySelector('button[data-lang="en"]');
+    if (!b) return;
+    b.disabled = !ok;
+    b.classList.toggle("m-lang-off", !ok);
+    // Already reading in English? Fall back to Hindi so the bar and the page
+    // can't disagree about what is being shown.
+    if (!ok && prefLang === "en") applyLangToFeed("hi", false);
   }
   function applyLangToFeed(l, animate) {
     // Language toggle is a page-flip too — play the same flip sound, but only
@@ -4952,7 +4956,7 @@ const MOBILE_UI = (() => {
   const MSG_SECTIONS = {
     special: {
       key: "special", icon: "✨",
-      title: "Special Message", listTitle: "Special Messages", hindi: "विशेष संदेश",
+      title: "Special Telegram Message", listTitle: "Special Telegram Messages", hindi: "विशेष संदेश",
       emptyMsg: SPECIAL_EMPTY_MSG,
       idOf: (r) => String(r.id),
       cached: () => SPECIAL.cached(),
@@ -4975,9 +4979,9 @@ const MOBILE_UI = (() => {
         const date = (r.posted_at || r.created_at || "").slice(0, 10) || r.msg_date || "";
         return {
           id: String(r.id), date, title: title || "",
-          sub: date ? fmtDate(date) : "",
           pages: null,
           text: [body || "", foot].filter(Boolean).join("\n\n"),
+          hasEn: !!r.body_en,          // gates the bottom-bar English toggle
           hiTag: en && !r.body_en,
           shareCaption: [title, body, foot].filter(Boolean).join("\n\n"),
         };
@@ -5002,13 +5006,12 @@ const MOBILE_UI = (() => {
         const pages = useEn ? m.pages_en : (m.pages_hi.length ? m.pages_hi : m.pages_en);
         const title = useEn ? (m.title_en || m.title_hi) : (m.title_hi || m.title_en);
         const body = useEn ? (m.body_en || m.body_hi) : (m.body_hi || m.body_en);
-        const sig = m.signature_date && m.signature_date !== m.date ? fmtDate(m.signature_date) : "";
         return {
           id: m.id, date: m.date,
           title: (title || "").replace(/\n/g, " · "),
-          sub: [m.date ? fmtDate(m.date) : "", sig ? "संदेश तिथि " + sig : ""].filter(Boolean).join(" · "),
           pages: pages.map((p) => LETTERPAD.imgUrl(p)),
           text: body || "",
+          hasEn: !!m.pages_en.length,  // gates the bottom-bar English toggle
           hiTag: lang === "en" && !m.pages_en.length,
           shareCaption: [title, body].filter(Boolean).join("\n\n"),
         };
@@ -5028,9 +5031,12 @@ const MOBILE_UI = (() => {
     const v = sec.norm(r, prefLang);
     const fresh = sec.isNew(r, seenMark);
     const np = v.pages ? v.pages.length : 0;
+    // Image sections show the first page; text sections show their glyph — and
+    // Special Telegram Msg twinkles it, the same treatment as "Your Lucky Msg".
     const thumb = np
       ? `<img class="mx-thumb" src="${v.pages[0]}" loading="lazy" decoding="async" alt="">`
-      : `<div class="mx-thumb mx-thumb-txt">${sec.icon}</div>`;
+      : `<div class="mx-thumb mx-thumb-txt"><span class="mx-ico">${sec.icon}</span>` +
+        `<span class="mx-spark s1">✨</span><span class="mx-spark s2">✨</span><span class="mx-spark s3">⭐</span></div>`;
     const prev = (v.text || "").replace(/\s+/g, " ").slice(0, 140);
     return `<a class="mx-row" href="#/m/${sec.key}/${encodeURIComponent(v.id)}">
         ${thumb}
@@ -5105,30 +5111,24 @@ const MOBILE_UI = (() => {
         ? `<div class="pc-track">${v.pages.map((u, i) =>
             `<div class="pc-page"><img src="${u}" loading="${i ? "lazy" : "eager"}" decoding="async" alt="page ${i + 1}"></div>`).join("")}</div>`
         : `<div class="pc-track pc-text">${escapeHtml(v.text || "")}</div>`;
-      const hasText = !!(v.pages && v.pages.length && v.text);
       // .mr-textmsg pins the message to exactly one band tall. That has to be
       // in place BEFORE the carousel measures: text pagination is `column-fill:
       // auto` against a definite height, and a message free to grow would just
       // render one very tall column instead of paging.
+      //
+      // The head carries ONLY the title and the n/N counter. The date already
+      // shows in the top panel's pill, and there is no "Read text" button —
+      // that reclaimed height goes to the message itself, which is the point of
+      // a full-screen reader. Paging is by swipe (and the dots); there are no
+      // arrow buttons overlaying the page.
       const art = el(`<article class="mr-msg${v.pages ? "" : " mr-textmsg"}" data-id="${escapeHtml(v.id)}">
           <div class="mr-head">
-            <div class="mr-htext">
-              <div class="mr-title">${escapeHtml(v.title || sec.title)}</div>
-              <div class="mr-sub">${escapeHtml(v.sub || "")}</div>
-            </div>
+            <div class="mr-title">${escapeHtml(v.title || sec.title)}</div>
             ${v.hiTag ? `<span class="sp-hitag">हिंदी</span>` : ""}
             <div class="pc-count" hidden></div>
           </div>
-          <div class="pc">
-            ${track}
-            <button class="pc-arrow pc-prev" type="button" hidden aria-label="Previous page">‹</button>
-            <button class="pc-arrow pc-next" type="button" hidden aria-label="Next page">›</button>
-          </div>
-          <div class="mr-foot">
-            <div class="pc-dots" hidden></div>
-            ${hasText ? `<button class="mr-textbtn" type="button">Read text</button>` : ""}
-          </div>
-          ${hasText ? `<div class="mr-text" hidden>${escapeHtml(v.text)}</div>` : ""}
+          <div class="pc">${track}</div>
+          <div class="pc-dots" hidden></div>
         </article>`);
       art._view = v;
       return art;
@@ -5148,12 +5148,6 @@ const MOBILE_UI = (() => {
           if (im) enterZoom(im.currentSrc || im.src);
         });
       }
-      const tb = art.querySelector(".mr-textbtn");
-      if (tb) tb.addEventListener("click", () => {
-        const t = art.querySelector(".mr-text");
-        t.hidden = !t.hidden;
-        tb.textContent = t.hidden ? "Read text" : "Hide text";
-      });
     }
 
     // The top panel always describes the message you're actually looking at,
@@ -5169,6 +5163,7 @@ const MOBILE_UI = (() => {
       const dEl = $("m-panel-date");
       dEl.textContent = v.date ? dpPillText(v.date) : sec.title;
       dEl.onclick = () => go("#/m/" + sec.key);        // the pill jumps back to the index
+      setEnglishAvailable(!!v.hasEn);                  // Hindi-only post → English toggle off
 
       const favId = sec.key + ":" + v.id;              // namespaced — `wa:favorites` is shared with the archive
       const fav = $("m-panel-fav");
@@ -5368,6 +5363,7 @@ const MOBILE_UI = (() => {
       exitZoom();
       closeChatStream();
       _pageLangHook = null;
+      setEnglishAvailable(true);   // any per-message gating belongs to the page we're leaving
       // Leaving the Search By flow for anywhere except a result's detail page
       // (or staying within search itself) clears the remembered query/results.
       const preserveSearch = seg[0] === "entry" || (seg[0] === "m" && seg[1] === "search");
@@ -5396,6 +5392,7 @@ const MOBILE_UI = (() => {
       closeDrawer();
       exitZoom();
       _pageLangHook = null;
+      setEnglishAvailable(true);
       _feedCards = [];
       setChrome("page", PAGE_TITLES[seg[0]] || "Samarpan Upnishad", null);
     },
