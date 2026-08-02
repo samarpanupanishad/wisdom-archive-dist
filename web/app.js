@@ -3973,21 +3973,20 @@ const MOBILE_UI = (() => {
   // Text zoom - Special Telegram messages. Same shell, same rocker, same exit;
   // the rocker drives FONT SIZE and the whole message scrolls vertically as one
   // column (no pages in here - at large sizes paging would fragment it badly).
-  // The chosen size is remembered, like the other Display preferences.
-  const ZOOM_TEXT_KEY = "wa:mobile:textZoom";
+  // Always opens at 50% (= 22px), exactly like the image zoom — the size is
+  // deliberately NOT remembered, so both zooms start from the same place every
+  // time and there is only one behaviour to learn.
   const zTextPx = (v) => Math.round(12 + v * 0.20);       // 0->12px  50->22px  100->32px
   function enterTextZoom(title, body) {
-    const startV = Math.max(0, Math.min(100, parseInt(pref(ZOOM_TEXT_KEY, "50"), 10) || 50));
     const z = buildZoomShell(
       `<div class="m-ztext">` +
         (title ? `<div class="m-zt-title">${escapeHtml(title)}</div>` : "") +
         `<div class="m-zt-body">${escapeHtml(body || "")}</div>` +
       `</div>`,
-      startV,
+      50,
       (v) => {
         const t = zoomWrap && zoomWrap.querySelector(".m-ztext");
         if (t) t.style.fontSize = zTextPx(v) + "px";
-        setPref(ZOOM_TEXT_KEY, String(Math.round(v)));
       });
     // Marker class rather than :has() — the view has to scroll and top-align
     // instead of the image view's centred, pan-driven behaviour.
