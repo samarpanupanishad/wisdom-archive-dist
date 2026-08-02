@@ -3851,15 +3851,27 @@ const MOBILE_UI = (() => {
     document.body.classList.remove("m-zoom");
     return true;
   }
-  function enterZoom(imgSrc) {
+  // ---- zoom shell (shared) ------------------------------------------------
+  // The dark overlay + the edge "volume rocker" that EVERY zoom in the app
+  // presents: daily msg, letterpad scans, and Special Telegram text. One
+  // gesture to learn - double-tap in, drag the rocker (or pinch), tap out - so
+  // nothing behaves differently between sections.
+  //
+  // Only what the rocker DRIVES differs. For an image it is scale + pan. For
+  // text it is FONT SIZE: scaling live text the way we scale a bitmap would
+  // push every line off the right edge and force sideways panning to read, so
+  // text is enlarged and REFLOWED instead. Same controls, right behaviour.
+  //
+  // The caller supplies the view markup and an onValue() that turns the 0-100
+  // rocker value into whatever "zoom" means for it.
+  function buildZoomShell(viewHtml, startV, onValue) {
     exitZoom();
     document.body.classList.add("m-zoom");
     const side = pref("wa:mobile:zoomBarSide", "right");
-    // Compact volume-rocker capsule (bottom = thumbnail, mid tick = normal,
-    // top = max), fill rises from the bottom. Sits low on the right edge and
-    // auto-hides ~2s after the last interaction.
+    // Compact volume-rocker capsule (bottom = smallest, mid tick = normal, top
+    // = max), fill rises from the bottom. Auto-hides ~2s after the last touch.
     zoomWrap = el(`<div class="m-zoomwrap${side === "left" ? " m-left" : ""}">
-      <div class="m-zoomview"><img src="${imgSrc}" alt="" draggable="false"></div>
+      <div class="m-zoomview">${viewHtml}</div>
       <div class="m-zoombar m-hidden">
         <div class="m-zb-track"><div class="m-zb-fill"></div></div>
         <div class="m-zb-mid"></div>
@@ -3868,26 +3880,19 @@ const MOBILE_UI = (() => {
       </div>
     </div>`);
     document.body.appendChild(zoomWrap);
-    const img = zoomWrap.querySelector("img");
     const view = zoomWrap.querySelector(".m-zoomview");
     const bar = zoomWrap.querySelector(".m-zoombar");
     const fill = zoomWrap.querySelector(".m-zb-fill");
     const knob = zoomWrap.querySelector(".m-zb-knob");
     const badge = zoomWrap.querySelector(".m-zb-badge");
-    let v = 50, tx = 0, ty = 0;
+    let v = startV;
     const apply = () => {
-      const s = zScale(v);
-      const mx = Math.max(0, (img.clientWidth * s - view.clientWidth) / 2);
-      const my = Math.max(0, (img.clientHeight * s - view.clientHeight) / 2);
-      tx = Math.min(mx, Math.max(-mx, tx)); ty = Math.min(my, Math.max(-my, ty));
-      img.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
       fill.style.height = v + "%";
       knob.style.bottom = v + "%";
       badge.style.bottom = v + "%";
       badge.textContent = Math.round(v) + "%";
+      onValue(v);
     };
-    img.addEventListener("load", apply);
-    apply();
 
     // --- auto-hide (fades out ~2s after the last interaction)
     let hideTimer = null;
@@ -3897,6 +3902,7 @@ const MOBILE_UI = (() => {
       hideTimer = setTimeout(() => bar.classList.add("m-hidden"), 2000);
     };
     const hideBar = () => { clearTimeout(hideTimer); bar.classList.add("m-hidden"); };
+    const toggleBar = () => { if (bar.classList.contains("m-hidden")) showBar(); else hideBar(); };
 
     // --- capsule drag (with a light snap + haptic tick at the 50 = normal mark)
     let snapped = false;
@@ -3915,33 +3921,92 @@ const MOBILE_UI = (() => {
     bar.addEventListener("mousedown", (e) => {
       e.preventDefault(); badge.classList.add("on"); setFromY(e.clientY);
       const mv = (ev) => setFromY(ev.clientY);
-      const up = () => { badge.classList.remove("on"); showBar(); window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
+      const up = () => { badge.classList.remove("on"); window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); showBar(); };
       window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
     });
+
+    return {
+      view, bar, apply, showBar, hideBar, toggleBar,
+      value: () => v,
+      setValue: (nv) => { v = Math.max(0, Math.min(100, nv)); apply(); },
+    };
+  }
+
+  // Image zoom - daily msg + letterpad scans. Scale + one-finger pan.
+  function enterZoom(imgSrc) {
+    const z = buildZoomShell(`<img src="${imgSrc}" alt="" draggable="false">`, 50, () => applyImg());
+    const view = z.view, img = view.querySelector("img");
+    let tx = 0, ty = 0;
+    function applyImg() {
+      const s = zScale(z.value());
+      const mx = Math.max(0, (img.clientWidth * s - view.clientWidth) / 2);
+      const my = Math.max(0, (img.clientHeight * s - view.clientHeight) / 2);
+      tx = Math.min(mx, Math.max(-mx, tx)); ty = Math.min(my, Math.max(-my, ty));
+      img.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+    }
+    img.addEventListener("load", applyImg);
+    z.apply();
 
     // --- one-finger pan, two-finger pinch
     let p0 = null, pinch0 = null;
     view.addEventListener("touchstart", (e) => {
       if (e.touches.length === 1) { p0 = { x: e.touches[0].clientX, y: e.touches[0].clientY }; pinch0 = null; }
-      else if (e.touches.length === 2) { pinch0 = { d: tDist(e.touches), v }; p0 = null; }
+      else if (e.touches.length === 2) { pinch0 = { d: tDist(e.touches), v: z.value() }; p0 = null; }
     }, { passive: true });
     view.addEventListener("touchmove", (e) => {
       if (e.touches.length === 1 && p0) {
         tx += e.touches[0].clientX - p0.x; ty += e.touches[0].clientY - p0.y;
         p0 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        apply();
+        applyImg();
       } else if (e.touches.length === 2 && pinch0) {
-        v = Math.max(0, Math.min(100, zValue(zScale(pinch0.v) * tDist(e.touches) / pinch0.d)));
-        apply(); showBar();
+        z.setValue(zValue(zScale(pinch0.v) * tDist(e.touches) / pinch0.d));
+        z.showBar();
       }
     }, { passive: true });
     view.addEventListener("touchend", (e) => { if (!e.touches.length) { p0 = null; pinch0 = null; } }, { passive: true });
 
     // Double-tap exits zoom; a single tap on the image toggles the bar.
-    wireDoubleTap(view, exitZoom, () => {
-      if (bar.classList.contains("m-hidden")) showBar(); else hideBar();
-    });
-    showBar();   // visible on entry, then auto-hides
+    wireDoubleTap(view, exitZoom, z.toggleBar);
+    z.showBar();   // visible on entry, then auto-hides
+  }
+
+  // Text zoom - Special Telegram messages. Same shell, same rocker, same exit;
+  // the rocker drives FONT SIZE and the whole message scrolls vertically as one
+  // column (no pages in here - at large sizes paging would fragment it badly).
+  // The chosen size is remembered, like the other Display preferences.
+  const ZOOM_TEXT_KEY = "wa:mobile:textZoom";
+  const zTextPx = (v) => Math.round(12 + v * 0.20);       // 0->12px  50->22px  100->32px
+  function enterTextZoom(title, body) {
+    const startV = Math.max(0, Math.min(100, parseInt(pref(ZOOM_TEXT_KEY, "50"), 10) || 50));
+    const z = buildZoomShell(
+      `<div class="m-ztext">` +
+        (title ? `<div class="m-zt-title">${escapeHtml(title)}</div>` : "") +
+        `<div class="m-zt-body">${escapeHtml(body || "")}</div>` +
+      `</div>`,
+      startV,
+      (v) => {
+        const t = zoomWrap && zoomWrap.querySelector(".m-ztext");
+        if (t) t.style.fontSize = zTextPx(v) + "px";
+        setPref(ZOOM_TEXT_KEY, String(Math.round(v)));
+      });
+    // Marker class rather than :has() — the view has to scroll and top-align
+    // instead of the image view's centred, pan-driven behaviour.
+    z.view.classList.add("m-zt-view");
+    z.apply();
+    // Two-finger pinch resizes the text too, so the gesture matches the image
+    // zoom. One finger is left alone - it scrolls the message.
+    let pinch0 = null;
+    z.view.addEventListener("touchstart", (e) => {
+      pinch0 = e.touches.length === 2 ? { d: tDist(e.touches), v: z.value() } : null;
+    }, { passive: true });
+    z.view.addEventListener("touchmove", (e) => {
+      if (e.touches.length !== 2 || !pinch0) return;
+      z.setValue(pinch0.v + (tDist(e.touches) / pinch0.d - 1) * 60);
+      z.showBar();
+    }, { passive: true });
+    z.view.addEventListener("touchend", (e) => { if (!e.touches.length) pinch0 = null; }, { passive: true });
+    wireDoubleTap(z.view, exitZoom, z.toggleBar);
+    z.showBar();
   }
 
   // ---- language toggle (bottom bar) → flips every mounted feed card -----
@@ -5143,11 +5208,18 @@ const MOBILE_UI = (() => {
         pages: imgs.length,          // 0 → measured (text mode)
         onPage: () => { if (art === curArt) wirePanel(art); },
       });
+      // Double-tap zooms, exactly as it does on the daily msg — image sections
+      // open the page scan, text sections open the message enlarged (see
+      // enterTextZoom). Same gesture everywhere; wireDoubleTap ignores drags,
+      // so a horizontal page swipe never triggers it.
+      const track = art.querySelector(".pc-track");
       if (imgs.length) {
-        wireDoubleTap(art.querySelector(".pc-track"), () => {
+        wireDoubleTap(track, () => {
           const im = imgs[Math.min(imgs.length - 1, art._car ? art._car.page() : 0)];
           if (im) enterZoom(im.currentSrc || im.src);
         });
+      } else if (v.text) {
+        wireDoubleTap(track, () => enterTextZoom(v.title, v.text));
       }
     }
 
