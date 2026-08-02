@@ -47,14 +47,20 @@ function thumbImg(e) { return e && e.thumb_url ? `<img class="thumb" src="${e.th
 const store = {
   favs() { try { return JSON.parse(localStorage.getItem("wa:favorites") || "[]"); } catch { return []; } },
   isFav(id) { return store.favs().includes(String(id)); },
-  toggleFav(id) { id = String(id); let f = store.favs(); f = f.includes(id) ? f.filter((x) => x !== id) : [id, ...f]; localStorage.setItem("wa:favorites", JSON.stringify(f)); return f.includes(id); },
+  // Favourites + notes are the only data with no server-side copy, so every
+  // mutation schedules a debounced cloud backup (no-op when signed out — see
+  // backupUserData). Hooked here rather than at each call site so no future
+  // caller can silently skip it.
+  toggleFav(id) { id = String(id); let f = store.favs(); f = f.includes(id) ? f.filter((x) => x !== id) : [id, ...f]; localStorage.setItem("wa:favorites", JSON.stringify(f)); backupUserData(); return f.includes(id); },
   lastViewed() { try { return localStorage.getItem("wa:lastViewed") || ""; } catch { return ""; } },
   setLastViewed(id) { try { if (id) localStorage.setItem("wa:lastViewed", String(id)); } catch {} },
   comments(id) { try { return JSON.parse(localStorage.getItem("wa:comments:" + id) || "[]"); } catch { return []; } },
-  addComment(id, text) { const l = store.comments(id); l.unshift({ text, ts: Date.now() }); localStorage.setItem("wa:comments:" + id, JSON.stringify(l)); },
-  deleteComment(id, ts) { localStorage.setItem("wa:comments:" + id, JSON.stringify(store.comments(id).filter((c) => c.ts !== ts))); },
+  addComment(id, text) { const l = store.comments(id); l.unshift({ text, ts: Date.now() }); localStorage.setItem("wa:comments:" + id, JSON.stringify(l)); backupUserData(); },
+  deleteComment(id, ts) { localStorage.setItem("wa:comments:" + id, JSON.stringify(store.comments(id).filter((c) => c.ts !== ts))); backupUserData(); },
   token() { try { return localStorage.getItem("wa:token") || ""; } catch { return ""; } },
-  setToken(t) { try { if (t) localStorage.setItem("wa:token", t); else localStorage.removeItem("wa:token"); } catch {} },
+  // Signing out re-arms the restore-before-backup gate, so the next account to
+  // sign in on this device merges down before anything is pushed up.
+  setToken(t) { try { if (t) { localStorage.setItem("wa:token", t); } else { localStorage.removeItem("wa:token"); _userDataReady = false; } } catch {} },
 };
 
 // Bearer header for the local admin-upload endpoints (harmless if unset; the
@@ -136,6 +142,9 @@ async function initAuthState() {
     const d = await WA.me();
     store.setToken(d.token);
     try { localStorage.setItem("wa:user", JSON.stringify(d.user)); } catch {}
+    // Restore-then-back-up favourites/notes for an already-signed-in session.
+    // This is what makes a storage-wiped device get its saved messages back.
+    syncUserData();
   } catch {
     store.setToken(""); try { localStorage.removeItem("wa:user"); } catch {}
   }
@@ -182,7 +191,8 @@ function buildNav() {
   const nav = document.getElementById("nav"); nav.innerHTML = "";
   NAV.forEach((it) => {
     if (it.divider) { nav.appendChild(el(`<div class="divider"></div>`)); return; }
-    const badge = it.route === "special" ? `<span class="nav-badge" data-special-badge hidden></span>` : "";
+    const badge = it.route === "special" ? `<span class="nav-badge" data-special-badge hidden></span>`
+      : it.route === "letterpad" ? `<span class="nav-badge" data-letterpad-badge hidden></span>` : "";
     nav.appendChild(el(`<a href="${it.hash}" data-route="${it.route}"${it.modOnly ? ' class="mod-only"' : ""}><span class="ico">${icon(it.icon)}</span><span class="label">${it.label}</span>${badge}</a>`));
   });
 }
@@ -280,6 +290,88 @@ function applyFavState(id, on) {
 }
 // Toggle a favorite from anywhere, then sync every copy of its state.
 function toggleFavFor(id) { const on = store.toggleFav(String(id)); applyFavState(id, on); return on; }
+
+// ==========================================================================
+// PERSONAL DATA BACKUP — favourites + notes → Supabase (`user_data`).
+//
+// Every other section survives a wiped device: the daily archive, letterpad
+// and special messages are bundled in the APK and/or re-syncable. Favourites
+// and notes exist ONLY in localStorage, so Android's "Clear storage" (which no
+// app can opt out of) or a replaced phone destroys them for good. For
+// signed-in users this keeps an off-device copy.
+//
+// MERGE, never overwrite. Signing in on a second device — or restoring a wiped
+// one that still had some local data — must not delete anything from either
+// side, and there is no reliable per-item clock to arbitrate with. So:
+//   favourites → set union
+//   notes      → per wisdom id, union of entries deduped by `ts`
+// The cost is that an un-favourite made on one device can be resurrected by
+// another that never saw it. That is the right trade here: silently losing a
+// devotee's saved messages is far worse than an occasional stale one coming
+// back, which they can simply remove again.
+// ==========================================================================
+const NOTE_PREFIX = "wa:comments:";
+function allLocalNotes() {
+  const out = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(NOTE_PREFIX)) continue;
+      const list = store.comments(k.slice(NOTE_PREFIX.length));
+      if (list.length) out[k.slice(NOTE_PREFIX.length)] = list;
+    }
+  } catch {}
+  return out;
+}
+function mergeNotes(a, b) {
+  const out = {};
+  for (const id of new Set([...Object.keys(a || {}), ...Object.keys(b || {})])) {
+    const seen = new Set(), list = [];
+    for (const c of [...((a || {})[id] || []), ...((b || {})[id] || [])]) {
+      if (!c || seen.has(c.ts)) continue;
+      seen.add(c.ts); list.push(c);
+    }
+    list.sort((x, y) => y.ts - x.ts);          // newest first, as addComment writes them
+    if (list.length) out[id] = list;
+  }
+  return out;
+}
+// Pull the cloud copy, merge it into this device, push the result back. Safe to
+// call whenever: signed out or table missing → resolves quietly, changes nothing.
+let _userDataReady = false;
+async function syncUserData() {
+  if (!window.WA || !WA.loadUserData) return;
+  let remote;
+  try { remote = await WA.loadUserData(); } catch { return; }   // not set up / offline
+  if (!remote) { _userDataReady = false; return; }
+  const favs = [...new Set([...store.favs(), ...remote.favorites])];
+  const notes = mergeNotes(allLocalNotes(), remote.notes);
+  try {
+    localStorage.setItem("wa:favorites", JSON.stringify(favs));
+    for (const [id, list] of Object.entries(notes)) {
+      localStorage.setItem(NOTE_PREFIX + id, JSON.stringify(list));
+    }
+  } catch {}
+  _userDataReady = true;                        // only now may this device push
+  try { await WA.saveUserData(favs, notes); } catch {}
+  if (typeof refreshAnyMsgDot === "function") refreshAnyMsgDot();
+}
+// Debounced push after a local change. Gated on _userDataReady so a device that
+// hasn't merged yet can never upload its (possibly empty) state over the cloud
+// copy — the restore always happens before the first backup.
+let _userDataPush = null;
+function backupUserData() {
+  if (!_userDataReady || !window.WA || !WA.saveUserData) return;
+  clearTimeout(_userDataPush);
+  _userDataPush = setTimeout(() => {
+    WA.saveUserData(store.favs(), allLocalNotes()).catch(() => {});
+  }, 1500);
+}
+// `wa:favorites` is one shared list, so ids from the newer message sections are
+// namespaced ("special:12", "letterpad:2026-01-14_01") while the archive's own
+// are bare numeric ids. The Favorites page lists only the archive ones — the
+// others would 404 against /api/entry.
+const archiveFavs = () => store.favs().filter((id) => /^\d+$/.test(id));
 // Share one language's original image (as an actual file, not a link — this
 // app runs on 127.0.0.1, a per-machine address, so a "link" to it is useless
 // to anyone else's computer) via the OS's native share sheet (Mail, installed
@@ -511,6 +603,7 @@ async function modSignIn(identifier, password) {
   const d = await WA.login(identifier, password);
   store.setToken(d.token);
   try { localStorage.setItem("wa:user", JSON.stringify(d.user)); } catch {}
+  syncUserData();          // pull this account's favourites/notes onto the device
   return d.user;
 }
 
@@ -518,6 +611,7 @@ async function modSignUp(username, email, password) {
   const d = await WA.register(username, email, password);
   store.setToken(d.token);
   try { localStorage.setItem("wa:user", JSON.stringify(d.user)); } catch {}
+  syncUserData();          // seeds the new account's row from whatever is local
   return d.user;
 }
 
@@ -1108,7 +1202,7 @@ async function initQuickStats() {
     pop.innerHTML =
       row("📖", stats.total, "Total Guru's Msgs") +
       row("📅", stats.this_year, "This Year (" + yr + ")") +
-      row("♡", store.favs().length, "Favorites", "favorites") +
+      row("♡", archiveFavs().length, "Favorites", "favorites") +
       row("🕐", stats.days_covered, "Days Covered");
   };
   render();
@@ -1294,7 +1388,7 @@ async function renderEntry(id) {
 async function renderFavorites() {
   const nav = _nav;
   $view.innerHTML = `<div class="page-title">Favorites</div><div class="loading">Loading…</div>`;
-  const ids = store.favs();
+  const ids = archiveFavs();
   const entries = (await Promise.all(ids.map((id) => api("/api/entry/" + id).catch(() => null)))).filter(Boolean);
   if (!current(nav)) return;
 
@@ -2685,6 +2779,105 @@ document.addEventListener("click", (e) => {
 });
 
 // ==========================================================================
+// PAGE CAROUSEL — the horizontal "1/5" pager shared by every multi-page
+// message (Letterpad's scanned page images; Special Messages' long text).
+// Deliberately built on NATIVE horizontal scrolling, not a hand-written touch
+// gesture: the browser then owns axis-locking, so a horizontal swipe pages
+// sideways while a vertical swipe still scrolls the reader through to the
+// next message — no custom code arbitrating the two, and no page-flip snap.
+//
+// Two page models, one pager:
+//   images — each page is a `.pc-page` flex child at exactly 100% width, with
+//            CSS scroll-snap doing the settling.
+//   text   — the track ITSELF is a CSS multi-column box (`.pc-text`) with a
+//            definite height + `column-fill: auto`, so a long body flows into
+//            page-wide columns that overflow sideways. The page count then
+//            falls out of the layout (scrollWidth / width) instead of being
+//            measured by hand, and it re-flows for free on rotate / font
+//            change. Column geometry is picked so column k starts at exactly
+//            k×width: with side padding P, `column-width = W − 2P` and
+//            `column-gap = 2P` puts column k's left edge at P + k·W, so
+//            scrollLeft = k·W frames it perfectly. Multicol has no element
+//            snap targets, so text mode settles with a JS snap instead.
+//
+// Expects, anywhere inside `root`: .pc-track (required), and optionally
+// .pc-count ("2/5"), .pc-dots, .pc-prev, .pc-next.
+// ==========================================================================
+let hapticTickHook = () => {};   // set by MOBILE_UI; no-op in the browser shell
+
+function wireCarousel(root, opts) {
+  const o = opts || {};
+  const track = root.querySelector(".pc-track");
+  if (!track) return null;
+  const isText = track.classList.contains("pc-text");
+  const count = root.querySelector(".pc-count");
+  const dots = root.querySelector(".pc-dots");
+  const prev = root.querySelector(".pc-prev");
+  const next = root.querySelector(".pc-next");
+  const fixed = o.pages || 0;              // known up front in image mode
+  const PAD = o.pad == null ? 16 : o.pad;  // must match .pc-text's CSS padding
+  const MAX_DOTS = 12;                     // beyond this the dots row is noise
+  let n = Math.max(1, fixed), cur = 0;
+  const W = () => track.clientWidth || 1;
+
+  function layout() {
+    if (isText) {
+      track.style.columnWidth = Math.max(40, W() - 2 * PAD) + "px";
+      track.style.columnGap = 2 * PAD + "px";
+    }
+    n = fixed || Math.max(1, Math.round(track.scrollWidth / W()));
+    if (dots) {
+      dots.innerHTML = n > 1 && n <= MAX_DOTS
+        ? Array.from({ length: n }, (_, i) =>
+            `<button class="pc-dot" type="button" data-p="${i}" aria-label="Page ${i + 1}"></button>`).join("")
+        : "";
+    }
+    paint();
+  }
+  // Returns true when the visible page actually changed (so callers can tick).
+  function paint() {
+    const was = cur;
+    cur = Math.min(n - 1, Math.max(0, Math.round(track.scrollLeft / W())));
+    if (count) { count.hidden = n < 2; count.textContent = (cur + 1) + "/" + n; }
+    if (dots) {
+      dots.hidden = !dots.children.length;
+      [...dots.children].forEach((d, i) => d.classList.toggle("on", i === cur));
+    }
+    if (prev) prev.hidden = n < 2 || cur === 0;
+    if (next) next.hidden = n < 2 || cur >= n - 1;
+    if (was !== cur && o.onPage) o.onPage(cur, n);
+    return was !== cur;
+  }
+  const goTo = (i) => {
+    track.scrollTo({ left: Math.max(0, Math.min(n - 1, i)) * W(), behavior: "smooth" });
+    hapticTickHook();
+  };
+
+  let raf = 0, snapT = 0;
+  track.addEventListener("scroll", () => {
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (paint()) hapticTickHook(); });
+    if (!isText) return;   // image mode settles via CSS scroll-snap
+    clearTimeout(snapT);
+    snapT = setTimeout(() => {
+      const target = Math.round(track.scrollLeft / W()) * W();
+      if (Math.abs(track.scrollLeft - target) > 1) track.scrollTo({ left: target, behavior: "smooth" });
+    }, 150);
+  }, { passive: true });
+
+  if (prev) prev.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); goTo(cur - 1); });
+  if (next) next.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); goTo(cur + 1); });
+  if (dots) dots.addEventListener("click", (e) => {
+    const d = e.target.closest("[data-p]"); if (!d) return;
+    e.preventDefault(); e.stopPropagation(); goTo(+d.dataset.p);
+  });
+  // Rotate / font-size change re-flows the columns and re-counts the pages.
+  try { new ResizeObserver(() => layout()).observe(track); }
+  catch { window.addEventListener("resize", layout); }
+  layout();
+  return { page: () => cur, count: () => n, goTo, layout };
+}
+
+// ==========================================================================
 // SPECIAL MESSAGES — Baba Swami's Telegram channel posts, stored in Supabase
 // (`special_messages`; see SPECIAL_MESSAGES_PLAN.md). The ENTIRE published set
 // is cached in localStorage so every message is readable OFFLINE on both web
@@ -2721,13 +2914,45 @@ const SPECIAL = (() => {
     save(all);
     return all;
   }
+  // ---- APK seed -----------------------------------------------------------
+  // mobile/build_www.py bakes every published message into www/special/
+  // snapshot.json. That file lives inside the APK, so it is the one copy that
+  // survives Android's "Clear storage" (which wipes localStorage outright) —
+  // a wiped app therefore still opens to the full history, offline, before any
+  // network call. It seeds `lastSync` too, so the follow-up sync asks only for
+  // what changed since the build instead of re-downloading everything.
+  // Runs once, and only when there is nothing cached — never overwrites synced
+  // data with the older bundle.
+  let _seeded = false;
+  async function seed() {
+    if (_seeded || cached().length) { _seeded = true; return; }
+    _seeded = true;
+    try {
+      const r = await fetch("/special/snapshot.json", { cache: "no-store" });
+      if (!r.ok) return;                       // desktop / thumbs-only build: no snapshot
+      const j = await r.json();
+      if (!j.messages || !j.messages.length) return;
+      save(j.messages);
+      if (j.lastSync) try { localStorage.setItem(SYNC_KEY, j.lastSync); } catch {}
+      // The seed is history, not news — don't badge it all as unread.
+      if (!localStorage.getItem(SEEN_KEY)) {
+        const top = j.messages.reduce((m, r2) => Math.max(m, r2.id), 0);
+        try { localStorage.setItem(SEEN_KEY, String(top)); } catch {}
+      }
+      refreshBadges();
+    } catch (_) { /* no snapshot bundled — the network path is the only source */ }
+  }
+
   // Pull changes from Supabase into the cache. Never throws into a badge/boot
   // path unawaited — callers that only want freshness use .catch(()=>{}).
   let _inflight = null;
   function sync() {
-    if (!window.WA || !WA.syncSpecialMessages) return Promise.resolve(cached());
+    if (!window.WA || !WA.syncSpecialMessages) return seed().then(() => cached());
     if (_inflight) return _inflight;
     _inflight = (async () => {
+      // Seed BEFORE the network call, and outside its failure path: an offline
+      // wiped app must still end up with the bundled history in its cache.
+      await seed();
       // Very first sync on this device (no seen-marker, empty cache): the
       // whole backfilled history arrives at once — don't greet a new install
       // with a "99+" unread badge. Start clean; badge only what arrives later.
@@ -2754,10 +2979,24 @@ const SPECIAL = (() => {
   function refreshBadges() {
     const n = unread(), txt = n > 99 ? "99+" : String(n);
     document.querySelectorAll("[data-special-badge]").forEach((b) => { b.hidden = !n; b.textContent = txt; });
-    document.querySelectorAll("[data-special-dot]").forEach((b) => { b.hidden = !n; });
+    refreshAnyMsgDot();
   }
-  return { cached, sync, unread, markSeen, refreshBadges };
+  return { cached, sync, seed, unread, markSeen, refreshBadges, lastSeen: lastSeenId };
 })();
+
+// Shared "something new" dot for the hamburger icon + "Other Messages" group
+// (mobile menu) — lights up if EITHER Special Messages or Letterpad has
+// unread items. Per-feature badges (data-special-badge/data-letterpad-badge)
+// stay independent; only this summary dot combines the two. Function
+// declaration (not const) so it's safely callable from SPECIAL.refreshBadges
+// above even though LETTERPAD is declared further down the file — by the
+// time either refreshBadges() actually runs, the whole module has finished
+// initializing.
+function refreshAnyMsgDot() {
+  const n = (typeof SPECIAL !== "undefined" ? SPECIAL.unread() : 0) +
+            (typeof LETTERPAD !== "undefined" ? LETTERPAD.unread() : 0);
+  document.querySelectorAll("[data-anymsg-dot]").forEach((b) => { b.hidden = !n; });
+}
 
 // One special-message card. mode = "dual" (desktop: Hindi LEFT · English
 // RIGHT, per the detail-view convention; Hindi-only rows get one wide column)
@@ -2860,14 +3099,64 @@ const LETTERPAD = (() => {
   // OTA-updatable, so a hardcoded public URL is fine — if the dist repo ever
   // moves, an app.js OTA fixes it. Same host the daily sync already fetches.
   const REMOTE = "https://raw.githubusercontent.com/samarpanupnishad-ops/wisdom-archive-dist/main/letterpad";
-  const BASE = isNative ? REMOTE : "/letterpad";
+  // LOCAL = the copy bundled inside the APK (mobile/build_www.py copies
+  // letterpad_source/ to www/letterpad/); on desktop it's what FastAPI serves.
+  // ⚠ This is the ONLY copy that survives Android's "Clear storage", which
+  // wipes localStorage AND the Filesystem plugin's data dir. So bundled pages
+  // are always served from here, never re-downloaded.
+  const LOCAL = "/letterpad";
+  const BASE = isNative ? REMOTE : LOCAL;
   const CACHE_KEY = "wa:letterpad:cache";
+  // Unlike Special Messages' numeric ids, letterpad ids are date-strings
+  // ("2026-07-15_01") — unread is tracked by posted_at (ISO string compare
+  // is safe) instead of an id comparison.
+  const SEEN_KEY = "wa:letterpad:lastSeen";
   let _index = null;
+  const _bundled = new Set();      // page paths present in the APK
+  const _onDevice = new Map();     // page path -> file:// URL persisted via Filesystem
 
   function cached() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch { return null; } }
+  const msgCount = (idx) => ((idx && idx.messages) || []).length;
+
+  // The APK's bundled index: the offline seed AND the list of page paths that
+  // resolve to local asset URLs. On desktop this IS the live index.
+  async function loadBundled() {
+    try {
+      const r = await fetch(LOCAL + "/index.json", { cache: "no-store" });
+      if (!r.ok) return null;
+      const j = await r.json();
+      (j.messages || []).forEach((m) =>
+        (m.pages_hi || []).concat(m.pages_en || []).forEach((p) => _bundled.add(p)));
+      return j;
+    } catch (_) { return null; }
+  }
+  // Pages published AFTER this APK was built come from the update host. Persist
+  // them through wa-native's Filesystem cache so they survive going offline (a
+  // plain <img> only lives in the WebView's evictable HTTP cache). Guarded:
+  // app.js ships OTA to shells whose bundled wa-native.js predates cacheMedia.
+  async function warmMedia(idx) {
+    const wn = window.WA_NATIVE;
+    if (!wn || !wn.isNative || !wn.cacheMedia) return;
+    for (const m of (idx && idx.messages) || []) {
+      for (const p of (m.pages_hi || []).concat(m.pages_en || [])) {
+        if (_bundled.has(p) || _onDevice.has(p)) continue;
+        try { const u = await wn.cacheMedia(REMOTE + "/" + p); if (u) _onDevice.set(p, u); }
+        catch (_) { /* still viewable straight from the host */ }
+      }
+    }
+  }
   async function loadIndex() {
     if (_index) return _index;
-    _index = cached();                         // instant from cache (offline-friendly)
+    const bundled = await loadBundled();
+    // Whichever of (synced cache, APK bundle) holds more messages wins as the
+    // instant offline answer — so a wiped app falls back to the bundle, and an
+    // app whose APK was just upgraded past its cache picks up the bundle too.
+    const local = cached();
+    _index = msgCount(bundled) > msgCount(local) ? bundled : (local || bundled);
+    // First-ever load on this device (no seen-marker yet): don't greet a
+    // fresh install with every existing message marked "new" — mirrors
+    // SPECIAL's firstRun guard.
+    const firstRun = !localStorage.getItem(SEEN_KEY) && !msgCount(_index);
     try {
       const r = await fetch(BASE + "/index.json?v=" + Date.now(), { cache: "no-store" });
       if (r.ok) {
@@ -2877,11 +3166,36 @@ const LETTERPAD = (() => {
           try { localStorage.setItem(CACHE_KEY, JSON.stringify(fresh)); } catch (_) {}
         }
       }
-    } catch (_) { /* offline — keep whatever cache we have */ }
+    } catch (_) { /* offline — keep the cache/bundle we already resolved */ }
+    if (firstRun && msgCount(_index)) markSeen();
+    refreshBadges();
+    warmMedia(_index);            // background; never blocks the first paint
     return _index || { messages: [] };
   }
-  const imgUrl = (rel) => BASE + "/" + rel;
-  return { loadIndex, imgUrl };
+  // Bundled (survives everything) → persisted on device → the update host.
+  const imgUrl = (rel) =>
+    _bundled.has(rel) ? LOCAL + "/" + rel : (_onDevice.get(rel) || BASE + "/" + rel);
+  function lastSeenAt() { try { return localStorage.getItem(SEEN_KEY) || ""; } catch { return ""; } }
+  function unread() {
+    const idx = _index || cached() || { messages: [] };
+    const seen = lastSeenAt();
+    return (idx.messages || []).filter((m) => (m.posted_at || "") > seen).length;
+  }
+  function markSeen() {
+    const idx = _index || cached() || { messages: [] };
+    const top = (idx.messages || []).reduce((m, r) => ((r.posted_at || "") > m ? (r.posted_at || "") : m), "");
+    try { localStorage.setItem(SEEN_KEY, top); } catch {}
+    refreshBadges();
+  }
+  function refreshBadges() {
+    const n = unread(), txt = n > 99 ? "99+" : String(n);
+    document.querySelectorAll("[data-letterpad-badge]").forEach((b) => { b.hidden = !n; b.textContent = txt; });
+    refreshAnyMsgDot();
+  }
+  // Synchronous read of whatever we already have (memory, else localStorage) —
+  // lets a screen paint instantly/offline before loadIndex() resolves.
+  const items = () => ((_index || cached() || {}).messages) || [];
+  return { loadIndex, imgUrl, unread, markSeen, refreshBadges, items, lastSeen: lastSeenAt };
 })();
 
 // One letterpad message card: title, date line, its page images (lazy), and
@@ -2897,20 +3211,29 @@ function letterpadCardHtml(m, lang) {
   // Show the printed signature date too when it differs from the posting date
   // (anniversary re-posts of older teachings).
   const sig = m.signature_date && m.signature_date !== m.date ? fmtDate(m.signature_date) : "";
-  const imgs = pages.map((p) =>
-    `<img class="lp-pageimg" loading="lazy" decoding="async" src="${LETTERPAD.imgUrl(p)}" alt="page">`).join("");
+  // Multi-page messages page sideways (see wireCarousel) instead of stacking
+  // eight full-width scans down the page. The first page loads eagerly so the
+  // card is never blank; the rest are lazy until swiped to.
+  const imgs = pages.map((p, i) =>
+    `<div class="pc-page"><img class="lp-pageimg" loading="${i ? "lazy" : "eager"}" decoding="async" src="${LETTERPAD.imgUrl(p)}" alt="page ${i + 1}"></div>`).join("");
   const toggle = both
     ? `<div class="lp-langtog" data-id="${m.id}">
          <button data-l="hi" class="${useEn ? "" : "on"}">हिंदी</button>
          <button data-l="en" class="${useEn ? "on" : ""}">English</button>
        </div>` : "";
-  return `<article class="lp-card" data-id="${m.id}">
+  return `<article class="lp-card" data-id="${m.id}" data-pages="${pages.length}">
       <div class="lp-head">
         <div class="lp-title">${escapeHtml((title || "").replace(/\n/g, " · "))}</div>
         <div class="lp-date">${postedDate}${sig ? ` · <span class="lp-sig">संदेश तिथि ${sig}</span>` : ""}</div>
         ${toggle}
+        <div class="pc-count" hidden></div>
       </div>
-      <div class="lp-pages">${imgs}</div>
+      <div class="lp-pages pc">
+        <div class="pc-track">${imgs}</div>
+        <button class="pc-arrow pc-prev" type="button" hidden aria-label="Previous page">‹</button>
+        <button class="pc-arrow pc-next" type="button" hidden aria-label="Next page">›</button>
+      </div>
+      <div class="pc-dots" hidden></div>
       ${body ? `<details class="lp-text"><summary>Read text</summary><div class="lp-body">${escapeHtml(body)}</div></details>` : ""}
     </article>`;
 }
@@ -2921,11 +3244,14 @@ async function renderLetterpadInto(container, getLang) {
   container.innerHTML = `<div class="loading">Loading…</div>`;
   const index = await LETTERPAD.loadIndex();
   const msgs = index.messages || [];
+  const wireCards = (scope) => scope.querySelectorAll(".lp-card").forEach((card) =>
+    wireCarousel(card, { pages: +card.dataset.pages || 1 }));
   const paint = () => {
     const lang = getLang ? getLang() : "hi";
     container.innerHTML = msgs.length
       ? msgs.map((m) => letterpadCardHtml(m, lang)).join("")
       : `<div class="empty">No letterpad messages yet. Guru's handwritten messages will appear here.</div>`;
+    wireCards(container);
   };
   paint();
   // Per-card language toggle (only present when a message has both languages).
@@ -2933,7 +3259,9 @@ async function renderLetterpadInto(container, getLang) {
     const btn = e.target.closest(".lp-langtog button"); if (!btn) return;
     const card = btn.closest(".lp-card");
     const m = msgs.find((x) => x.id === card.dataset.id); if (!m) return;
-    card.outerHTML = letterpadCardHtml(m, btn.dataset.l);
+    const fresh = el(letterpadCardHtml(m, btn.dataset.l));
+    card.replaceWith(fresh);                       // (not outerHTML — we need the node back to wire it)
+    wireCarousel(fresh, { pages: +fresh.dataset.pages || 1 });
   });
   return { repaint: paint };
 }
@@ -2944,6 +3272,7 @@ async function renderLetterpad() {
     <div class="lp-list"></div></div>`;
   if (!current(nav)) return;
   await renderLetterpadInto($view.querySelector(".lp-list"), () => "hi");
+  LETTERPAD.markSeen();
 }
 
 // --------------------------------------------------------------------------
@@ -2986,6 +3315,7 @@ const MOBILE_UI = (() => {
       <div class="m-title" id="m-title">Samarpan Upnishad</div>
     </header>
     <div class="m-vpanel" id="m-vpanel">
+      <button class="m-vback" id="m-panel-back" type="button" aria-label="Back" hidden>‹</button>
       <button class="m-vdate m-datepill" id="m-panel-date" type="button"></button>
       <div class="m-vacts">
         <button class="m-vact m-vact-fav" id="m-panel-fav" title="Add to Favorites" aria-label="Add to Favorites">${HEART_ICON}</button>
@@ -2996,7 +3326,7 @@ const MOBILE_UI = (() => {
     <nav class="m-bottom" id="m-bottom">
       <button class="m-navbtn m-menu-btn" id="m-menu-btn" title="Menu" aria-label="Menu">
         <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-        <span class="m-menudot" data-special-dot hidden></span>
+        <span class="m-menudot" data-anymsg-dot hidden></span>
       </button>
       <button class="m-navbtn m-comm-btn" id="m-comm-btn" title="Community" aria-label="Community">
         <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -3015,11 +3345,11 @@ const MOBILE_UI = (() => {
       <nav class="m-menu">
         <a href="#/m/search"><span class="mi">🔍</span> Search By</a>
         <a href="#/m/community"><span class="mi">💬</span> Community</a>
-        <button class="m-menu-group" data-group="other"><span class="mi">🗂️</span> Other Messages <span class="m-menudot m-dot-inline" data-special-dot hidden></span><span class="m-caret">▾</span></button>
+        <button class="m-menu-group" data-group="other"><span class="mi">🗂️</span> Other Messages <span class="m-menudot m-dot-inline" data-anymsg-dot hidden></span><span class="m-caret">▾</span></button>
         <div class="m-submenu" data-sub="other" hidden>
           <a href="#/m/anushthan"><span class="mi">🪔</span> Anushthan Msg</a>
           <a href="#/m/special"><span class="mi">✨</span> Special Msg <span class="m-badge" data-special-badge hidden></span></a>
-          <a href="#/m/letterpad"><span class="mi">✍️</span> Guru's Letterpad Msg</a>
+          <a href="#/m/letterpad"><span class="mi">✍️</span> Guru's Letterpad Msg <span class="m-badge" data-letterpad-badge hidden></span></a>
         </div>
         <a href="#/random" class="m-lucky"><span class="mi m-lucky-ico">🌟</span>
           <span class="m-lucky-text">Your Lucky Msg for Today</span>
@@ -3084,6 +3414,7 @@ const MOBILE_UI = (() => {
   $("m-scrim").addEventListener("click", closeDrawer);
   $("m-drawer").addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
   $("m-back").addEventListener("click", () => history.back());
+  $("m-panel-back").addEventListener("click", () => history.back());
 
   // ---- Android BACK + exit confirmation -----------------------------------
   // Registered here (not in wa-native.js) so the behaviour ships over-the-air.
@@ -3152,13 +3483,33 @@ const MOBILE_UI = (() => {
         });
         _pdiag({ channel: "created" });
       } catch (e) { _pdiag({ channel: "createChannel failed: " + (e && e.message || e) }); }
+      try {
+        await Push.createChannel({
+          id: "letterpad_messages", name: "Guru's Letterpad Messages",
+          description: "New handwritten letterpad messages from Baba Swami", importance: 5, visibility: 1,
+        });
+        _pdiag({ channelLetterpad: "created" });
+      } catch (e) { _pdiag({ channelLetterpad: "createChannel failed: " + (e && e.message || e) }); }
+      try {
+        await Push.createChannel({
+          id: "daily_wisdom", name: "Daily Wisdom",
+          description: "Today's new message notifications", importance: 5, visibility: 1,
+        });
+        _pdiag({ channelDaily: "created" });
+      } catch (e) { _pdiag({ channelDaily: "createChannel failed: " + (e && e.message || e) }); }
       Push.addListener("registration", async (t) => {
         _pdiag({ token: (t && t.value || "").slice(0, 18) + "…", registeredAt: Date.now() });
         try { await WA.registerDeviceToken(t.value, "android"); _pdiag({ supabase: "OK" }); }
         catch (e) { _pdiag({ supabase: "FAIL: " + (e && e.message || e) }); }
       });
       Push.addListener("registrationError", (e) => _pdiag({ regError: JSON.stringify(e) }));
-      Push.addListener("pushNotificationActionPerformed", () => { try { go("#/m/special"); } catch (_) {} });
+      // Routes by the notification's own data payload (send-push sets
+      // data.route per kind) instead of a single hardcoded destination, now
+      // that three push kinds share this handler.
+      Push.addListener("pushNotificationActionPerformed", (a) => {
+        const route = (a && a.notification && a.notification.data && a.notification.data.route) || "#/m/special";
+        try { go(route); } catch (_) {}
+      });
       await Push.register();
       _pdiag({ result: "register() called — awaiting token event" });
     } catch (e) { _pdiag({ result: "initPush threw: " + (e && e.message || e) }); }
@@ -3167,8 +3518,15 @@ const MOBILE_UI = (() => {
 
   // ---- chrome state --------------------------------------------------------
   // mode: "home" (viewer, no back) | "viewer" (back + fav) | "page" (back + title)
+  // mode: "home" | "viewer" | "reader" | "page".
+  // "reader" is the Special/Letterpad full-screen message reader — it wears the
+  // SAME chrome as the daily message (slim .m-vpanel on top, nav bar at the
+  // bottom, content filling everything between) but, unlike home, it is a place
+  // you navigated INTO, so it also shows a back chevron in the panel.
   function setChrome(mode, title, entry) {
-    const isImageScreen = mode === "home" || mode === "viewer";
+    const isImageScreen = mode === "home" || mode === "viewer" || mode === "reader";
+    document.body.classList.toggle("m-readermode", mode === "reader");
+    $("m-panel-back").hidden = mode !== "reader";
     document.body.classList.toggle("m-viewing", isImageScreen);
     // Home/entry screens have no top bar at all now — the image goes full
     // height and each card's own overlay row (date + favorite/share/download)
@@ -3421,6 +3779,7 @@ const MOBILE_UI = (() => {
     const ms = parseInt(pref("wa:mobile:vibeMs", "12"), 10) || 12;
     try { navigator.vibrate && navigator.vibrate(ms); } catch {}
   }
+  hapticTickHook = hapticTick;   // lets the shared page carousel tick too
 
   // ---- zoom mode (double-tap the image) ----------------------------------
   // Full-screen dark viewer with a vertical zoom bar on the chosen edge:
@@ -4550,7 +4909,7 @@ const MOBILE_UI = (() => {
     pageFrame("Favorites", node, "m-page-scroll");
     const results = node.querySelector(".m-results");
     results.innerHTML = `<div class="loading">Loading…</div>`;
-    const ids = store.favs();
+    const ids = archiveFavs();
     const entries = (await Promise.all(ids.map((id) => api("/api/entry/" + id).catch(() => null)))).filter(Boolean);
     showResults(results, entries, "No favorites yet. Open a Guru's msg and tap ♡ to add it here.", (id) => "#/entry/" + id, true);
   }
@@ -4566,47 +4925,366 @@ const MOBILE_UI = (() => {
     pageFrame(title, node);
   }
 
-  // ---- Special Messages (offline-cached; follows the bottom language toggle)
-  function specialPage() {
-    const node = el(`<div class="m-specialwrap"></div>`);
-    // Natural full-page scroll (like Contact/placeholder pages) — NOT the
-    // fixed-height m-page-scroll box, which clips its content because it only
-    // scrolls a dedicated .m-results child that this page doesn't have.
-    pageFrame("Special Message", node);
+  // ==========================================================================
+  // MESSAGE SECTIONS — Special Messages · Guru's Letterpad Messages
+  //
+  // Both are two screens sharing one implementation (Anushthan Msg, still a
+  // placeholder, can be added as a third descriptor with no new UI code):
+  //
+  //   #/m/<key>        the INDEX — a compact scrollable list, one row per
+  //                    message (date · title · preview · NEW chip). Needed
+  //                    because Special alone holds ~900 backfilled messages.
+  //   #/m/<key>/<id>   the READER — full screen from the top panel to the
+  //                    bottom panel, exactly like the daily-message screen:
+  //                    the slim .m-vpanel above (date pill · favourite · share
+  //                    · download, all acting on the message you're looking
+  //                    at) and the nav bar below.
+  //
+  // Reader mechanics, deliberately chosen to match the operator's brief:
+  //   • VERTICAL = plain, continuous, native scrolling straight on into the
+  //     previous/next message. No snap, no page-flip sound — unlike the daily
+  //     feed, this is not a transform-driven strip, it's just a scroll box.
+  //   • HORIZONTAL = the pages of the current message (see wireCarousel), with
+  //     the count shown as "2/5" at the top-right of the message.
+  //   Only a window of messages is in the DOM at a time (see extendUp/Down),
+  //   so a 900-message section scrolls as cheaply as a 19-message one.
+  // ==========================================================================
+  const MSG_SECTIONS = {
+    special: {
+      key: "special", icon: "✨",
+      title: "Special Message", listTitle: "Special Messages", hindi: "विशेष संदेश",
+      emptyMsg: SPECIAL_EMPTY_MSG,
+      idOf: (r) => String(r.id),
+      cached: () => SPECIAL.cached(),
+      refresh: () => SPECIAL.sync(),
+      markSeen: () => SPECIAL.markSeen(),
+      lastSeen: () => SPECIAL.lastSeen(),
+      isNew: (r, seen) => r.id > (seen || 0),
+      subscribe: (fn) => (window.WA && WA.subscribeSpecial ? WA.subscribeSpecial({ onChange: fn }) : null),
+      // Text message → no image pages; the reader paginates `text` with CSS
+      // columns. Falls back to Hindi when there is no translation (permanent,
+      // normal state for pre-2020 history) — never a "pending" placeholder.
+      norm(r, lang) {
+        const en = lang === "en";
+        const title = en ? (r.title_en || r.title_hi) : (r.title_hi || r.title_en);
+        const body = en ? (r.body_en || r.body_hi) : (r.body_hi || r.body_en);
+        const place = en ? (r.place_en || r.place_hi) : (r.place_hi || r.place_en);
+        const foot = [r.signature, place, r.msg_date ? fmtDate(r.msg_date) : ""].filter(Boolean).join(" · ");
+        // Feed date = when it was POSTED (the guru re-posts old teachings), the
+        // same key the list is sorted by; msg_date stays a display detail.
+        const date = (r.posted_at || r.created_at || "").slice(0, 10) || r.msg_date || "";
+        return {
+          id: String(r.id), date, title: title || "",
+          sub: date ? fmtDate(date) : "",
+          pages: null,
+          text: [body || "", foot].filter(Boolean).join("\n\n"),
+          hiTag: en && !r.body_en,
+          shareCaption: [title, body, foot].filter(Boolean).join("\n\n"),
+        };
+      },
+    },
+    letterpad: {
+      key: "letterpad", icon: "✍️",
+      title: "Letterpad Message", listTitle: "Guru's Letterpad Messages", hindi: "गुरुजी का पत्र संदेश",
+      emptyMsg: "No letterpad messages yet. Guru's handwritten messages will appear here.",
+      idOf: (m) => m.id,
+      cached: () => LETTERPAD.items(),
+      refresh: () => LETTERPAD.loadIndex().then((i) => i.messages || []),
+      markSeen: () => LETTERPAD.markSeen(),
+      lastSeen: () => LETTERPAD.lastSeen(),
+      isNew: (m, seen) => (m.posted_at || "") > (seen || ""),
+      subscribe: null,
+      // Scanned pages → real image pages for the carousel; the OCR text rides
+      // along behind a "Read text" toggle (selectable/copyable, and the
+      // accessible fallback for handwriting).
+      norm(m, lang) {
+        const useEn = lang === "en" && m.pages_en.length;
+        const pages = useEn ? m.pages_en : (m.pages_hi.length ? m.pages_hi : m.pages_en);
+        const title = useEn ? (m.title_en || m.title_hi) : (m.title_hi || m.title_en);
+        const body = useEn ? (m.body_en || m.body_hi) : (m.body_hi || m.body_en);
+        const sig = m.signature_date && m.signature_date !== m.date ? fmtDate(m.signature_date) : "";
+        return {
+          id: m.id, date: m.date,
+          title: (title || "").replace(/\n/g, " · "),
+          sub: [m.date ? fmtDate(m.date) : "", sig ? "संदेश तिथि " + sig : ""].filter(Boolean).join(" · "),
+          pages: pages.map((p) => LETTERPAD.imgUrl(p)),
+          text: body || "",
+          hiTag: lang === "en" && !m.pages_en.length,
+          shareCaption: [title, body].filter(Boolean).join("\n\n"),
+        };
+      },
+    },
+  };
+
+  const msgHolderHtml = (sec) => `<div class="m-holder">
+      <div class="m-holder-ico">${sec.icon}</div>
+      <h2>${escapeHtml(sec.listTitle)}</h2>
+      <p class="m-holder-hi">${escapeHtml(sec.hindi)}</p>
+      <p>${escapeHtml(sec.emptyMsg)}</p>
+    </div>`;
+
+  // ---- the INDEX (#/m/special · #/m/letterpad) ------------------------------
+  function msgIndexRowHtml(sec, r, seenMark) {
+    const v = sec.norm(r, prefLang);
+    const fresh = sec.isNew(r, seenMark);
+    const np = v.pages ? v.pages.length : 0;
+    const thumb = np
+      ? `<img class="mx-thumb" src="${v.pages[0]}" loading="lazy" decoding="async" alt="">`
+      : `<div class="mx-thumb mx-thumb-txt">${sec.icon}</div>`;
+    const prev = (v.text || "").replace(/\s+/g, " ").slice(0, 140);
+    return `<a class="mx-row" href="#/m/${sec.key}/${encodeURIComponent(v.id)}">
+        ${thumb}
+        <div class="mx-meta">
+          <div class="mx-top">${escapeHtml(v.date ? fmtDate(v.date) : "")}${np > 1 ? ` · ${np} pages` : ""}${fresh ? ` <span class="mx-new">NEW</span>` : ""}</div>
+          <div class="mx-title">${escapeHtml(v.title || "—")}</div>
+          <div class="mx-prev">${escapeHtml(prev)}</div>
+        </div>
+      </a>`;
+  }
+  // Painted 30 rows at a time (same reason paintSpecialList did it): ~900 rows
+  // in one go makes older phones crawl. keepShown preserves depth on repaint.
+  // `seen` is the marker as it stood when the page was OPENED — passed in, not
+  // re-read, because the first paint marks everything seen and a repaint (sync
+  // lands, language flips) would otherwise erase every NEW chip on screen.
+  function paintMsgIndex(box, sec, rows, keepShown, seen) {
+    const CHUNK = 30;
+    const html = (r) => msgIndexRowHtml(sec, r, seen);
+    let shown = Math.min(rows.length, Math.max(CHUNK, keepShown || 0));
+    box.innerHTML = rows.slice(0, shown).map(html).join("");
+    if (shown < rows.length) {
+      const sent = el(`<div class="sp-more">…</div>`);
+      box.appendChild(sent);
+      const io = new IntersectionObserver((entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        const next = rows.slice(shown, shown + CHUNK);
+        shown += next.length;
+        sent.insertAdjacentHTML("beforebegin", next.map(html).join(""));
+        if (shown >= rows.length) { io.disconnect(); sent.remove(); }
+      });
+      io.observe(sent);
+    }
+    return { shown: () => shown };
+  }
+  function msgIndexPage(key) {
+    const sec = MSG_SECTIONS[key];
+    const node = el(`<div class="m-msgindex"></div>`);
+    // Natural full-page scroll (NOT the fixed-height m-page-scroll box, which
+    // only scrolls a dedicated .m-results child and would clip these rows).
+    pageFrame(sec.listTitle, node);
     let painter = null;
+    const seen = sec.lastSeen();    // frozen for this visit — see paintMsgIndex
     const paint = (rows) => {
-      if (!rows.length) {
-        node.innerHTML = `<div class="m-holder">
-            <div class="m-holder-ico">✨</div>
-            <h2>Special Message</h2>
-            <p class="m-holder-hi">विशेष संदेश</p>
-            <p>${escapeHtml(SPECIAL_EMPTY_MSG)}</p>
-          </div>`;
-        return;
-      }
-      painter = paintSpecialList(node, rows, prefLang, painter ? painter.shown() : 0);
+      if (!rows.length) { node.innerHTML = msgHolderHtml(sec); return; }
+      painter = paintMsgIndex(node, sec, rows, painter ? painter.shown() : 0, seen);
+      sec.markSeen();
     };
-    paint(SPECIAL.cached());        // cache first — instant, works with no signal
-    _pageLangHook = () => paint(SPECIAL.cached());
-    const refresh = () => SPECIAL.sync()
-      .then((rows) => { paint(rows); SPECIAL.markSeen(); })
-      .catch(() => SPECIAL.markSeen());   // offline → the cache is the page
+    paint(sec.cached());            // cache first — instant, works with no signal
+    _pageLangHook = () => paint(sec.cached());
+    // On failure repaint from the cache rather than leaving whatever was there:
+    // on a storage-wiped device the first paint saw an empty cache, and the
+    // APK seed only lands part-way through refresh() (see SPECIAL.seed).
+    const refresh = () => sec.refresh().then(paint).catch(() => paint(sec.cached()));
     refresh();
-    if (window.WA && WA.subscribeSpecial) {
-      _specialStream = WA.subscribeSpecial({ onChange: refresh });
+    if (sec.subscribe) _specialStream = sec.subscribe(refresh);
+  }
+
+  // ---- the READER (#/m/<key>/<id>) -----------------------------------------
+  function msgReaderPage(key, focusId) {
+    const sec = MSG_SECTIONS[key];
+    const nav = _nav;
+    setChrome("reader", sec.title, null);
+    const box = el(`<div class="m-reader"><div class="loading">Loading…</div></div>`);
+    $view.replaceChildren(box);
+
+    const WIN = 3;                  // messages added per extension
+    let rows = [], lo = 0, hi = 0, curArt = null, rafC = 0;
+
+    function build(row) {
+      const v = sec.norm(row, prefLang);
+      const track = v.pages && v.pages.length
+        ? `<div class="pc-track">${v.pages.map((u, i) =>
+            `<div class="pc-page"><img src="${u}" loading="${i ? "lazy" : "eager"}" decoding="async" alt="page ${i + 1}"></div>`).join("")}</div>`
+        : `<div class="pc-track pc-text">${escapeHtml(v.text || "")}</div>`;
+      const hasText = !!(v.pages && v.pages.length && v.text);
+      // .mr-textmsg pins the message to exactly one band tall. That has to be
+      // in place BEFORE the carousel measures: text pagination is `column-fill:
+      // auto` against a definite height, and a message free to grow would just
+      // render one very tall column instead of paging.
+      const art = el(`<article class="mr-msg${v.pages ? "" : " mr-textmsg"}" data-id="${escapeHtml(v.id)}">
+          <div class="mr-head">
+            <div class="mr-htext">
+              <div class="mr-title">${escapeHtml(v.title || sec.title)}</div>
+              <div class="mr-sub">${escapeHtml(v.sub || "")}</div>
+            </div>
+            ${v.hiTag ? `<span class="sp-hitag">हिंदी</span>` : ""}
+            <div class="pc-count" hidden></div>
+          </div>
+          <div class="pc">
+            ${track}
+            <button class="pc-arrow pc-prev" type="button" hidden aria-label="Previous page">‹</button>
+            <button class="pc-arrow pc-next" type="button" hidden aria-label="Next page">›</button>
+          </div>
+          <div class="mr-foot">
+            <div class="pc-dots" hidden></div>
+            ${hasText ? `<button class="mr-textbtn" type="button">Read text</button>` : ""}
+          </div>
+          ${hasText ? `<div class="mr-text" hidden>${escapeHtml(v.text)}</div>` : ""}
+        </article>`);
+      art._view = v;
+      return art;
+    }
+    // Carousels must be wired AFTER the node is in the document — both the page
+    // count and the text column geometry are read off the live track width.
+    function wire(art) {
+      const v = art._view;
+      const imgs = art.querySelectorAll(".pc-page img");
+      art._car = wireCarousel(art, {
+        pages: imgs.length,          // 0 → measured (text mode)
+        onPage: () => { if (art === curArt) wirePanel(art); },
+      });
+      if (imgs.length) {
+        wireDoubleTap(art.querySelector(".pc-track"), () => {
+          const im = imgs[Math.min(imgs.length - 1, art._car ? art._car.page() : 0)];
+          if (im) enterZoom(im.currentSrc || im.src);
+        });
+      }
+      const tb = art.querySelector(".mr-textbtn");
+      if (tb) tb.addEventListener("click", () => {
+        const t = art.querySelector(".mr-text");
+        t.hidden = !t.hidden;
+        tb.textContent = t.hidden ? "Read text" : "Hide text";
+      });
+    }
+
+    // The top panel always describes the message you're actually looking at,
+    // and its share/download act on the page currently framed by the carousel.
+    function wirePanel(art) {
+      const v = art._view;
+      const page = () => (v.pages && v.pages.length
+        ? v.pages[Math.min(v.pages.length - 1, art._car ? art._car.page() : 0)] : null);
+      const pageNo = () => (art._car ? art._car.page() + 1 : 1);
+      const fileName = () => `${sec.key === "letterpad" ? "LP" : "SM"}_${v.date ? fmtDateFile(v.date) : v.id}` +
+        `${v.pages && v.pages.length > 1 ? "_p" + pageNo() : ""}.jpg`;
+
+      const dEl = $("m-panel-date");
+      dEl.textContent = v.date ? dpPillText(v.date) : sec.title;
+      dEl.onclick = () => go("#/m/" + sec.key);        // the pill jumps back to the index
+
+      const favId = sec.key + ":" + v.id;              // namespaced — `wa:favorites` is shared with the archive
+      const fav = $("m-panel-fav");
+      fav.classList.remove("m-vact-disabled");
+      fav.classList.toggle("on", store.isFav(favId));
+      fav.onclick = () => { store.toggleFav(favId); fav.classList.toggle("on", store.isFav(favId)); hapticTick(); };
+
+      const share = $("m-panel-share");
+      share.classList.remove("m-vact-disabled");
+      share.onclick = async () => {
+        const u = page();
+        if (!u) return shareMsgText(v.shareCaption);   // text message → share the words
+        if (isNativeApp && window.Capacitor.Plugins.Share) {
+          try { await nativeShareImage(u, fileName(), v.shareCaption); }
+          catch (err) { toast("Couldn't share: " + (err && err.message ? err.message : "please try again.")); }
+        } else shareImage(u, fileName(), v.shareCaption);
+      };
+
+      const dl = $("m-panel-dl"), u = page();
+      if (u) { dl.href = u; dl.setAttribute("download", fileName()); dl.classList.remove("m-vact-disabled"); }
+      else { dl.removeAttribute("href"); dl.classList.add("m-vact-disabled"); }
+      dl.onclick = async (ev) => {
+        if (!isNativeApp) { if (!page()) ev.preventDefault(); return; }
+        ev.preventDefault();
+        const uu = page(); if (!uu) return;
+        dl.classList.add("m-vact-disabled");
+        try { await nativeSaveToGallery(uu, fileName()); toast("Saved to Gallery → " + GALLERY_ALBUM); }
+        catch (err) { toast("Couldn't save: " + (err && err.message ? err.message : "please try again.")); }
+        finally { dl.classList.remove("m-vact-disabled"); }
+      };
+    }
+    // Whichever message owns the top of the viewport is "current".
+    function syncCurrent() {
+      const top = box.getBoundingClientRect().top;
+      let pick = null;
+      for (const a of box.querySelectorAll(".mr-msg")) {
+        if (a.getBoundingClientRect().bottom - top > 64) { pick = a; break; }
+      }
+      if (!pick || pick === curArt) return;
+      curArt = pick;
+      history.replaceState(null, "", "#/m/" + sec.key + "/" + encodeURIComponent(pick.dataset.id));
+      wirePanel(pick);
+    }
+
+    function insert(from, to, before) {
+      const made = [];
+      const frag = document.createDocumentFragment();
+      for (let i = from; i < to; i++) { const a = build(rows[i]); made.push(a); frag.appendChild(a); }
+      box.insertBefore(frag, before);
+      made.forEach(wire);            // now in the document — safe to measure
+      return made;
+    }
+    // Grow the mounted window when the user gets within a screen of either end.
+    // Driven off the same scroll handler as syncCurrent rather than sentinel
+    // IntersectionObservers — one code path, and nothing to keep in sync when
+    // an end is reached.
+    function maybeExtend() {
+      const pad = box.clientHeight || 1;
+      if (hi < rows.length && box.scrollTop + box.clientHeight + pad >= box.scrollHeight) {
+        const end = Math.min(rows.length, hi + WIN);
+        insert(hi, end, null);
+        hi = end;
+      }
+      if (lo > 0 && box.scrollTop <= pad) {
+        const start = Math.max(0, lo - WIN);
+        const before = box.scrollHeight;
+        insert(start, lo, box.firstChild);
+        lo = start;
+        box.scrollTop += box.scrollHeight - before;   // pin the reading position
+      }
+    }
+
+    function mount(list, focus) {
+      if (!current(nav)) return;
+      rows = list || [];
+      curArt = null;
+      if (!rows.length) { box.innerHTML = msgHolderHtml(sec); return; }
+      let idx = rows.findIndex((r) => sec.idOf(r) === focus);
+      if (idx < 0) idx = 0;
+      lo = Math.max(0, idx - 1);
+      hi = Math.min(rows.length, idx + 3);
+      box.innerHTML = "";
+      insert(lo, hi, null);
+      const focusEl = box.querySelectorAll(".mr-msg")[idx - lo];
+      if (focusEl) box.scrollTop = focusEl.offsetTop;
+      syncCurrent();
+    }
+
+    box.addEventListener("scroll", () => {
+      if (rafC) return;
+      rafC = requestAnimationFrame(() => { rafC = 0; maybeExtend(); syncCurrent(); });
+    }, { passive: true });
+
+    const focusNow = () => (curArt ? curArt.dataset.id : focusId);
+    mount(sec.cached(), focusId);                     // cache first — instant + offline
+    sec.markSeen();
+    // Same reason as the index page: the APK seed may only have landed during
+    // refresh(), so a failure still re-mounts from whatever the cache now holds.
+    sec.refresh()
+      .then((list) => { if (current(nav)) mount(list, focusNow()); })
+      .catch(() => { if (current(nav)) mount(sec.cached(), focusNow()); });
+    _pageLangHook = () => mount(rows, focusNow());
+    if (sec.subscribe) {
+      _specialStream = sec.subscribe(() => sec.refresh()
+        .then((list) => { if (current(nav)) { mount(list, focusNow()); sec.markSeen(); } })
+        .catch(() => {}));
     }
   }
 
-  // ---- Guru's Letterpad Messages (image pages + OCR text) ------------------
-  function letterpadPage() {
-    const node = el(`<div class="lp-list m-lp-list"></div>`);
-    // Natural full-page scroll (NOT the fixed-height m-page-scroll box, which
-    // only scrolls a dedicated .m-results child and would clip these cards).
-    pageFrame("Guru's Letterpad Messages", node);
-    let handle = null;
-    renderLetterpadInto(node, () => prefLang).then((h) => { handle = h; });
-    // Follow the bottom-bar हिंदी/English toggle (per-message pages+text repaint).
-    _pageLangHook = () => { if (handle) handle.repaint(); };
+  // Text-only share (Special Messages have no image to attach).
+  async function shareMsgText(text) {
+    if (!text) { toast("Nothing to share."); return; }
+    try { if (navigator.share) { await navigator.share({ text }); return; } }
+    catch (err) { if (err && err.name === "AbortError") return; }
+    try { await navigator.clipboard.writeText(text); toast("Message copied to clipboard."); }
+    catch { toast("Couldn't share."); }
   }
 
   // ---- Message to Admin ----------------------------------------------------
@@ -4697,15 +5375,19 @@ const MOBILE_UI = (() => {
       if (!seg.length) return viewer(null, params, true);
       if (seg[0] === "entry") return viewer(seg[1], params, false);
       if (seg[0] === "favorites") return favoritesPage();
-      if (seg[0] === "special") return specialPage();   // desktop-style link → same page
-      if (seg[0] === "letterpad") return letterpadPage();
+      if (seg[0] === "special") return msgIndexPage("special");   // desktop-style link → same page
+      if (seg[0] === "letterpad") return msgIndexPage("letterpad");
       const p = seg[1];
       if (p === "search") return searchPage(params);
       if (p === "nomsg") return renderDateMessage(params.get("d"));
       if (p === "community") return communityPage(params);
       if (p === "anushthan") return placeholderPage("Anushthan Message", "अनुष्ठान संदेश");
-      if (p === "special") return specialPage();
-      if (p === "letterpad") return letterpadPage();
+      // #/m/<section>        → the index
+      // #/m/<section>/<id>   → the full-screen reader, opened on that message
+      //                        (also where a push-notification tap can land)
+      if (p === "special" || p === "letterpad") {
+        return seg[2] ? msgReaderPage(p, decodeURIComponent(seg[2])) : msgIndexPage(p);
+      }
       if (p === "contact") return contactPage();
       if (p === "account") return accountPage();
       return viewer(null, params, true);
@@ -4775,3 +5457,7 @@ safeRoute();
 // message that arrived while the app was closed shows its badge on this open.
 SPECIAL.refreshBadges();
 SPECIAL.sync().catch(() => {});
+// Letterpad: same cache-first badge paint; loadIndex() itself refreshes the
+// badge once the live index.json fetch resolves (see LETTERPAD.loadIndex()).
+LETTERPAD.refreshBadges();
+LETTERPAD.loadIndex().catch(() => {});

@@ -51,6 +51,13 @@ function _tableMissing(error) {
     : null;
 }
 
+// Friendly text when the user_data backup table hasn't been created yet.
+function _userDataMissing(error) {
+  return /user_data.*(does not exist|not find|schema cache)/i.test(error.message || "")
+    ? "Backup isn't set up yet. (Admin: run the user_data section of supabase/schema.sql.)"
+    : null;
+}
+
 // Friendly text when the special_messages table hasn't been created yet.
 function _specialMissing(error) {
   return /special_messages.*(does not exist|not find|schema cache)/i.test(error.message || "")
@@ -314,6 +321,35 @@ const WA = {
   async deleteSpecialMessage(id) {
     const { error } = await _sb.from("special_messages").delete().eq("id", id);
     if (error) throw new Error(error.message);
+    return { ok: true };
+  },
+
+  // ----- Personal data backup (favourites + notes) ------------------------
+  // Table: user_data (see supabase/schema.sql). Favourites and notes live only
+  // in this device's localStorage, so "Clear storage" or a lost phone destroys
+  // them — unlike every other section, which is bundled in the APK or
+  // re-syncable. This is their off-device copy. One private row per user.
+  async loadUserData() {
+    const { data: { session } } = await _sb.auth.getSession();
+    if (!session) return null;                     // signed out — nothing to restore
+    const { data, error } = await _sb.from("user_data")
+      .select("favorites,notes,updated_at").eq("user_id", session.user.id).maybeSingle();
+    if (error) throw new Error(_userDataMissing(error) || error.message);
+    if (!data) return { favorites: [], notes: {}, updated_at: null };
+    return {
+      favorites: Array.isArray(data.favorites) ? data.favorites : [],
+      notes: (data.notes && typeof data.notes === "object") ? data.notes : {},
+      updated_at: data.updated_at,
+    };
+  },
+  // Writes the MERGED set (app.js merges — see syncUserData there), never a
+  // bare local overwrite, so a second device can't wipe the first one's data.
+  async saveUserData(favorites, notes) {
+    const { data: { session } } = await _sb.auth.getSession();
+    if (!session) return { ok: false };
+    const row = { user_id: session.user.id, favorites: favorites || [], notes: notes || {} };
+    const { error } = await _sb.from("user_data").upsert(row, { onConflict: "user_id" });
+    if (error) throw new Error(_userDataMissing(error) || error.message);
     return { ok: true };
   },
 
