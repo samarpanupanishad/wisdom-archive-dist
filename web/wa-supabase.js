@@ -28,15 +28,37 @@ function _authMsg(error) {
   const m = (error && error.message) || "Something went wrong.";
   if (/invalid login credentials/i.test(m)) return "Wrong email or password.";
   if (/already registered|already exists/i.test(m)) return "An account with that email already exists.";
+  if (/email not confirmed/i.test(m)) return "Please verify your email first — we'll send you a new code.";
+  if (/token has expired|expired or is invalid|invalid.*token/i.test(m))
+    return "That code is wrong or has expired. Tap “Send a new code” to get another.";
+  if (/only request this after|rate limit|too many/i.test(m))
+    return "Too many attempts. Please wait a minute, then try again.";
   if (/email.*confirm|confirm.*email/i.test(m)) return "Please confirm your email, then sign in.";
+  // Offline / DNS / server unreachable — fetch rejects with a bare "Failed to fetch".
+  if (/failed to fetch|networkerror|network request failed/i.test(m))
+    return "No internet connection. Please connect and try again.";
   return m;
+}
+
+// True when a Supabase session is on disk, WITHOUT touching the network.
+// The hard startup gate (AUTH_GATE in app.js) needs this: an access token
+// expires hourly, so an offline launch must be judged on "is there a stored
+// session at all", never on whether it can be refreshed right now. Otherwise a
+// signed-in user with no signal gets locked out of fully-cached content.
+function _hasStoredSession() {
+  try {
+    const raw = localStorage.getItem("wa:sb-session");
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    return !!(s && (s.refresh_token || (s.currentSession && s.currentSession.refresh_token)));
+  } catch (_) { return false; }
 }
 
 // A profile row → the `user` object the UI uses (matches auth.py _public_user).
 function _userFromProfile(p) {
   return {
     id: p.id, username: p.username, role: p.role, email: p.email,
-    chat_muted: !!p.chat_muted, chat_credits: p.chat_credits, created: p.created,
+    chat_muted: !!p.chat_muted, created: p.created,
   };
 }
 function _mapMsg(row) {
@@ -55,6 +77,17 @@ function _tableMissing(error) {
 function _userDataMissing(error) {
   return /user_data.*(does not exist|not find|schema cache)/i.test(error.message || "")
     ? "Backup isn't set up yet. (Admin: run the user_data section of supabase/schema.sql.)"
+    : null;
+}
+
+// Friendly text when the access_requests section hasn't been run yet. Matched on
+// the RPC name too: a missing FUNCTION reports "Could not find the function
+// public.request_community_access…", which never mentions the table.
+function _accessMissing(error) {
+  const m = (error && error.message) || "";
+  return /access_requests|access_request|community_access/i.test(m) &&
+    /does not exist|not find|schema cache/i.test(m)
+    ? "Community access requests aren't set up yet. (Admin: run the access_requests section of supabase/schema.sql.)"
     : null;
 }
 
@@ -86,6 +119,10 @@ const WA = {
     return { token: data.session.access_token, user: await _loadProfile(data.user.id) };
   },
 
+  // With "Confirm email" ON (mandatory since the hard gate — AUTH_GATE_PLAN.md),
+  // sign-up yields NO session: Supabase mails a 6-digit code that verifyOtp()
+  // exchanges for one. So the normal return here is {needsVerification: true},
+  // not a signed-in user — the caller must show the code screen.
   async register(username, email, password) {
     username = (username || "").trim();
     email = (email || "").trim();
@@ -94,11 +131,67 @@ const WA = {
     if ((password || "").length < 6) throw new Error("Password must be at least 6 characters.");
     const { data, error } = await _sb.auth.signUp({ email, password, options: { data: { username } } });
     if (error) throw new Error(_authMsg(error));
-    if (!data.session) throw new Error("Account created. Please confirm your email, then sign in.");
+
+    // ⚠ Supabase's email-enumeration protection means signing up with an
+    // ALREADY-CONFIRMED address returns success with an obfuscated user and NO
+    // error — and sends no mail. The only tell is an empty `identities` array.
+    // Without this check the user would sit on the code screen forever waiting
+    // for a mail that was never sent.
+    if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      throw new Error("An account with that email already exists. Please sign in instead.");
+    }
+    // An existing but UNCONFIRMED address takes the normal path below: Supabase
+    // re-sends the code, which is exactly what that person needs.
+    if (!data.session) return { needsVerification: true, email };
+    return { token: data.session.access_token, user: await _loadProfile(data.user.id) };
+  },
+
+  // Exchange the 6-digit code from the sign-up email for a real session.
+  async verifyEmailCode(email, code) {
+    email = (email || "").trim();
+    code = (code || "").replace(/\D/g, "");
+    if (code.length !== 6) throw new Error("Enter the 6-digit code from your email.");
+    const { data, error } = await _sb.auth.verifyOtp({ email, token: code, type: "signup" });
+    if (error) throw new Error(_authMsg(error));
+    if (!data.session) throw new Error("Could not verify that code. Please request a new one.");
+    return { token: data.session.access_token, user: await _loadProfile(data.user.id) };
+  },
+
+  // Re-send the sign-up code (codes expire; the button must always be reachable).
+  async resendEmailCode(email) {
+    const { error } = await _sb.auth.resend({ type: "signup", email: (email || "").trim() });
+    if (error) throw new Error(_authMsg(error));
+    return { ok: true };
+  },
+
+  // ----- Password reset (same 6-digit-code mechanism, type 'recovery') ----
+  async requestPasswordReset(email) {
+    email = (email || "").trim();
+    if (!EMAIL_RE.test(email)) throw new Error("Please enter a valid email address.");
+    const { error } = await _sb.auth.resetPasswordForEmail(email);
+    if (error) throw new Error(_authMsg(error));
+    return { ok: true };
+  },
+  // Verifying a recovery code signs the user in; then set the new password.
+  async resetPassword(email, code, newPassword) {
+    code = (code || "").replace(/\D/g, "");
+    if (code.length !== 6) throw new Error("Enter the 6-digit code from your email.");
+    if ((newPassword || "").length < 6) throw new Error("Password must be at least 6 characters.");
+    const { data, error } = await _sb.auth.verifyOtp({
+      email: (email || "").trim(), token: code, type: "recovery",
+    });
+    if (error) throw new Error(_authMsg(error));
+    if (!data.session) throw new Error("Could not verify that code. Please request a new one.");
+    const { error: upErr } = await _sb.auth.updateUser({ password: newPassword });
+    if (upErr) throw new Error(_authMsg(upErr));
     return { token: data.session.access_token, user: await _loadProfile(data.user.id) };
   },
 
   async logout() { try { await _sb.auth.signOut(); } catch (_) {} },
+
+  // Sync, no network: is a session stored on this device? The startup gate's
+  // offline-grace check — see _hasStoredSession().
+  hasStoredSession() { return _hasStoredSession(); },
 
   // Current session + fresh profile (used on boot to refresh role/state).
   async me() {
@@ -119,8 +212,8 @@ const WA = {
   },
 
   // ----- Chat -----------------------------------------------------------
-  // Returns {messages, can_moderate, me, credits_remaining, is_muted} or throws
-  // an Error tagged with .code = "AUTH" (not signed in) / "FORBIDDEN" (not a member).
+  // Returns {messages, can_moderate, me, is_muted} or throws an Error tagged with
+  // .code = "AUTH" (not signed in) / "FORBIDDEN" (not a member).
   async getChat(wid) {
     const { data: { session } } = await _sb.auth.getSession();
     if (!session) throw Object.assign(new Error("Not signed in."), { code: "AUTH" });
@@ -133,27 +226,23 @@ const WA = {
       .eq("wisdom_id", String(wid)).order("created_at", { ascending: true });
     if (error) throw new Error(error.message);
     const res = { messages: (data || []).map(_mapMsg), can_moderate: isMod, me: user.username };
-    if (!isMod) { res.credits_remaining = user.chat_credits; res.is_muted = !!user.chat_muted; }
+    if (!isMod) res.is_muted = !!user.chat_muted;
     return res;
   },
 
-  // Returns {message, credits_remaining}; throws Error.code MUTED / NO_CREDITS
-  // so the UI can react exactly as it did to the old 403 detail codes.
+  // Returns {message}; throws Error.code MUTED. Members post without limit —
+  // message credits were removed (membership is capped by invitation instead),
+  // so muting is the only thing that can block a post.
   async postMessage(wid, text) {
     const { data: { session } } = await _sb.auth.getSession();
     if (!session) throw Object.assign(new Error("Not signed in."), { code: "AUTH" });
     const me = await _loadProfile(session.user.id);
     const isMod = me.role === "moderator" || me.role === "sutradhar";
-    if (!isMod) {
-      if (me.chat_muted) throw Object.assign(new Error("You have been muted."), { code: "MUTED" });
-      if (me.role === "member" && me.chat_credits <= 0) throw Object.assign(new Error("No credits."), { code: "NO_CREDITS" });
-    }
+    if (!isMod && me.chat_muted) throw Object.assign(new Error("You have been muted."), { code: "MUTED" });
     const { data, error } = await _sb.from("messages")
       .insert({ wisdom_id: String(wid), text: text }).select("*").single();
     if (error) throw new Error(error.message);
-    let credits_remaining = null;
-    if (!isMod && me.role === "member") credits_remaining = Math.max(0, me.chat_credits - 1);
-    return { message: _mapMsg(data), credits_remaining };
+    return { message: _mapMsg(data) };
   },
 
   async deleteMessage(wid, mid) {
@@ -166,7 +255,6 @@ const WA = {
     if (error) throw new Error(error.message);
     return { ok: true };
   },
-  requestCredits() { return _rpc("request_credits"); },
 
   // Live chat via Supabase Realtime (replaces the SSE stream). Returns a handle
   // with .close(). onMessage(msg) / onDelete(id) fire on inserts/deletes.
@@ -353,6 +441,38 @@ const WA = {
     return { ok: true };
   },
 
+  // ----- Community access requests ---------------------------------------
+  // Every user now has an account (hard startup gate), but an account is only a
+  // BROWSING pass — role 'visitor'. Joining the community is a separate, explicit
+  // ask that a moderator approves. See the access_requests section of schema.sql.
+  //
+  // Returns {ok, already_pending, status, requested_at}. Idempotent server-side,
+  // so a double tap can't queue two requests.
+  requestAccess(note) { return _rpc("request_community_access", { note_text: note || "" }); },
+
+  // The caller's own state, for the button's label: {role, status, requested_at,
+  // decided_at}. `status` is null when they have never asked. Never throws for a
+  // missing table — the button just falls back to "not requested".
+  async myAccessRequest() {
+    try { return await _rpc("my_access_request"); }
+    catch (e) {
+      if (_accessMissing(e)) return { role: null, status: null, unavailable: true };
+      throw e;
+    }
+  },
+
+  // Moderator side of the queue.
+  async listAccessRequests() {
+    try { return await _rpc("list_access_requests"); }
+    catch (e) {
+      const m = _accessMissing(e);
+      if (m) throw new Error(m);
+      throw e;
+    }
+  },
+  approveAccess(id) { return _rpc("approve_access_request", { rid: id }); },
+  denyAccess(id) { return _rpc("deny_access_request", { rid: id }); },
+
   // ----- Moderator ------------------------------------------------------
   listUsers() { return _rpc("list_users"); },
   listMembers() { return _rpc("list_members"); },
@@ -360,12 +480,8 @@ const WA = {
   renameUser(id, username) { return _rpc("rename_user", { uid: id, new_username: username }); },
   deleteUser(id) { return _rpc("delete_user", { uid: id }); },
   toggleMute(id) { return _rpc("toggle_mute", { uid: id }); },
-  setCredits(id, credits) { return _rpc("set_credits", { uid: id, credits }); },
   transferLeadership(id) { return _rpc("transfer_leadership", { uid: id }); },
   setSignup(enabled) { return _rpc("set_signup", { enabled }); },
-  listCreditRequests() { return _rpc("list_credit_requests"); },
-  approveCreditRequest(id, credits) { return _rpc("approve_credit_request", { rid: id, credits }); },
-  denyCreditRequest(id) { return _rpc("deny_credit_request", { rid: id }); },
 };
 
 window.WA = WA;

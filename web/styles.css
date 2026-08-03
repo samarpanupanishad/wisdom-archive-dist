@@ -702,26 +702,13 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-ta { flex: 1; resize: none; border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-family: var(--sans); font-size: 14px; line-height: 1.45; background: var(--bg); color: var(--text); outline: none; transition: border-color .15s, box-shadow .15s; }
 .wc-ta:focus { border-color: var(--accent); box-shadow: var(--ring); }
 .wc-send { padding: 9px 18px; border-radius: 10px; font-size: 14px; white-space: nowrap; }
-.wc-credits { display: block; font-size: 11px; color: var(--muted); text-align: right; padding: 0 14px 6px; }
 .wc-muted { padding: 18px; text-align: center; color: var(--muted); font-size: 14px; background: #fafafa; border-top: 1px solid var(--border-soft); }
-.wc-no-credits { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-top: 1px solid var(--border-soft); font-size: 13px; color: var(--muted); }
-.wc-req-btn { font-size: 12px; padding: 6px 14px; }
 /* Mod panel — chat controls per member */
 .mu-chat-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 0 2px; }
 .mu-muted-tag { font-size: 10px; background: #fde8e8; color: #b94040; border-radius: 4px; padding: 1px 5px; font-weight: 600; vertical-align: middle; margin-left: 4px; }
 .mu-sutradhar-tag { font-size: 10px; background: linear-gradient(90deg, #7c3aed, #a855f7); color: #fff; border-radius: 4px; padding: 1px 6px; font-weight: 700; vertical-align: middle; margin-left: 6px; letter-spacing: 0.02em; }
 .mu-transfer { background: linear-gradient(90deg, #7c3aed, #a855f7); color: #fff; border: none; font-size: 12px; padding: 5px 12px; border-radius: 7px; cursor: pointer; }
-.mu-credits-wrap { display: flex; align-items: center; gap: 4px; }
-.mu-credits-inp { border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 13px; background: var(--bg); }
 /* Mod panel — credit requests card */
-.mod-credit-reqs { margin-top: 0; }
-.mod-req-empty { font-size: 13px; color: var(--muted); padding: 6px 0; }
-.mod-req-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-soft); flex-wrap: wrap; }
-.mod-req-row:last-child { border-bottom: none; }
-.mod-req-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
-.mod-req-credits { font-size: 12px; color: var(--muted); }
-.mod-req-actions { display: flex; align-items: center; gap: 6px; }
-.mod-req-inp { border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 13px; background: var(--bg); }
 .mod-user { flex-wrap: wrap; }
 
 /* ---------------- Selected-wisdom bar (right column, above the boxes) ---------------- */
@@ -1767,6 +1754,12 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
   .sp-card.sp-dual { grid-template-columns: 1fr; }
   .sp-card.sp-dual .sp-col + .sp-col { border-left: none; padding-left: 0; border-top: 1px solid var(--border-soft); padding-top: 12px; margin-top: 12px; }
 }
+/* Desktop only: the card the Community panel is currently discussing. These
+   pages are lists, so without a visible marker it would be ambiguous which
+   message the panel opened (see wireDesktopChatTarget in app.js). */
+.sp-card.is-chat-target, .lp-card.is-chat-target {
+  box-shadow: inset 4px 0 0 var(--accent), var(--shadow);
+}
 .sp-title { font: 700 17px var(--serif); color: var(--accent); margin-bottom: 8px; }
 .sp-body { white-space: pre-wrap; font-size: 15.5px; line-height: 1.65; }
 .sp-foot { margin-top: 10px; color: var(--muted); font-size: 13px; }
@@ -1951,3 +1944,121 @@ body.m-mode.m-readermode .m-vpanel .m-vacts { margin-left: auto; }
   font: 400 28px/1 var(--sans); color: var(--accent); border-radius: 50%;
 }
 .m-vback:active { background: var(--accent-soft, #f6e7dc); }
+
+/* ==========================================================================
+   AUTH_GATE — mandatory sign-in overlay at startup (AUTH_GATE_PLAN.md).
+   Its markup is built by app.js, not index.html, because OTA updates ship only
+   app.js/styles.css/wa-supabase.js/vendor — index.html never reaches an
+   installed APK. Keep these two in step.
+   ========================================================================== */
+.auth-gate {
+  position: fixed; inset: 0; z-index: 10050;   /* above #fs-prompt (9999) */
+  display: flex; align-items: center; justify-content: center;
+  padding: 22px;
+  background: var(--bg);
+  background-image: radial-gradient(120% 80% at 50% -10%, var(--accent-soft) 0%, transparent 60%);
+  overflow-y: auto;
+}
+.auth-gate[hidden] { display: none; }
+/* Stop the app underneath from scrolling behind the gate on mobile. */
+body.gated { overflow: hidden; }
+
+.ag-card {
+  width: 100%; max-width: 400px; margin: auto;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  padding: 26px 24px 22px;
+}
+.ag-brand { text-align: center; margin-bottom: 20px; }
+.ag-om { font: 400 34px/1 var(--serif); color: var(--accent); margin-bottom: 6px; }
+.ag-title { font: 700 19px/1.25 var(--serif); color: var(--text); }
+.ag-sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+
+.ag-view { display: flex; flex-direction: column; gap: 10px; }
+.ag-h { font-weight: 700; font-size: 16px; color: var(--text); }
+.ag-p { font-size: 13px; color: var(--muted); line-height: 1.55; margin: -4px 0 4px; }
+.ag-view input {
+  width: 100%; padding: 11px 13px; font-size: 15px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+}
+.ag-view input:focus { outline: none; border-color: var(--accent-2); box-shadow: var(--ring); }
+/* The code field reads as a code: wide tracking, centred, tabular digits. */
+.ag-view .ag-code {
+  text-align: center; font-size: 24px; font-weight: 700;
+  letter-spacing: .34em; text-indent: .34em;   /* indent balances the last gap */
+  font-variant-numeric: tabular-nums;
+}
+.ag-view .btn { justify-content: center; padding: 11px 14px; font-size: 15px; }
+.ag-view .pw-wrap { position: relative; display: block; }
+
+.ag-err:empty { display: none; }
+.ag-err {
+  padding: 9px 12px; border-radius: 10px; font-size: 13px;
+  background: #fcf3f3; border: 1px solid #e7b4b4; color: #a23b3b;
+}
+.ag-alt { font-size: 13px; color: var(--muted); text-align: center; }
+.ag-alt a { color: var(--accent); font-weight: 600; cursor: pointer; }
+.ag-alt a:hover { text-decoration: underline; }
+
+@media (max-width: 480px) {
+  .ag-card { padding: 22px 18px 18px; border-radius: 14px; }
+  .ag-om { font-size: 30px; }
+}
+
+/* ----- Community access requests (Moderator page) -------------------------
+   The queue card. Restores the .mod-req-* row look that the retired message-
+   credits card used to own, now serving access requests. */
+.mod-req-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.mod-req-empty { font-size: 13.5px; color: var(--muted); }
+.mod-req-row {
+  display: flex; align-items: center; gap: 12px; padding: 12px;
+  border: 1px solid var(--border); border-radius: 12px;
+}
+.mod-req-info { flex: 1; min-width: 0; }
+.mod-req-info strong { font-size: 14.5px; }
+.mod-req-note {
+  margin-top: 5px; padding: 7px 10px; font-size: 13px; color: var(--text);
+  background: var(--sidebar); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.mod-req-actions { display: flex; gap: 8px; flex: none; }
+/* The role labels are written in plain English already — don't Title-Case them. */
+.mod-user .mu-role { text-transform: none; }
+@media (max-width: 560px) {
+  .mod-req-row { flex-wrap: wrap; }
+  .mod-req-info { flex-basis: 100%; }
+}
+
+/* ----- accessBox(): "ask to join the community" --------------------------
+   One builder in app.js, three homes: the chat gate, the mobile Account page and
+   the avatar popover — so these styles must survive all three contexts. */
+.ax-box { margin-top: 14px; text-align: left; }
+.ax-box .ax-h { font-weight: 700; font-size: 14.5px; margin-bottom: 3px; }
+.ax-box .ax-note { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.ax-box .ax-ok {
+  padding: 10px 12px; border-radius: 10px; font-size: 13.5px;
+  background: var(--accent-soft); color: var(--text);
+}
+.ax-box .ax-pending {
+  padding: 12px 14px; border-radius: 12px;
+  background: var(--sidebar); border: 1px solid var(--border);
+}
+.ax-box .ax-ask {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.ax-box .ax-msg {
+  width: 100%; padding: 9px 11px; font: inherit; font-size: 13.5px; resize: vertical;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+}
+.ax-box .ax-msg:focus { outline: none; border-color: var(--accent-2); box-shadow: var(--ring); }
+.ax-box .ax-go { justify-content: center; }
+.ax-box .ax-err:empty { display: none; }
+.ax-box .ax-err { font-size: 13px; color: #a23b3b; }
+/* Inside the chat gate the box is centred content in a tall empty panel. */
+.wc-negativity + .ax-box { max-width: 380px; margin: 0 auto 28px; padding: 0 20px; }
+/* Inside the avatar popover, keep it narrow and flush with the menu padding. */
+#avatar-pop .ax-box { margin: 10px 0; }
+#avatar-pop .ax-box .ax-ask { padding: 11px; }

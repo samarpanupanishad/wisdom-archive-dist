@@ -73,6 +73,17 @@ function currentUser() { try { return JSON.parse(localStorage.getItem("wa:user")
 function isModerator() { const u = currentUser(); return !!(store.token() && u && (u.role === "moderator" || u.role === "sutradhar")); }
 function isSutradhar() { const u = currentUser(); return !!(store.token() && u && u.role === "sutradhar"); }
 function isSignedIn() { return !!(store.token() && currentUser()); }
+function isCommunityMember() { const u = currentUser(); return !!(u && (u.role === "member" || u.role === "moderator" || u.role === "sutradhar")); }
+
+// Plain-English role names. The stored values are database words that read badly
+// in the UI — 'visitor' sounds like a stranger rather than "signed up, hasn't
+// joined the community", and since the startup gate landed 'pending' means
+// "asked to join", not "new signup".
+const ROLE_LABELS = {
+  visitor: "No community access", pending: "Access requested",
+  member: "Member", moderator: "Moderator", sutradhar: "Sutradhar",
+};
+function roleLabel(r) { return ROLE_LABELS[r] || r || ""; }
 function refreshModNav() {
   document.getElementById("app").classList.toggle("is-mod", isModerator());
   updateAvatarFace();
@@ -93,12 +104,14 @@ function renderAvatarPop() {
   const pop = document.getElementById("avatar-pop"); if (!pop) return;
   if (isSignedIn()) {
     const u = currentUser();
-    pop.innerHTML = `<div class="ap-user"><div class="ap-name">${escapeHtml(u.username)}</div><div class="ap-role">${escapeHtml(u.role)}</div></div>
+    pop.innerHTML = `<div class="ap-user"><div class="ap-name">${escapeHtml(u.username)}</div><div class="ap-role">${escapeHtml(roleLabel(u.role))}</div></div>
       <button class="btn ap-signout">Sign out</button>`;
+    // Not a member yet → the popover is where they can ask to join.
+    if (!(u.role === "member" || u.role === "moderator" || u.role === "sutradhar")) {
+      pop.insertBefore(accessBox(), pop.querySelector(".ap-signout"));
+    }
     pop.querySelector(".ap-signout").addEventListener("click", () => {
-      WA.logout();
-      store.setToken(""); try { localStorage.removeItem("wa:user"); } catch {}
-      refreshModNav(); toast("Signed out"); closeAvatarPop(); safeRoute();
+      closeAvatarPop(); signOutToGate();
     });
   } else {
     pop.innerHTML = `<div class="ap-guest">You're browsing as a guest.</div><button class="btn primary ap-signin">Sign in</button>`;
@@ -136,6 +149,16 @@ function initAvatar() {
 }
 // Refresh the cached user from the live Supabase session so the Moderator nav
 // reflects reality (role changes, sign-out in another tab, expired session).
+//
+// Returns which of three things happened — the hard startup gate (AUTH_GATE)
+// decides whether to block on it, and the difference matters enormously:
+//   "ok"      session valid, profile refreshed.
+//   "offline" couldn't reach Supabase, but the stored session is still on disk.
+//             MUST NOT be treated as signed out: access tokens expire hourly, so
+//             any offline launch lands here, and locking the user out of content
+//             already cached on their device would be absurd.
+//   "none"    definitively signed out — Supabase rejected the refresh token and
+//             discarded the session, or there never was one.
 async function initAuthState() {
   refreshModNav();
   try {
@@ -145,10 +168,101 @@ async function initAuthState() {
     // Restore-then-back-up favourites/notes for an already-signed-in session.
     // This is what makes a storage-wiped device get its saved messages back.
     syncUserData();
-  } catch {
+    refreshModNav();
+    return "ok";
+  } catch (err) {
+    // The reliable signal is whether the session SURVIVED the attempt, not the
+    // error text: supabase-js erases the stored session when the refresh token
+    // is definitively rejected, and keeps it when the request merely failed to
+    // reach the server. navigator.onLine is only a secondary hint.
+    const stillStored = !!(window.WA && WA.hasStoredSession && WA.hasStoredSession());
+    const looksOffline = navigator.onLine === false ||
+      /no internet|failed to fetch|network/i.test((err && err.message) || "");
+    if (stillStored || looksOffline) { refreshModNav(); return "offline"; }
     store.setToken(""); try { localStorage.removeItem("wa:user"); } catch {}
+    refreshModNav();
+    return "none";
   }
+}
+
+// Sign out and go back to the startup gate. With a HARD gate there is no
+// signed-out state of the app to fall back into, so every sign-out path must
+// come through here — clearing the token and re-rendering would leave the user
+// staring at an app they are no longer allowed to be in.
+async function signOutToGate() {
+  try { await WA.logout(); } catch {}
+  store.setToken(""); try { localStorage.removeItem("wa:user"); } catch {}
   refreshModNav();
+  toast("Signed out");
+  AUTH_GATE.reopen();
+}
+
+// --------------------------------------------------------------------------
+// Community access request — the ONE builder for "ask to join the community".
+//
+// An account (which everyone now has, thanks to the startup gate) is only a
+// browsing pass: role 'visitor'. Chat and members-only conclusions need role
+// 'member', which a moderator grants. This element is the whole user side of
+// that: it shows where they stand and lets them ask.
+//
+// Used by the chat gate, the mobile Account page and the avatar popover — call
+// accessBox(), don't hand-write another copy of these states.
+// --------------------------------------------------------------------------
+function accessBox() {
+  const box = el(`<div class="ax-box"><div class="ax-note">Checking your access…</div></div>`);
+  paintAccessBox(box);
+  return box;
+}
+
+async function paintAccessBox(box) {
+  let d;
+  try { d = await WA.myAccessRequest(); }
+  catch (e) { box.innerHTML = `<div class="ax-note">${escapeHtml(e.message)}</div>`; return; }
+
+  const role = (d && d.role) || (currentUser() || {}).role || "visitor";
+  if (role === "member" || role === "moderator" || role === "sutradhar") {
+    box.innerHTML = `<div class="ax-ok">✓ You're an approved member of the community.</div>`;
+    return;
+  }
+  if (d && d.unavailable) {
+    box.innerHTML = `<div class="ax-note">Community access requests aren't set up on the server yet.</div>`;
+    return;
+  }
+
+  if (d && d.status === "pending") {
+    box.innerHTML = `<div class="ax-pending">
+      <div class="ax-h">⏳ Waiting for approval</div>
+      <div class="ax-note">You asked to join${d.requested_at ? " " + escapeHtml(timeAgo(d.requested_at)) : ""}.
+        A moderator will review it — you'll get in as soon as they approve.</div>
+    </div>`;
+    return;
+  }
+
+  const denied = d && d.status === "denied";
+  box.innerHTML = `<div class="ax-ask">
+    <div class="ax-h">${denied ? "Your last request wasn't approved" : "Join the community"}</div>
+    <div class="ax-note">${denied
+      ? "You can ask again — adding a few words about yourself helps."
+      : "Ask a moderator for access to the discussions. Tell them who you are (optional)."}</div>
+    <textarea class="ax-msg" rows="2" maxlength="500" placeholder="e.g. Sadhak from Pune, attending since 2019"></textarea>
+    <button class="btn primary ax-go">${denied ? "Ask again" : "Request access"}</button>
+    <div class="ax-err"></div>
+  </div>`;
+  const btn = box.querySelector(".ax-go");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true; btn.textContent = "Sending…";
+    try {
+      await WA.requestAccess(box.querySelector(".ax-msg").value);
+      toast("Request sent — a moderator will review it.");
+      // Role just became 'pending'; refresh the cached user so other views agree.
+      try { const u = currentUser(); if (u) { u.role = "pending"; localStorage.setItem("wa:user", JSON.stringify(u)); } } catch {}
+      refreshModNav();
+      paintAccessBox(box);
+    } catch (e) {
+      box.querySelector(".ax-err").textContent = e.message;
+      btn.disabled = false; btn.textContent = denied ? "Ask again" : "Request access";
+    }
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -571,6 +685,27 @@ function timeAgo(isoStr) {
 // --------------------------------------------------------------------------
 
 let _stageId = null;         // the wisdom currently shown on the home stage
+// ---- chat target for the NON-archive sections -----------------------------
+// Which Special Telegram / Letterpad message is currently open, so tapping
+// Community opens THAT message's discussion instead of the last daily msg.
+//
+// Deliberately NOT reusing _stageId: that is read in a dozen places that all
+// assume a numeric archive id (/api/entry fetches, the conclusion panel, the
+// "Currently showing ID" hint, arrow-key carousel gating), and a namespaced id
+// there would 404 the entry fetch and corrupt the conclusion panel.
+//
+// `wid` is namespaced ("special:2564", "letterpad:2026-07-15_01"). messages.
+// wisdom_id is a plain text column with no FK, and its RLS is role-based, so
+// these keys need NO schema change and cannot collide with numeric daily ids.
+// Cleared on every navigation by route(), like _stageId.
+let _chatCtx = null;   // { wid, title, dateLabel, back } | null
+const CHAT_NS_RE = /^(special|letterpad):(.+)$/;
+const CHAT_NS_LABEL = { special: "Special Telegram Msg", letterpad: "Guru's Letterpad Msg" };
+// Human label for any wisdom_id, namespaced or plain-numeric archive id.
+function chatWidLabel(wid) {
+  const m = CHAT_NS_RE.exec(String(wid || ""));
+  return m ? CHAT_NS_LABEL[m[1]] : "Guru's msg #" + wid;
+}
 // Set while a search-result's detail view is open (to whatever restores the
 // list); null while the list itself is showing. Lets Escape / the global
 // keydown handler find "go back to list" without route()-specific plumbing.
@@ -646,7 +781,7 @@ function renderConclusionEditor(body, id, d) {
     try { await saveConclusion(id, "", body.querySelector('input[name="conc-vis"]:checked').value); ta.value = ""; result.innerHTML = `<div class="conc-ok">Conclusion cleared.</div>`; toast("Cleared"); loadConclusion(id); }
     catch (err) { result.innerHTML = `<div class="conc-err">${escapeHtml(err.message)}</div>`; }
   });
-  body.querySelector(".conc-signout").addEventListener("click", () => { WA.logout(); store.setToken(""); try { localStorage.removeItem("wa:user"); } catch {} refreshModNav(); renderConclusionPanelBody(id); loadConclusion(id); toast("Signed out"); });
+  body.querySelector(".conc-signout").addEventListener("click", () => { signOutToGate(); });
 }
 
 // A password input wrapped with a show/hide eye toggle (handled by a delegated
@@ -815,9 +950,11 @@ const CHAT_EMOJIS = ['😊','😂','🙏','❤️','👍','🙌','✨','🌟','�
 // Community tab — per-wisdom chat when a wisdom is open, recent feed otherwise
 // --------------------------------------------------------------------------
 async function renderCommunityTab(body) {
-  const chatTarget = _stageId || store.lastViewed();
+  // A Special Telegram / Letterpad message being read wins over the archive
+  // entry, so the panel discusses whatever is actually on screen.
+  const chatTarget = (_chatCtx && _chatCtx.wid) || _stageId || store.lastViewed();
   if (chatTarget) {
-    await renderWisdomChat(body, chatTarget);
+    await renderWisdomChat(body, chatTarget, _chatCtx && _chatCtx.title);
   } else {
     // No wisdom selected — show global recent feed
     body.innerHTML = `<div class="cp-feed-wrap" id="cp-feed-wrap"><div class="loading" style="padding:24px">Loading…</div></div>`;
@@ -839,13 +976,20 @@ async function renderCommunityTab(body) {
           <div class="cpm-body">
             <div class="cpm-meta">
               <span class="cpm-user">${escapeHtml(m.user || "")}</span>
-              <a class="cpm-wid" data-wid="${escapeHtml(m.wid)}" href="#">Guru's msg #${escapeHtml(m.wid)}</a>
+              <a class="cpm-wid" data-wid="${escapeHtml(m.wid)}" href="#">${escapeHtml(chatWidLabel(m.wid))}</a>
               <span class="cpm-time">${timeAgo(m.ts)}</span>
             </div>
             <div class="cpm-text">${renderMarkdown(m.text || "")}</div>
           </div>
         </div>`);
-        item.querySelector(".cpm-wid").addEventListener("click", (e) => { e.preventDefault(); if (_sidePanelClose) _sidePanelClose(); go(`#/entry/${m.wid}`); });
+        // Namespaced ids are not archive entries — route them to their own section
+        // instead of #/entry/<id>, which would 404.
+        item.querySelector(".cpm-wid").addEventListener("click", (e) => {
+          e.preventDefault();
+          if (_sidePanelClose) _sidePanelClose();
+          const ns = CHAT_NS_RE.exec(String(m.wid));
+          go(ns ? `#/m/${ns[1]}/${encodeURIComponent(ns[2])}` : `#/entry/${m.wid}`);
+        });
         wrap.appendChild(item);
       });
     } catch {
@@ -935,11 +1079,13 @@ function openChatStream(wid, msgsEl, ctx) {
   });
 }
 
-async function renderWisdomChat(body, wid) {
+// `label` overrides the header title — Special Telegram / Letterpad messages
+// pass their own subject, since "Guru's msg #special:2564" is meaningless.
+async function renderWisdomChat(body, wid, label) {
   closeChatStream();
   body.innerHTML = `<div class="wc-wrap">
     <div class="wc-hdr">
-      <span class="wc-title">${COMMUNITY_ICON} Guru's msg #${escapeHtml(wid)}</span>
+      <span class="wc-title">${COMMUNITY_ICON} ${escapeHtml(label || chatWidLabel(wid))}</span>
       <button class="wc-refresh cp-refresh" title="Refresh">↻</button>
     </div>
     <div class="wc-msgs" id="wc-msgs"><div class="loading" style="padding:20px">Loading…</div></div>
@@ -974,11 +1120,14 @@ async function renderWisdomChat(body, wid) {
       return;
     }
     if (err.code === "FORBIDDEN") {
+      // Signed in but not a member. This used to be a dead end; now it's the
+      // main place people ask to join.
       msgsEl.innerHTML = `<div class="wc-negativity">
         <div class="wc-nz-ico">🚫</div>
         <div class="wc-nz-h">Negativity Zone</div>
         <div class="wc-nz-sub">Community discussions are for approved members only.</div>
       </div>`;
+      msgsEl.appendChild(accessBox());
       return;
     }
     msgsEl.innerHTML = `<div class="comm-empty" style="padding:24px">Could not load chat.</div>`;
@@ -990,29 +1139,15 @@ async function renderWisdomChat(body, wid) {
   renderChatMessages(msgsEl, data.messages, ctx);
   openChatStream(wid, msgsEl, ctx);   // live updates for everyone — even muted readers
 
-  // Input area — muted / no credits / normal
+  // Input area — muted or normal. Members post WITHOUT limit: message credits
+  // were removed (membership is capped by invitation instead), so muting is the
+  // only state that can take the composer away.
   let emojiOpen = false;
   const isMuted = !data.can_moderate && data.is_muted;
-  const noCredits = !data.can_moderate && !data.is_muted && data.credits_remaining === 0;
 
   if (isMuted) {
     footEl.innerHTML = `<div class="wc-muted">🔇 You have been muted by the moderator.</div>`;
-  } else if (noCredits) {
-    footEl.innerHTML = `<div class="wc-no-credits">
-      <span>You've used all your messages.</span>
-      <button class="btn wc-req-btn" id="wc-req-credits">Request more</button>
-    </div>`;
-    footEl.querySelector("#wc-req-credits").addEventListener("click", async (e) => {
-      e.target.disabled = true;
-      try {
-        const d = await WA.requestCredits();
-        if (d.already_pending) toast("Your request is already pending — the moderator will review it.");
-        else toast("Request sent! The moderator will review it.");
-      } catch { toast("Could not send request."); e.target.disabled = false; }
-    });
   } else {
-    const creditsHint = (!data.can_moderate && data.credits_remaining != null)
-      ? `<span class="wc-credits">${data.credits_remaining} msg${data.credits_remaining === 1 ? "" : "s"} left</span>` : "";
     footEl.innerHTML = `
       <div class="wc-toolbar">
         <button class="wc-tb-btn" data-wrap="**||**" title="Bold"><strong>B</strong></button>
@@ -1025,11 +1160,10 @@ async function renderWisdomChat(body, wid) {
         <textarea class="wc-ta" id="wc-ta" placeholder="Share your reflection… (Enter to send, Shift+Enter for new line)" rows="2"></textarea>
         <button class="wc-send btn primary" id="wc-send">Send</button>
       </div>
-      ${creditsHint}
     `;
   }
 
-  if (!isMuted && !noCredits) {
+  if (!isMuted) {
     // Emoji picker. The outside-click listener is only ATTACHED while the
     // picker is actually open (not a one-shot added at render time) — it used
     // to remove itself on the first click anywhere on the page, open or not,
@@ -1072,17 +1206,11 @@ async function renderWisdomChat(body, wid) {
       try {
         const d = await WA.postMessage(wid, text);
         ta.value = "";
-        // Update credits hint without full reload
-        if (d.credits_remaining != null) {
-          const hint = footEl.querySelector(".wc-credits");
-          if (hint) hint.textContent = `${d.credits_remaining} msg${d.credits_remaining === 1 ? "" : "s"} left`;
-          if (d.credits_remaining === 0) { renderWisdomChat(body, wid); return; }
-        }
         // Show our message at once; the live stream echoes it, but dedup-by-id avoids a double.
         if (d.message) chatAppendLive(msgsEl, d.message, ctx);
         sendBtn.disabled = false;
       } catch (err) {
-        if (err.code === "NO_CREDITS" || err.code === "MUTED") { renderWisdomChat(body, wid); return; }
+        if (err.code === "MUTED") { renderWisdomChat(body, wid); return; }
         toast(err.message || "Could not send message."); sendBtn.disabled = false;
       }
     };
@@ -2000,10 +2128,21 @@ async function renderModerator() {
   try { data = await WA.listUsers(); }
   catch {
     if (!current(nav)) return;
-    // Not signed in (or not a moderator) — show the sign-in / sign-up form.
     const gate = el(`<div class="mod-gate"></div>`);
-    gate.innerHTML = modSignInHtml();
-    wireModSignIn(gate, () => renderModerator());
+    if (isSignedIn()) {
+      // Signed in but not a moderator. The nav entry is hidden for them, but the
+      // route is still reachable by typing the hash — and offering a sign-in form
+      // to someone who is already signed in just reads as broken.
+      gate.innerHTML = `<div class="mod-card">
+        <div class="mod-card-h">Moderators only</div>
+        <div class="mod-card-sub">This page manages members and access requests.</div>
+      </div>`;
+      if (!isCommunityMember()) gate.querySelector(".mod-card").appendChild(accessBox());
+    } else {
+      // Should be unreachable behind the hard startup gate — kept as a safety net.
+      gate.innerHTML = modSignInHtml();
+      wireModSignIn(gate, () => renderModerator());
+    }
     wrap.appendChild(gate);
     $view.replaceChildren(wrap);
     return;
@@ -2028,58 +2167,62 @@ async function renderModerator() {
   });
   wrap.appendChild(signup);
 
-  // Members table
-  const list = el(`<div class="mod-card"><div class="mod-card-h">Members (${data.users.length})</div><div class="mod-users"></div></div>`);
+  // Community access requests — people asking to join. This is the queue that
+  // matters day to day, so it sits ABOVE the full account list.
+  const reqCard = el(`<div class="mod-card mod-access-reqs">
+    <div class="mod-card-h">Community access requests</div>
+    <div class="mod-card-sub">Approving makes someone a member: they can read and post in the discussions.</div>
+    <div class="mod-req-list"><div class="mod-req-empty">Loading…</div></div>
+  </div>`);
+  wrap.appendChild(reqCard);
+  (async () => {
+    const listEl = reqCard.querySelector(".mod-req-list");
+    const empty = (msg) => { listEl.innerHTML = `<div class="mod-req-empty">${escapeHtml(msg)}</div>`; };
+    let rd;
+    try { rd = await WA.listAccessRequests(); }
+    catch (e) { empty(e.message); return; }
+    if (!rd.requests || !rd.requests.length) { empty("No one is waiting right now."); return; }
+    listEl.innerHTML = "";
+    rd.requests.forEach((req) => {
+      const row = el(`<div class="mod-req-row">
+        <div class="mod-req-info">
+          <strong>${escapeHtml(req.username)}</strong>
+          <span class="mu-email">${escapeHtml(req.email || "")} · ${escapeHtml(timeAgo(req.requested_at))}</span>
+          ${req.note ? `<div class="mod-req-note">${escapeHtml(req.note)}</div>` : ""}
+        </div>
+        <div class="mod-req-actions">
+          <button class="btn primary mod-req-grant">Approve</button>
+          <button class="btn danger mod-req-deny">Deny</button>
+        </div>
+      </div>`);
+      const settle = (msg) => {
+        toast(msg); row.remove();
+        if (!listEl.querySelector(".mod-req-row")) empty("No one is waiting right now.");
+      };
+      row.querySelector(".mod-req-grant").addEventListener("click", async () => {
+        try { await WA.approveAccess(req.id); settle(`${req.username} is now a member`); renderModerator(); }
+        catch (e) { toast(e.message); }
+      });
+      row.querySelector(".mod-req-deny").addEventListener("click", async () => {
+        try { await WA.denyAccess(req.id); settle(`Request from ${req.username} denied`); }
+        catch (e) { toast(e.message); }
+      });
+      listEl.appendChild(row);
+    });
+  })();
+
+  // Every account (the startup gate means this is now the whole user base, not
+  // just community members) — role changes, rename, mute, delete.
+  const list = el(`<div class="mod-card"><div class="mod-card-h">All accounts (${data.users.length})</div>
+    <div class="mod-card-sub">“${escapeHtml(roleLabel("visitor"))}” keeps the account but removes them from the community. “Remove” deletes the account.</div>
+    <div class="mod-users"></div></div>`);
   const holder = list.querySelector(".mod-users");
   data.users.forEach((u) => holder.appendChild(modUserRow(u, me)));
   wrap.appendChild(list);
 
-  // Credit requests
-  const reqCard = el(`<div class="mod-card mod-credit-reqs"><div class="mod-card-h">Message credit requests</div><div class="mod-req-list"><div class="mod-req-empty">No pending requests.</div></div></div>`);
-  wrap.appendChild(reqCard);
-  (async () => {
-    try {
-      const rd = await WA.listCreditRequests();
-      const reqList = reqCard.querySelector(".mod-req-list");
-      if (!rd.requests || !rd.requests.length) return;
-      reqList.innerHTML = "";
-      rd.requests.forEach((req) => {
-        const row = el(`<div class="mod-req-row">
-          <div class="mod-req-info">
-            <strong>${escapeHtml(req.username)}</strong>
-            <span class="mod-req-credits">has ${req.chat_credits} left</span>
-            <span class="mu-email">${timeAgo(req.requested_at)}</span>
-          </div>
-          <div class="mod-req-actions">
-            <input class="mod-req-inp" type="number" value="20" min="1" max="9999" style="width:55px">
-            <button class="btn primary mod-req-grant">Grant</button>
-            <button class="btn danger mod-req-deny">Deny</button>
-          </div>
-        </div>`);
-        row.querySelector(".mod-req-grant").addEventListener("click", async () => {
-          const credits = parseInt(row.querySelector(".mod-req-inp").value, 10);
-          if (isNaN(credits) || credits < 1) return;
-          try {
-            await WA.approveCreditRequest(req.id, credits);
-            toast(`Granted ${credits} credits to ${req.username}`); row.remove();
-            if (!reqCard.querySelector(".mod-req-row")) reqCard.querySelector(".mod-req-list").innerHTML = `<div class="mod-req-empty">No pending requests.</div>`;
-          } catch (e) { toast(e.message); }
-        });
-        row.querySelector(".mod-req-deny").addEventListener("click", async () => {
-          try {
-            await WA.denyCreditRequest(req.id);
-            toast(`Request from ${req.username} denied`); row.remove();
-            if (!reqCard.querySelector(".mod-req-row")) reqCard.querySelector(".mod-req-list").innerHTML = `<div class="mod-req-empty">No pending requests.</div>`;
-          } catch (e) { toast(e.message); }
-        });
-        reqList.appendChild(row);
-      });
-    } catch { /* silently skip if API fails */ }
-  })();
-
   // Sign out
   const out = el(`<div class="mod-card"><button class="btn mod-signout">Sign out (${escapeHtml(me ? me.username : "")})</button></div>`);
-  out.querySelector(".mod-signout").addEventListener("click", () => { WA.logout(); store.setToken(""); try { localStorage.removeItem("wa:user"); } catch {} refreshModNav(); toast("Signed out"); go("#/"); });
+  out.querySelector(".mod-signout").addEventListener("click", () => { signOutToGate(); });
   wrap.appendChild(out);
 
   $view.replaceChildren(wrap);
@@ -2092,20 +2235,25 @@ function modUserRow(u, me) {
   const isElevated = isSutradharRow || isModRow;
   const viewerIsSutradhar = me && me.role === "sutradhar";
 
-  const roleLabel = isSutradharRow
+  // (Named sutradharTag, not roleLabel — roleLabel() is the global plain-English
+  // role formatter and a local const of that name would shadow it here.)
+  const sutradharTag = isSutradharRow
     ? `<span class="mu-sutradhar-tag">Sutradhar</span>`
     : "";
 
+  // 'visitor' is the important addition: it removes community access while
+  // KEEPING the account, which is what "remove from the community" should mean.
+  // Deleting the account is the separate, destructive Remove button below.
   const roleSelect = !isSutradharRow
     ? `<select class="mu-role">
-        ${["pending", "member", "moderator"].map((r) => `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`).join("")}
+        ${["visitor", "pending", "member", "moderator"].map((r) =>
+          `<option value="${r}" ${u.role === r ? "selected" : ""}>${escapeHtml(roleLabel(r))}</option>`).join("")}
        </select>`
     : "";
 
   const chatControls = !isElevated
     ? `<div class="mu-chat-controls">
         <button class="btn mu-mute ${u.chat_muted ? "danger" : ""}">${u.chat_muted ? "Unmute" : "Mute"}</button>
-        <span class="mu-credits-wrap"><input class="mu-credits-inp" type="number" value="${u.chat_credits ?? 30}" min="0" max="9999" style="width:60px"><button class="btn mu-credits-set">Set credits</button></span>
        </div>`
     : "";
 
@@ -2119,7 +2267,7 @@ function modUserRow(u, me) {
 
   const row = el(`<div class="mod-user">
     <div class="mu-main">
-      <div class="mu-name">${escapeHtml(u.username)}${isSelf ? ' <span class="mu-you">you</span>' : ""}${roleLabel}${u.chat_muted ? ' <span class="mu-muted-tag">muted</span>' : ""}</div>
+      <div class="mu-name">${escapeHtml(u.username)}${isSelf ? ' <span class="mu-you">you</span>' : ""}${sutradharTag}${u.chat_muted ? ' <span class="mu-muted-tag">muted</span>' : ""}</div>
       <div class="mu-email">${escapeHtml(u.email || "")}</div>
     </div>
     ${roleSelect}
@@ -2135,14 +2283,6 @@ function modUserRow(u, me) {
         const d = await WA.toggleMute(u.id);
         toast(d.user.chat_muted ? `${u.username} muted` : `${u.username} unmuted`);
         renderModerator();
-      } catch (e) { toast(e.message); }
-    });
-    row.querySelector(".mu-credits-set").addEventListener("click", async () => {
-      const credits = parseInt(row.querySelector(".mu-credits-inp").value, 10);
-      if (isNaN(credits) || credits < 0) return;
-      try {
-        await WA.setCredits(u.id, credits);
-        toast(`${u.username}: ${credits} credits set`);
       } catch (e) { toast(e.message); }
     });
   }
@@ -2212,6 +2352,7 @@ async function route() {
   closeSpecialStream();   // Special Messages listens only while its screen is open
   // Clear the "current wisdom" — home/entry set it again; other pages leave it empty.
   _stageId = null;
+  _chatCtx = null;        // the reader re-publishes it if we land back in one
   _searchBackFn = null;   // leaving search (even to re-search) drops any open detail view
   updateIdNav(null);
   if (document.getElementById("conc-panel-body")) renderConclusionPanelBody(null);
@@ -3009,8 +3150,8 @@ function specialCardHtml(r, mode) {
     </div>`;
   if (mode === "dual") {
     return r.body_en
-      ? `<article class="sp-card sp-dual">${col(r.title_hi, r.body_hi, r.place_hi)}${col(r.title_en, r.body_en, r.place_en)}</article>`
-      : `<article class="sp-card">${col(r.title_hi, r.body_hi, r.place_hi)}</article>`;
+      ? `<article class="sp-card sp-dual" data-id="${escapeHtml(String(r.id))}">${col(r.title_hi, r.body_hi, r.place_hi)}${col(r.title_en, r.body_en, r.place_en)}</article>`
+      : `<article class="sp-card" data-id="${escapeHtml(String(r.id))}">${col(r.title_hi, r.body_hi, r.place_hi)}</article>`;
   }
   const en = mode === "en";
   const title = en ? (r.title_en || r.title_hi) : (r.title_hi || r.title_en);
@@ -3043,6 +3184,39 @@ function paintSpecialList(box, rows, mode, keepShown) {
   return { shown: () => shown };
 }
 
+// ---- desktop: choose which card the Community panel discusses -------------
+// The desktop Special/Letterpad pages are card LISTS, not a one-message reader,
+// so there is no implicit "current message" — clicking a card selects it, and
+// the selection is shown with an accent rail so it's never ambiguous which
+// discussion the panel will open. Mobile doesn't need this: its reader always
+// has exactly one message on screen (see _chatCtx in the reader's wirePanel).
+function wireDesktopChatTarget(container, sectionKey, titleOf) {
+  container.addEventListener("click", (e) => {
+    const card = e.target.closest("[data-id]");
+    if (!card || !container.contains(card)) return;
+    // Don't hijack a click on a real control inside the card.
+    if (e.target.closest("button, a, summary, input, .pc-dot")) return;
+    container.querySelectorAll(".is-chat-target").forEach((c) => c.classList.remove("is-chat-target"));
+    card.classList.add("is-chat-target");
+    _chatCtx = {
+      wid: sectionKey + ":" + card.dataset.id,
+      title: titleOf(card) || CHAT_NS_LABEL[sectionKey],
+      dateLabel: "",
+      back: "#/" + sectionKey,
+    };
+    repaintOpenCommunityPanel();
+  });
+}
+// Repaint an ALREADY-OPEN community panel when the selection changes, so the
+// panel and the highlighted card can never disagree. Same pattern the
+// wisdom-changed path uses (see the fab-panel repaint in updateIdNav's caller).
+function repaintOpenCommunityPanel() {
+  const panel = document.getElementById("fab-panel");
+  if (!panel || panel.hidden) return;
+  const body = document.getElementById("fab-panel-body");
+  if (body) renderCommunityTab(body);
+}
+
 // Foreground-only Realtime subscription (plan §8: closed screens use no
 // socket). Set by the desktop page AND the mobile page; closed on every
 // navigation from route().
@@ -3060,6 +3234,10 @@ async function renderSpecial() {
     $view.innerHTML = `<div class="sp-page"><h2 class="sp-head">✨ Special Telegram Messages</h2>
       <div class="sp-list"></div></div>`;
     const list = $view.querySelector(".sp-list");
+    wireDesktopChatTarget(list, "special", (card) => {
+      const t = card.querySelector(".sp-title");
+      return t ? t.textContent.trim() : "";
+    });
     if (!rows.length) { list.innerHTML = `<div class="empty">${SPECIAL_EMPTY_MSG}</div>`; return; }
     painter = paintSpecialList(list, rows, "dual", painter ? painter.shown() : 0);
   };
@@ -3264,7 +3442,12 @@ async function renderLetterpad() {
   $view.innerHTML = `<div class="lp-page"><h2 class="lp-headline">✍️ Guru's Letterpad Messages</h2>
     <div class="lp-list"></div></div>`;
   if (!current(nav)) return;
-  await renderLetterpadInto($view.querySelector(".lp-list"), () => "hi");
+  const lpList = $view.querySelector(".lp-list");
+  wireDesktopChatTarget(lpList, "letterpad", (card) => {
+    const t = card.querySelector(".lp-title");
+    return t ? t.textContent.trim() : "";
+  });
+  await renderLetterpadInto(lpList, () => "hi");
   LETTERPAD.markSeen();
 }
 
@@ -3274,7 +3457,10 @@ async function renderLetterpad() {
 buildNav();
 applyCollapsed();
 initAvatar();
-initAuthState();
+// (initAuthState() is NOT called here any more — AUTH_GATE.boot() at the bottom
+// of this file owns it, because the hard gate has to know the answer before the
+// app is allowed to render. Calling it here too would double every boot's
+// network round trip.)
 initCommunityPanel();
 initAutohide();
 initCalNav();
@@ -3373,7 +3559,7 @@ const MOBILE_UI = (() => {
     const u = currentUser();
     row.innerHTML = isSignedIn()
       ? `<span class="m-acc-avatar">${escapeHtml((u.username || "?")[0].toUpperCase())}</span>
-         <span class="m-acc-name">${escapeHtml(u.username)}<small>${escapeHtml(u.role)}</small></span>`
+         <span class="m-acc-name">${escapeHtml(u.username)}<small>${escapeHtml(roleLabel(u.role))}</small></span>`
       : `<span class="m-acc-avatar">॥</span>
          <span class="m-acc-name">Sign in<small>for community features</small></span>`;
   }
@@ -3397,7 +3583,11 @@ const MOBILE_UI = (() => {
     });
   });
   $("m-menu-btn").addEventListener("click", openDrawer);
-  $("m-comm-btn").addEventListener("click", () => go("#/m/community"));
+  // Reading a Special Telegram / Letterpad message? Open THAT message's
+  // discussion. The id travels in the URL (not just in _chatCtx) so the chat is
+  // deep-linkable and Android back returns to the reader.
+  $("m-comm-btn").addEventListener("click", () => go(
+    _chatCtx ? "#/m/community?wid=" + encodeURIComponent(_chatCtx.wid) : "#/m/community"));
   $("m-home-btn").addEventListener("click", () => go("#/?latest=1"));
   $("m-scrim").addEventListener("click", closeDrawer);
   $("m-drawer").addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
@@ -4940,30 +5130,52 @@ const MOBILE_UI = (() => {
   }
   async function communityPage(params) {
     const pick = params && params.get("wid");
-    const wid = pick || _stageId || store.lastViewed();
+    const wid = pick || (_chatCtx && _chatCtx.wid) || _stageId || store.lastViewed();
     const node = el(`<div class="m-community"></div>`);
     pageFrame("Community", node);
     if (!wid) {
-      node.innerHTML = `<div class="empty">Open a Guru's msg first, then join its discussion here.</div>`;
+      node.innerHTML = `<div class="empty">Open a message first, then join its discussion here.</div>`;
       return;
     }
-    if (pick) store.setLastViewed(wid);
-    _stageId = wid;
-    // Header: human date + subject of the msg under discussion; tapping it
-    // lets the user pick a different Guru's msg for the chat.
-    const head = el(`<button class="m-chat-head" title="Change Guru's msg">
+    // A Special Telegram / Letterpad discussion. These ids are NOT archive
+    // entries: /api/entry would 404, and wa:lastViewed must never hold one (it
+    // drives resuming the daily reader on next launch).
+    const ns = CHAT_NS_RE.exec(String(wid));
+    if (!ns) {
+      if (pick) store.setLastViewed(wid);
+      _stageId = wid;
+    }
+    // Header: which message is under discussion. For an archive entry, tapping
+    // it swaps to a different Guru's msg; for the other sections it goes back to
+    // the message being read (the daily picker would silently move the chat).
+    const head = el(`<button class="m-chat-head" title="${ns ? "Back to the message" : "Change Guru's msg"}">
         <div class="m-ch-text"><div class="m-ch-date">Loading…</div><div class="m-ch-topic"></div></div>
-        <span class="m-ch-change">Change ▾</span>
+        <span class="m-ch-change">${ns ? "Back ›" : "Change ▾"}</span>
       </button>`);
     const body = el(`<div class="m-chatbody"></div>`);
     node.appendChild(head);
     node.appendChild(body);
-    head.addEventListener("click", () => go("#/m/search?for=chat"));
-    api("/api/entry/" + encodeURIComponent(wid)).then((e) => {
-      head.querySelector(".m-ch-date").textContent = fmtHumanDate(e.date) + (e.weekday ? " · " + e.weekday : "");
-      head.querySelector(".m-ch-topic").textContent = e.topic_hi || e.topic_en || "";
-    }).catch(() => { head.querySelector(".m-ch-date").textContent = "Guru's msg #" + wid; });
-    await renderWisdomChat(body, wid);
+    let label = null;
+    if (ns) {
+      // Resolve the title/date from the section caches already in memory —
+      // works offline, and no network round trip.
+      const sec = MSG_SECTIONS[ns[1]];
+      const row = (sec.cached() || []).find((r) => sec.idOf(r) === ns[2]);
+      const v = row ? sec.norm(row, prefLang) : null;
+      label = (v && v.title) || sec.title;
+      head.querySelector(".m-ch-date").textContent =
+        CHAT_NS_LABEL[ns[1]] + (v && v.date ? " · " + fmtHumanDate(v.date) : "");
+      head.querySelector(".m-ch-topic").textContent = label;
+      const back = (_chatCtx && _chatCtx.back) || ("#/m/" + ns[1] + "/" + encodeURIComponent(ns[2]));
+      head.addEventListener("click", () => go(back));
+    } else {
+      head.addEventListener("click", () => go("#/m/search?for=chat"));
+      api("/api/entry/" + encodeURIComponent(wid)).then((e) => {
+        head.querySelector(".m-ch-date").textContent = fmtHumanDate(e.date) + (e.weekday ? " · " + e.weekday : "");
+        head.querySelector(".m-ch-topic").textContent = e.topic_hi || e.topic_en || "";
+      }).catch(() => { head.querySelector(".m-ch-date").textContent = "Guru's msg #" + wid; });
+    }
+    await renderWisdomChat(body, wid, label);
     // WhatsApp reading order: open at the latest message (bottom).
     const msgs = body.querySelector("#wc-msgs");
     if (msgs) msgs.scrollTop = msgs.scrollHeight;
@@ -5236,6 +5448,14 @@ const MOBILE_UI = (() => {
       dEl.textContent = v.date ? dpPillText(v.date) : sec.title;
       dEl.onclick = () => go("#/m/" + sec.key);        // the pill jumps back to the index
       setEnglishAvailable(!!v.hasEn);                  // Hindi-only post → English toggle off
+      // Bind the Community button to this message (see _chatCtx). Re-published
+      // on every scroll, so the discussion always follows what's on screen.
+      _chatCtx = {
+        wid: sec.key + ":" + v.id,
+        title: v.title || sec.title,
+        dateLabel: v.date ? fmtHumanDate(v.date) : "",
+        back: "#/m/" + sec.key + "/" + encodeURIComponent(v.id),
+      };
 
       const favId = sec.key + ":" + v.id;              // namespaced — `wa:favorites` is shared with the archive
       const fav = $("m-panel-fav");
@@ -5429,14 +5649,12 @@ const MOBILE_UI = (() => {
       const u = currentUser();
       node.innerHTML = `<div class="m-acc-card">
           <span class="m-acc-avatar big">${escapeHtml((u.username || "?")[0].toUpperCase())}</span>
-          <div class="m-acc-name">${escapeHtml(u.username)}<small>${escapeHtml(u.role)}</small></div>
-        </div>
-        <button class="btn" id="m-signout">Sign out</button>`;
-      node.querySelector("#m-signout").addEventListener("click", async () => {
-        try { await WA.logout(); } catch {}
-        store.setToken(""); localStorage.removeItem("wa:user");
-        refreshModNav(); toast("Signed out"); accountPage();
-      });
+          <div class="m-acc-name">${escapeHtml(u.username)}<small>${escapeHtml(roleLabel(u.role))}</small></div>
+        </div>`;
+      // Not a member yet → let them ask right here, before the sign-out button.
+      if (!isCommunityMember()) node.appendChild(accessBox());
+      node.appendChild(el(`<button class="btn" id="m-signout">Sign out</button>`));
+      node.querySelector("#m-signout").addEventListener("click", () => { signOutToGate(); });
       return;
     }
     node.innerHTML = modSignInHtml();
@@ -5539,15 +5757,297 @@ const MOBILE_UI = (() => {
   };
 })();
 
-window.addEventListener("hashchange", safeRoute);
-safeRoute();
+// ==========================================================================
+// AUTH_GATE — mandatory sign-in at startup (AUTH_GATE_PLAN.md).
+//
+// A HARD gate: nothing in the app renders until there is a verified account.
+// Sign-up is verified by a 6-digit code Supabase mails out (NOT a magic link —
+// there is no deep link to configure in the Android shell).
+//
+// ⚠ Builds its own DOM instead of using markup in index.html, and that is not a
+// style choice: OTA updates ship ONLY app.js / styles.css / wa-supabase.js /
+// vendor (see mobile/publish_update.py). index.html never updates on an
+// installed APK, so any gate markup put there would simply not exist for
+// existing users, and the gate would silently not appear for exactly the people
+// it must block.
+// ==========================================================================
+const AUTH_GATE = (() => {
+  let root = null;         // the overlay element, created on demand
+  let startApp = null;     // what to run once the user is through
+  let started = false;     // startApp fired? (must happen exactly once)
+  let pendingEmail = "";   // address awaiting a code, carried between views
 
-// Special Messages: paint the unread badges from the offline cache right away
-// (chrome for both shells exists by now), then freshen in the background so a
-// message that arrived while the app was closed shows its badge on this open.
-SPECIAL.refreshBadges();
-SPECIAL.sync().catch(() => {});
-// Letterpad: same cache-first badge paint; loadIndex() itself refreshes the
-// badge once the live index.json fetch resolves (see LETTERPAD.loadIndex()).
-LETTERPAD.refreshBadges();
-LETTERPAD.loadIndex().catch(() => {});
+  const isOpen = () => !!(root && !root.hidden);
+
+  function ensureRoot() {
+    if (root) return root;
+    root = document.createElement("div");
+    root.className = "auth-gate";
+    root.id = "auth-gate";
+    root.innerHTML = `<div class="ag-card">
+      <div class="ag-brand">
+        <div class="ag-om">॥</div>
+        <div class="ag-title">Samarpan Upnishad</div>
+        <div class="ag-sub">Timeless wisdom, always with you.</div>
+      </div>
+      <div class="ag-body"></div>
+    </div>`;
+    document.body.appendChild(root);
+    // The fullscreen nudge in index.html shows itself on every load and would
+    // float over the gate; it's meaningless until the user is actually in.
+    const fsp = document.getElementById("fs-prompt");
+    if (fsp) fsp.style.display = "none";
+    return root;
+  }
+
+  const body = () => ensureRoot().querySelector(".ag-body");
+  function err(msg) { const e = body().querySelector(".ag-err"); if (e) e.textContent = msg || ""; }
+  function busy(btn, on, label) {
+    if (!btn) return;
+    btn.disabled = !!on;
+    if (on) { btn.dataset.label = btn.textContent; btn.textContent = label || "Please wait…"; }
+    else if (btn.dataset.label) btn.textContent = btn.dataset.label;
+  }
+
+  // Called on every successful authentication, from whichever view.
+  async function pass(d) {
+    store.setToken(d.token);
+    try { localStorage.setItem("wa:user", JSON.stringify(d.user)); } catch {}
+    syncUserData();
+    refreshModNav();
+    close();
+    // First pass of the launch → start the app. If it had already started (a
+    // revoked session re-gated us, or the user signed out and back in), the
+    // stale signed-out render is still on screen — re-run the route so it
+    // reflects the new session instead of showing the previous user's view.
+    if (started) safeRoute(); else run();
+    toast("Welcome, " + (d.user && d.user.username ? d.user.username : "sadhak"));
+  }
+
+  function close() { if (root) root.hidden = true; document.body.classList.remove("gated"); }
+  function open() { ensureRoot().hidden = false; document.body.classList.add("gated"); }
+  function run() { if (!started && startApp) { started = true; startApp(); } }
+
+  // ---- Views --------------------------------------------------------------
+
+  function viewSignIn(prefill) {
+    open();
+    body().innerHTML = `<div class="ag-view">
+      <div class="ag-h">Sign in</div>
+      <div class="ag-p">Your account keeps your favourites and notes safe, and is how you join the community.</div>
+      <input class="ag-email" type="email" placeholder="Email" autocomplete="email" value="${escapeHtml(prefill || "")}">
+      ${pwField("ag-pw", "Password", "current-password")}
+      <button class="btn primary ag-go">Sign in</button>
+      <div class="ag-err"></div>
+      <div class="ag-alt"><a class="ag-to-forgot">Forgot password?</a></div>
+      <div class="ag-alt">New here? <a class="ag-to-signup">Create an account</a></div>
+    </div>`;
+    const b = body();
+    const go = async () => {
+      const email = b.querySelector(".ag-email").value.trim();
+      const pw = b.querySelector(".ag-pw").value;
+      if (!email || !pw) return err("Enter your email and password.");
+      err(""); busy(b.querySelector(".ag-go"), true, "Signing in…");
+      try { await pass(await WA.login(email, pw)); }
+      catch (e) {
+        busy(b.querySelector(".ag-go"), false);
+        // Signed up but never verified — send them straight to the code screen
+        // rather than leaving them stuck on an error they can't act on.
+        if (/verify your email/i.test(e.message)) {
+          pendingEmail = email;
+          try { await WA.resendEmailCode(email); } catch (_) {}
+          return viewCode(email, "We've sent you a fresh code.");
+        }
+        err(e.message);
+      }
+    };
+    b.querySelector(".ag-go").addEventListener("click", go);
+    b.querySelector(".ag-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    b.querySelector(".ag-to-signup").addEventListener("click", () => viewSignUp());
+    b.querySelector(".ag-to-forgot").addEventListener("click", () => viewForgot());
+  }
+
+  function viewSignUp() {
+    open();
+    body().innerHTML = `<div class="ag-view">
+      <div class="ag-h">Create your account</div>
+      <div class="ag-p">We'll email you a 6-digit code to confirm the address.</div>
+      <input class="ag-user" type="text" placeholder="Name (3–20 letters, numbers, _)" autocomplete="username">
+      <input class="ag-email" type="email" placeholder="Email" autocomplete="email">
+      ${pwField("ag-pw", "Password (min 6 characters)", "new-password")}
+      <button class="btn primary ag-go">Create account</button>
+      <div class="ag-err"></div>
+      <div class="ag-alt">Already have an account? <a class="ag-to-signin">Sign in</a></div>
+    </div>`;
+    const b = body();
+    const go = async () => {
+      const user = b.querySelector(".ag-user").value.trim();
+      const email = b.querySelector(".ag-email").value.trim();
+      const pw = b.querySelector(".ag-pw").value;
+      if (!user || !email || !pw) return err("Please fill in all three fields.");
+      err(""); busy(b.querySelector(".ag-go"), true, "Creating…");
+      try {
+        const d = await WA.register(user, email, pw);
+        if (d.needsVerification) { pendingEmail = email; return viewCode(email); }
+        await pass(d);                        // only if confirmation is OFF
+      } catch (e) { busy(b.querySelector(".ag-go"), false); err(e.message); }
+    };
+    b.querySelector(".ag-go").addEventListener("click", go);
+    b.querySelector(".ag-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    b.querySelector(".ag-to-signin").addEventListener("click", () => viewSignIn());
+  }
+
+  function viewCode(email, note) {
+    open();
+    pendingEmail = email || pendingEmail;
+    body().innerHTML = `<div class="ag-view">
+      <div class="ag-h">Check your email</div>
+      <div class="ag-p">We sent a 6-digit code to <strong>${escapeHtml(pendingEmail)}</strong>.
+        It can take a minute to arrive — check spam too.</div>
+      <input class="ag-code" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code">
+      <button class="btn primary ag-go">Verify</button>
+      <div class="ag-err">${escapeHtml(note || "")}</div>
+      <div class="ag-alt"><a class="ag-resend">Send a new code</a></div>
+      <div class="ag-alt"><a class="ag-to-signup">Use a different email</a> · <a class="ag-to-signin">Sign in instead</a></div>
+    </div>`;
+    const b = body();
+    const code = b.querySelector(".ag-code");
+    const go = async () => {
+      err(""); busy(b.querySelector(".ag-go"), true, "Verifying…");
+      try { await pass(await WA.verifyEmailCode(pendingEmail, code.value)); }
+      catch (e) { busy(b.querySelector(".ag-go"), false); err(e.message); }
+    };
+    // Codes are always 6 digits — verify as soon as the last one lands.
+    code.addEventListener("input", () => {
+      code.value = code.value.replace(/\D/g, "").slice(0, 6);
+      if (code.value.length === 6) go();
+    });
+    code.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    b.querySelector(".ag-go").addEventListener("click", go);
+    b.querySelector(".ag-resend").addEventListener("click", async () => {
+      err("");
+      try { await WA.resendEmailCode(pendingEmail); err("A new code is on its way."); }
+      catch (e) { err(e.message); }
+    });
+    b.querySelector(".ag-to-signup").addEventListener("click", () => viewSignUp());
+    b.querySelector(".ag-to-signin").addEventListener("click", () => viewSignIn(pendingEmail));
+    code.focus();
+  }
+
+  function viewForgot() {
+    open();
+    body().innerHTML = `<div class="ag-view">
+      <div class="ag-h">Reset your password</div>
+      <div class="ag-p">We'll email you a 6-digit code to set a new one.</div>
+      <input class="ag-email" type="email" placeholder="Email" autocomplete="email" value="${escapeHtml(pendingEmail)}">
+      <button class="btn primary ag-go">Send code</button>
+      <div class="ag-err"></div>
+      <div class="ag-alt"><a class="ag-to-signin">Back to sign in</a></div>
+    </div>`;
+    const b = body();
+    const go = async () => {
+      const email = b.querySelector(".ag-email").value.trim();
+      err(""); busy(b.querySelector(".ag-go"), true, "Sending…");
+      try { await WA.requestPasswordReset(email); pendingEmail = email; viewReset(email); }
+      catch (e) { busy(b.querySelector(".ag-go"), false); err(e.message); }
+    };
+    b.querySelector(".ag-go").addEventListener("click", go);
+    b.querySelector(".ag-email").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    b.querySelector(".ag-to-signin").addEventListener("click", () => viewSignIn(pendingEmail));
+  }
+
+  function viewReset(email) {
+    open();
+    body().innerHTML = `<div class="ag-view">
+      <div class="ag-h">Set a new password</div>
+      <div class="ag-p">Enter the code we sent to <strong>${escapeHtml(email)}</strong>.</div>
+      <input class="ag-code" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code">
+      ${pwField("ag-pw", "New password (min 6 characters)", "new-password")}
+      <button class="btn primary ag-go">Save and sign in</button>
+      <div class="ag-err"></div>
+      <div class="ag-alt"><a class="ag-to-signin">Back to sign in</a></div>
+    </div>`;
+    const b = body();
+    const go = async () => {
+      err(""); busy(b.querySelector(".ag-go"), true, "Saving…");
+      try { await pass(await WA.resetPassword(email, b.querySelector(".ag-code").value, b.querySelector(".ag-pw").value)); }
+      catch (e) { busy(b.querySelector(".ag-go"), false); err(e.message); }
+    };
+    b.querySelector(".ag-go").addEventListener("click", go);
+    b.querySelector(".ag-pw").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    b.querySelector(".ag-to-signin").addEventListener("click", () => viewSignIn(email));
+  }
+
+  // No stored session AND no network: signing in is impossible, so say so
+  // honestly and offer a retry rather than a form that cannot succeed.
+  function viewOffline() {
+    open();
+    body().innerHTML = `<div class="ag-view">
+      <div class="ag-h">Connection needed</div>
+      <div class="ag-p">Signing in for the first time needs an internet connection.
+        Once you're in, the archive works offline.</div>
+      <button class="btn primary ag-retry">Try again</button>
+      <div class="ag-err"></div>
+    </div>`;
+    body().querySelector(".ag-retry").addEventListener("click", () => boot(startApp, true));
+  }
+
+  // ---- Boot ---------------------------------------------------------------
+
+  async function boot(fn, isRetry) {
+    if (fn) startApp = fn;
+
+    // Fast path: a session is already on disk. Let them in IMMEDIATELY and
+    // validate behind their back — the content is local, so waiting on the
+    // network here would add a spinner to every single launch for no gain.
+    if (WA.hasStoredSession()) {
+      close(); run();
+      if (await initAuthState() === "none") {
+        // Supabase actively rejected the stored session (password changed,
+        // account deleted, refresh token revoked) — gate them again.
+        viewSignIn(lastEmail());
+      }
+      return;
+    }
+
+    // Nothing stored → this is a first run (or a sign-out, or Android's "Clear
+    // storage"). Hard gate: the app does NOT start until they're through.
+    if (navigator.onLine === false) return viewOffline();
+    if (isRetry) {
+      // Retry after an offline gate: confirm we can actually reach Supabase
+      // before showing a form, so the user isn't bounced back and forth.
+      try { await WA.authConfig(); } catch (_) { return viewOffline(); }
+    }
+    viewSignIn(lastEmail());
+  }
+
+  // Remember only the address (never the password) so a re-login isn't retyping.
+  function lastEmail() {
+    try { return (JSON.parse(localStorage.getItem("wa:user") || "null") || {}).email || ""; }
+    catch (_) { return ""; }
+  }
+
+  // Sign-out anywhere in the app must land back on the gate, not on a dead app
+  // shell — the whole point of a hard gate. Views call this.
+  function reopen() { started = true; viewSignIn(lastEmail()); }
+
+  return { boot, isOpen, reopen, open, close };
+})();
+
+// Routing is suspended while the gate is up: a hashchange must not render the
+// app underneath it.
+window.addEventListener("hashchange", () => { if (!AUTH_GATE.isOpen()) safeRoute(); });
+
+AUTH_GATE.boot(function startApp() {
+  safeRoute();
+
+  // Special Messages: paint the unread badges from the offline cache right away
+  // (chrome for both shells exists by now), then freshen in the background so a
+  // message that arrived while the app was closed shows its badge on this open.
+  SPECIAL.refreshBadges();
+  SPECIAL.sync().catch(() => {});
+  // Letterpad: same cache-first badge paint; loadIndex() itself refreshes the
+  // badge once the live index.json fetch resolves (see LETTERPAD.loadIndex()).
+  LETTERPAD.refreshBadges();
+  LETTERPAD.loadIndex().catch(() => {});
+});
