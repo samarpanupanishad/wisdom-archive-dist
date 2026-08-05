@@ -679,11 +679,13 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-text mark.chat-hl, mark.chat-hl { background: #fde68a; color: #78450a; border-radius: 3px; padding: 0 2px; }
 .wc-empty { text-align: center; color: var(--muted); font-size: 13.5px; padding: 36px 20px; font-style: italic; line-height: 1.6; }
 
-/* Negativity Zone */
-.wc-negativity { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 50px 28px; text-align: center; }
-.wc-nz-ico { font-size: 36px; }
-.wc-nz-h { font-family: var(--serif); font-size: 20px; font-weight: 700; color: var(--text); }
-.wc-nz-sub { font-size: 13.5px; color: var(--muted); line-height: 1.5; max-width: 240px; }
+/* Samuhik Satsang gate — shown to a signed-in member who hasn't been approved
+   yet. (Was the "Negativity Zone" screen: a 🚫 and a scolding headline, which
+   read as a punishment for wanting to join. It's an invitation now.) */
+.wc-satsang-gate { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 50px 28px; text-align: center; }
+.wc-sg-ico { font-size: 36px; }
+.wc-sg-h { font-family: var(--serif); font-size: 20px; font-weight: 700; color: var(--text); }
+.wc-sg-sub { font-size: 13.5px; color: var(--muted); line-height: 1.5; max-width: 260px; }
 
 /* Sign-in gate inside chat */
 .wc-gate { padding: 16px 18px; border-top: 1px solid var(--border-soft); }
@@ -1177,6 +1179,10 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
   font: 500 15.5px var(--sans); color: var(--text); text-decoration: none;
 }
 .m-menu a:active { background: var(--accent-soft, #f6e7dc); }
+/* The `display:flex` above is an AUTHOR rule, so it beats the UA stylesheet's
+   [hidden] rule — without this, the moderator-only row would show for everyone
+   (the same trap already documented on .m-exit). */
+.m-menu a[hidden] { display: none !important; }
 .m-menu .mi { width: 24px; text-align: center; font-size: 18px; }
 .m-menu-sep {
   margin: 10px 20px 4px; padding-top: 10px; border-top: 1px solid var(--border);
@@ -1505,6 +1511,26 @@ body.m-mode .page-head { padding-top: 4px; }
    left-aligns its label instead of centering it — force it here. */
 .m-exit-btns .btn { flex: 1; padding: 12px 0; border-radius: 12px; font-size: 15px; justify-content: center; }
 
+/* Shown while a daily-message notification tap waits for the device's archive
+   to sync, so the reader never sees yesterday's message flash past first. */
+.m-freshsync {
+  position: fixed; inset: 0; z-index: 900; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(20, 14, 30, .55);
+}
+.m-freshsync .m-fs-card {
+  background: var(--surface); border-radius: 18px;
+  padding: 24px 26px; text-align: center;
+  box-shadow: 0 18px 48px rgba(40, 30, 60, .35);
+}
+.m-freshsync .m-fs-spin {
+  width: 30px; height: 30px; margin: 0 auto 12px;
+  border: 3px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: mfsspin .8s linear infinite;
+}
+@keyframes mfsspin { to { transform: rotate(360deg); } }
+.m-freshsync .m-fs-text { font: 500 14px var(--sans); color: var(--text); }
+
 /* ---- mobile shell v2: home FAB, 3-button bottom bar, accordion menu,
        WhatsApp-style community chat ---- */
 
@@ -1792,7 +1818,8 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
 }
 
 /* Unread badges/dots: shown wherever [data-special-badge]/[data-letterpad-badge]/
-   [data-anymsg-dot] sit (desktop nav item, mobile menu button + drawer). JS toggles `hidden`. */
+   [data-satsang-badge]/[data-anymsg-dot] sit (desktop nav item + topbar Satsang
+   icon, mobile menu button + drawer). JS toggles `hidden`. */
 .nav-badge, .m-badge {
   min-width: 19px; height: 19px; padding: 0 5px; margin-left: auto;
   border-radius: 10px; background: #e0483e; color: #fff;
@@ -1805,6 +1832,16 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
 }
 .m-menudot.m-dot-inline { position: static; border: none; width: 8px; height: 8px; flex: none; margin-left: 6px; }
 .app.collapsed .nav-badge { display: none; }   /* icon-only sidebar: no room */
+/* Unread count on the topbar's Samuhik Satsang icon — an overlay, not a row
+   item, so it can't use the flex `margin-left:auto` layout above. */
+.community-btn { position: relative; }
+.comm-badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 17px; height: 17px; padding: 0 4px;
+  border-radius: 9px; background: #e0483e; color: #fff;
+  font: 700 10px/17px var(--sans); text-align: center;
+  border: 2px solid var(--surface); box-sizing: content-box;
+}
 .sp-more { text-align: center; color: var(--muted); padding: 18px 0 26px; font-size: 20px; letter-spacing: 4px; }
 
 /* ==== Guru's Letterpad Messages (image pages + OCR text) ==================
@@ -1992,7 +2029,15 @@ body.gated { overflow: hidden; }
   padding: 26px 24px 22px;
 }
 .ag-brand { text-align: center; margin-bottom: 20px; }
-.ag-om { font: 400 34px/1 var(--serif); color: var(--accent); margin-bottom: 6px; }
+/* ॥ आत्मा ॥ — the dandas stay light so the bold, underlined name carries it.
+   The underline needs a real offset or Devanagari descenders sit on top of it. */
+.ag-om { font: 400 34px/1.35 var(--serif); color: var(--accent); margin-bottom: 6px; }
+.ag-atma {
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 6px;
+}
 .ag-title { font: 700 19px/1.25 var(--serif); color: var(--text); }
 .ag-sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
 
@@ -2080,7 +2125,7 @@ body.gated { overflow: hidden; }
 .ax-box .ax-err:empty { display: none; }
 .ax-box .ax-err { font-size: 13px; color: #a23b3b; }
 /* Inside the chat gate the box is centred content in a tall empty panel. */
-.wc-negativity + .ax-box { max-width: 380px; margin: 0 auto 28px; padding: 0 20px; }
+.wc-satsang-gate + .ax-box { max-width: 380px; margin: 0 auto 28px; padding: 0 20px; }
 /* Inside the avatar popover, keep it narrow and flush with the menu padding. */
 #avatar-pop .ax-box { margin: 10px 0; }
 #avatar-pop .ax-box .ax-ask { padding: 11px; }

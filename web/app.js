@@ -80,7 +80,7 @@ function isCommunityMember() { const u = currentUser(); return !!(u && (u.role =
 // joined the community", and since the startup gate landed 'pending' means
 // "asked to join", not "new signup".
 const ROLE_LABELS = {
-  visitor: "No community access", pending: "Access requested",
+  visitor: "No Samuhik Satsang access", pending: "Access requested",
   member: "Member", moderator: "Moderator", sutradhar: "Sutradhar",
 };
 function roleLabel(r) { return ROLE_LABELS[r] || r || ""; }
@@ -159,6 +159,21 @@ function initAvatar() {
 //             already cached on their device would be absurd.
 //   "none"    definitively signed out — Supabase rejected the refresh token and
 //             discarded the session, or there never was one.
+// Re-attach this device's FCM push token to the signed-in account.
+//
+// Push registration runs at launch — BEFORE the startup gate is passed — so a
+// fresh install stores its token with no owner. Samuhik Satsang notifications
+// are addressed to people, not broadcast, so an unowned token would be skipped
+// forever. FCM only hands the token out once per install, hence the remembered
+// copy in wa:push:token. Safe to call repeatedly; the RPC upserts.
+function claimPushToken() {
+  try {
+    if (!window.WA || !WA.storedPushToken) return;
+    const t = WA.storedPushToken();
+    if (t) WA.registerDeviceToken(t, "android").catch(() => {});
+  } catch (_) {}
+}
+
 async function initAuthState() {
   refreshModNav();
   try {
@@ -168,6 +183,7 @@ async function initAuthState() {
     // Restore-then-back-up favourites/notes for an already-signed-in session.
     // This is what makes a storage-wiped device get its saved messages back.
     syncUserData();
+    claimPushToken();
     refreshModNav();
     return "ok";
   } catch (err) {
@@ -221,11 +237,11 @@ async function paintAccessBox(box) {
 
   const role = (d && d.role) || (currentUser() || {}).role || "visitor";
   if (role === "member" || role === "moderator" || role === "sutradhar") {
-    box.innerHTML = `<div class="ax-ok">✓ You're an approved member of the community.</div>`;
+    box.innerHTML = `<div class="ax-ok">✓ You're an approved member of the Samuhik Satsang.</div>`;
     return;
   }
   if (d && d.unavailable) {
-    box.innerHTML = `<div class="ax-note">Community access requests aren't set up on the server yet.</div>`;
+    box.innerHTML = `<div class="ax-note">Samuhik Satsang access requests aren't set up on the server yet.</div>`;
     return;
   }
 
@@ -240,10 +256,10 @@ async function paintAccessBox(box) {
 
   const denied = d && d.status === "denied";
   box.innerHTML = `<div class="ax-ask">
-    <div class="ax-h">${denied ? "Your last request wasn't approved" : "Join the community"}</div>
+    <div class="ax-h">${denied ? "Your last request wasn't approved" : "Join the Samuhik Satsang"}</div>
     <div class="ax-note">${denied
       ? "You can ask again — adding a few words about yourself helps."
-      : "Ask a moderator for access to the discussions. Tell them who you are (optional)."}</div>
+      : "Ask a moderator for access to the Samuhik Satsang. Tell them who you are (optional)."}</div>
     <textarea class="ax-msg" rows="2" maxlength="500" placeholder="e.g. Sadhak from Pune, attending since 2019"></textarea>
     <button class="btn primary ax-go">${denied ? "Ask again" : "Request access"}</button>
     <div class="ax-err"></div>
@@ -756,7 +772,7 @@ function renderConclusionEditor(body, id, d) {
   const vis = d.visibility || "public";
   body.innerHTML = `<div class="conc-edit">
     <label class="conc-label">Your conclusion for Guru's msg #${escapeHtml(String(id))}</label>
-    <textarea class="conc-textarea" placeholder="Write the conclusion drawn from the community's discussion…">${escapeHtml(text)}</textarea>
+    <textarea class="conc-textarea" placeholder="Write the conclusion drawn from the Samuhik Satsang discussion…">${escapeHtml(text)}</textarea>
     <div class="conc-vis">
       <span>Visibility:</span>
       <label><input type="radio" name="conc-vis" value="public" ${vis !== "community" ? "checked" : ""}> Public</label>
@@ -808,7 +824,7 @@ function modSignInHtml() {
     </div>
     <div class="auth-view auth-signup" hidden>
       <div class="conc-signin-h">Create account</div>
-      <div class="conc-signin-sub">Register to join the community.</div>
+      <div class="conc-signin-sub">Register to join the Samuhik Satsang.</div>
       <input class="su-user" type="text" placeholder="Username (3–20 letters, numbers, _)" autocomplete="username">
       <input class="su-email" type="email" placeholder="Email" autocomplete="email">
       ${pwField("su-pw", "Password (min 6 characters)", "new-password")}
@@ -875,7 +891,7 @@ async function renderConclusionPanelBody(id) {
 
   let html = "";
   if (!d.exists) html = `<div class="conc-empty" style="padding:30px 24px 8px">No conclusion has been written for this Guru's msg yet.</div>`;
-  else if (d.locked) html = `<div class="conc-locked" style="margin:22px">🔒 This conclusion is for community members only.</div>`;
+  else if (d.locked) html = `<div class="conc-locked" style="margin:22px">🔒 This conclusion is for Samuhik Satsang members only.</div>`;
   else {
     const badge = d.visibility === "community" ? `<span class="conc-badge members">Members only</span>` : `<span class="conc-badge public">Public</span>`;
     const meta = [d.author ? "by " + escapeHtml(d.author) : "", d.updated ? timeAgo(d.updated) : ""].filter(Boolean).join(" · ");
@@ -993,7 +1009,7 @@ async function renderCommunityTab(body) {
         wrap.appendChild(item);
       });
     } catch {
-      wrap.innerHTML = `<div class="comm-empty" style="padding:28px">Could not load community feed.</div>`;
+      wrap.innerHTML = `<div class="comm-empty" style="padding:28px">Could not load the Samuhik Satsang feed.</div>`;
     }
   }
 }
@@ -1054,6 +1070,7 @@ function chatAppendLive(msgsEl, m, ctx) {
   const nearBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 80;
   const isMe = m.user === ctx.me;
   msgsEl.appendChild(buildChatMsgEl(m, ctx));
+  SATSANG.markSeen(m.ts);   // it arrived on an open chat — not unread
   if (isMe || nearBottom) {
     msgsEl.scrollTop = msgsEl.scrollHeight;
   } else {
@@ -1121,11 +1138,11 @@ async function renderWisdomChat(body, wid, label) {
     }
     if (err.code === "FORBIDDEN") {
       // Signed in but not a member. This used to be a dead end; now it's the
-      // main place people ask to join.
-      msgsEl.innerHTML = `<div class="wc-negativity">
-        <div class="wc-nz-ico">🚫</div>
-        <div class="wc-nz-h">Negativity Zone</div>
-        <div class="wc-nz-sub">Community discussions are for approved members only.</div>
+      // main place people ask to join — so it welcomes rather than scolds.
+      msgsEl.innerHTML = `<div class="wc-satsang-gate">
+        <div class="wc-sg-ico">🪷</div>
+        <div class="wc-sg-h">Samuhik Satsang</div>
+        <div class="wc-sg-sub">The Samuhik Satsang is for approved members. Ask to join below — a moderator will welcome you in.</div>
       </div>`;
       msgsEl.appendChild(accessBox());
       return;
@@ -1137,6 +1154,8 @@ async function renderWisdomChat(body, wid, label) {
   // Messages (shared renderer; the live stream reuses the same bubble builder)
   const ctx = { me: data.me, canModerate: !!data.can_moderate, wid, body };
   renderChatMessages(msgsEl, data.messages, ctx);
+  // Opening a discussion clears the Samuhik Satsang badge.
+  SATSANG.markSeen((data.messages || []).reduce((a, m) => (m.ts > a ? m.ts : a), ""));
   openChatStream(wid, msgsEl, ctx);   // live updates for everyone — even muted readers
 
   // Input area — muted or normal. Members post WITHOUT limit: message credits
@@ -1825,14 +1844,14 @@ async function renderStats() {
 function renderInfo(kind) {
   const title = { settings: "Settings", about: "About", help: "Help & Support" }[kind];
   const body = {
-    settings: `<h3>Settings</h3><p>Samarpan Upnishad runs locally on your computer. There is no account — your <strong>favorites</strong> and <strong>notes</strong> are stored privately in this browser.</p><ul><li>Use the « / » button to collapse or expand the sidebar.</li><li>Dark mode is coming soon.</li><li>To add a new day's Guru's msg, open <strong>Add Guru's Msg</strong> in the sidebar and drop in that day's files — it appears instantly, no restart needed.</li><li>To bulk-rebuild from all folders at once, you can still run the importer (<code>reimport.bat</code>).</li></ul>
+    settings: `<h3>Settings</h3><p>Samarpan Upanishad runs locally on your computer. There is no account — your <strong>favorites</strong> and <strong>notes</strong> are stored privately in this browser.</p><ul><li>Use the « / » button to collapse or expand the sidebar.</li><li>Dark mode is coming soon.</li><li>To add a new day's Guru's msg, open <strong>Add Guru's Msg</strong> in the sidebar and drop in that day's files — it appears instantly, no restart needed.</li><li>To bulk-rebuild from all folders at once, you can still run the importer (<code>reimport.bat</code>).</li></ul>
       <div class="sync-box">
         <h3 style="margin-top:0">Latest Guru's Msg Sync</h3>
         <p>Checks the central archive for any new day's Guru's msg and adds it here automatically.</p>
         <button class="btn primary" id="sync-now-btn">Sync now</button>
         <div id="sync-status" class="sync-status"></div>
       </div>`,
-    about: `<h3>About</h3><p>Samarpan Upnishad is a digital library of daily spiritual Guru's msgs, searchable across English and Hindi transcripts. Each entry preserves the original images and their transcribed text.</p><p style="font-family:var(--serif);font-size:17px;color:var(--accent)">“The purpose of life is realisation of the Self.”<br>— Baba Swami</p><p style="margin-top:22px;color:var(--muted,#888);font-size:13px">Samarpan Upnishad · version <span id="wa-version">…</span></p>`,
+    about: `<h3>About</h3><p>Samarpan Upanishad is a digital library of daily spiritual Guru's msgs, searchable across English and Hindi transcripts. Each entry preserves the original images and their transcribed text.</p><p style="font-family:var(--serif);font-size:17px;color:var(--accent)">“The purpose of life is realisation of the Self.”<br>— Baba Swami</p><p style="margin-top:22px;color:var(--muted,#888);font-size:13px">Samarpan Upanishad · version <span id="wa-version">…</span></p>`,
     help: `<h3>Help &amp; Support</h3><p>Search any word in English or Hindi from the bar at the top — matching Guru's msgs appear with the word highlighted in yellow. Click a result to read it in full, with both images and transcripts.</p><ul><li><strong>Add to Favorites</strong> to save an entry; find them under Favorites.</li><li>Write private notes under <strong>My Comments</strong> on any entry.</li><li><strong>Browse</strong> by Date, Month, or Year from the sidebar.</li></ul>`,
   }[kind];
   $view.innerHTML = `<div class="page-title">${title}</div><div class="prose">${body}</div>`;
@@ -2170,8 +2189,8 @@ async function renderModerator() {
   // Community access requests — people asking to join. This is the queue that
   // matters day to day, so it sits ABOVE the full account list.
   const reqCard = el(`<div class="mod-card mod-access-reqs">
-    <div class="mod-card-h">Community access requests</div>
-    <div class="mod-card-sub">Approving makes someone a member: they can read and post in the discussions.</div>
+    <div class="mod-card-h">Samuhik Satsang access requests</div>
+    <div class="mod-card-sub">Approving makes someone a member: they can read and post in the Samuhik Satsang.</div>
     <div class="mod-req-list"><div class="mod-req-empty">Loading…</div></div>
   </div>`);
   wrap.appendChild(reqCard);
@@ -2199,12 +2218,14 @@ async function renderModerator() {
         toast(msg); row.remove();
         if (!listEl.querySelector(".mod-req-row")) empty("No one is waiting right now.");
       };
+      // req.user_id is passed so the person who asked gets notified of the
+      // decision (send-push kind "access").
       row.querySelector(".mod-req-grant").addEventListener("click", async () => {
-        try { await WA.approveAccess(req.id); settle(`${req.username} is now a member`); renderModerator(); }
+        try { await WA.approveAccess(req.id, req.user_id); settle(`${req.username} is now a member`); renderModerator(); }
         catch (e) { toast(e.message); }
       });
       row.querySelector(".mod-req-deny").addEventListener("click", async () => {
-        try { await WA.denyAccess(req.id); settle(`Request from ${req.username} denied`); }
+        try { await WA.denyAccess(req.id, req.user_id); settle(`Request from ${req.username} denied`); }
         catch (e) { toast(e.message); }
       });
       listEl.appendChild(row);
@@ -2214,7 +2235,7 @@ async function renderModerator() {
   // Every account (the startup gate means this is now the whole user base, not
   // just community members) — role changes, rename, mute, delete.
   const list = el(`<div class="mod-card"><div class="mod-card-h">All accounts (${data.users.length})</div>
-    <div class="mod-card-sub">“${escapeHtml(roleLabel("visitor"))}” keeps the account but removes them from the community. “Remove” deletes the account.</div>
+    <div class="mod-card-sub">“${escapeHtml(roleLabel("visitor"))}” keeps the account but removes them from the Samuhik Satsang. “Remove” deletes the account.</div>
     <div class="mod-users"></div></div>`);
   const holder = list.querySelector(".mod-users");
   data.users.forEach((u) => holder.appendChild(modUserRow(u, me)));
@@ -2304,7 +2325,7 @@ function modUserRow(u, me) {
     row.querySelector(".mu-role").addEventListener("change", async (ev) => {
       const role = ev.target.value;
       try {
-        await WA.setRole(u.id, role);
+        await WA.setRole(u.id, role, u.role);   // prev role decides whether to notify
         u.role = role; toast(`${u.username} → ${role}`); refreshModNav();
       } catch (e) { ev.target.value = u.role; toast(e.message); }
     });
@@ -2356,6 +2377,10 @@ async function route() {
   _searchBackFn = null;   // leaving search (even to re-search) drops any open detail view
   updateIdNav(null);
   if (document.getElementById("conc-panel-body")) renderConclusionPanelBody(null);
+  // Keep the Samuhik Satsang badge honest while the app is open without holding
+  // a second Realtime connection for it: every navigation is a chance to
+  // recount, and SATSANG.refresh() throttles itself to one call per 30s.
+  SATSANG.refresh().catch(() => {});
   // Mobile app shell (APK / ?waNativeTest=1): image-first pages take over
   // home / entry / #/m/* routes; every other route falls through to the
   // standard views below, framed by the mobile top bar.
@@ -3132,9 +3157,82 @@ const SPECIAL = (() => {
 // initializing.
 function refreshAnyMsgDot() {
   const n = (typeof SPECIAL !== "undefined" ? SPECIAL.unread() : 0) +
-            (typeof LETTERPAD !== "undefined" ? LETTERPAD.unread() : 0);
+            (typeof LETTERPAD !== "undefined" ? LETTERPAD.unread() : 0) +
+            (typeof SATSANG !== "undefined" ? SATSANG.unread() : 0);
   document.querySelectorAll("[data-anymsg-dot]").forEach((b) => { b.hidden = !n; });
 }
+
+// ==========================================================================
+// SAMUHIK SATSANG — unread count for the running discussion.
+//
+// The chat itself stays per-message: every Guru's msg, Special message and
+// Letterpad message has its own thread (messages.wisdom_id). But in the MENU the
+// Samuhik Satsang is ONE place, so unread is counted across every thread — other
+// people's messages newer than the last time this device opened a discussion.
+//
+// Mirrors the SPECIAL / LETTERPAD badge contract on purpose
+// (unread / markSeen / refreshBadges / lastSeen) so all three behave identically
+// and `refreshAnyMsgDot` can treat them the same.
+// ==========================================================================
+const SATSANG = (() => {
+  const SEEN_KEY = "wa:satsang:lastSeen";    // ISO timestamp of the newest message already read
+  const COUNT_KEY = "wa:satsang:unread";     // last computed count, so the badge paints offline
+  let count = 0;
+  try { count = parseInt(localStorage.getItem(COUNT_KEY) || "0", 10) || 0; } catch {}
+  let lastRefresh = 0;
+
+  function lastSeen() { try { return localStorage.getItem(SEEN_KEY) || ""; } catch { return ""; } }
+  function unread() { return count; }
+  function refreshBadges() {
+    const txt = count > 99 ? "99+" : String(count);
+    document.querySelectorAll("[data-satsang-badge]").forEach((b) => { b.hidden = !count; b.textContent = txt; });
+    refreshAnyMsgDot();
+  }
+  function setCount(n) {
+    count = Math.max(0, n | 0);
+    try { localStorage.setItem(COUNT_KEY, String(count)); } catch {}
+    refreshBadges();
+  }
+  function setSeen(iso) {
+    const stamp = iso || new Date().toISOString();
+    if (stamp > lastSeen()) { try { localStorage.setItem(SEEN_KEY, stamp); } catch {} }
+  }
+  // The reader opened a discussion — everything up to now counts as seen.
+  function markSeen(iso) { setSeen(iso); setCount(0); }
+
+  // Recount from the server: one 50-row query. Never throws into a caller and
+  // never changes the badge on failure — a boot with no signal must not wipe the
+  // count that's already on screen.
+  async function refresh(force) {
+    if (!isCommunityMember()) { setCount(0); return 0; }
+    if (!force && Date.now() - lastRefresh < 30000) return count;
+    lastRefresh = Date.now();
+    let d;
+    try { d = await WA.communityRecent(50); } catch { return count; }
+    const msgs = d.messages || [];
+    // No baseline yet (first run, or freshly approved): adopt the newest message
+    // as "seen" rather than badging the entire history as unread.
+    if (!lastSeen()) {
+      setSeen(msgs.reduce((a, m) => (m.ts > a ? m.ts : a), ""));
+      setCount(0);
+      return 0;
+    }
+    const me = (currentUser() || {}).username;
+    setCount(msgs.filter((m) => m.ts > lastSeen() && m.user !== me).length);
+    return count;
+  }
+
+  // A message seen arriving while the app is open, on a screen that isn't the
+  // chat — bump without a round trip. Own messages never count.
+  function noteIncoming(m) {
+    if (!m || !isCommunityMember()) return;
+    if (m.user && m.user === (currentUser() || {}).username) return;
+    if (m.ts && m.ts <= lastSeen()) return;
+    setCount(count + 1);
+  }
+
+  return { unread, markSeen, refreshBadges, refresh, noteIncoming, lastSeen };
+})();
 
 // One special-message card. mode = "dual" (desktop: Hindi LEFT · English
 // RIGHT, per the detail-view convention; Hindi-only rows get one wide column)
@@ -3491,7 +3589,7 @@ const MOBILE_UI = (() => {
   document.body.insertAdjacentHTML("beforeend", `
     <header class="m-top" id="m-top">
       <button class="m-back" id="m-back" aria-label="Back">‹</button>
-      <div class="m-title" id="m-title">Samarpan Upnishad</div>
+      <div class="m-title" id="m-title">Samarpan Upanishad</div>
     </header>
     <div class="m-vpanel" id="m-vpanel">
       <button class="m-vback" id="m-panel-back" type="button" aria-label="Back" hidden>‹</button>
@@ -3507,7 +3605,7 @@ const MOBILE_UI = (() => {
         <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         <span class="m-menudot" data-anymsg-dot hidden></span>
       </button>
-      <button class="m-navbtn m-comm-btn" id="m-comm-btn" title="Community" aria-label="Community">
+      <button class="m-navbtn m-comm-btn" id="m-comm-btn" title="Samuhik Satsang" aria-label="Samuhik Satsang">
         <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       </button>
       <button class="m-navbtn m-home-btn" id="m-home-btn" title="Latest Guru's msg" aria-label="Latest Guru's msg">
@@ -3523,10 +3621,16 @@ const MOBILE_UI = (() => {
       <a class="m-account" id="m-account-row" href="#/m/account"></a>
       <nav class="m-menu">
         <a href="#/m/search"><span class="mi">🔍</span> Search By</a>
-        <a href="#/m/community"><span class="mi">💬</span> Community</a>
+        <a href="#/m/community"><span class="mi">💬</span> Samuhik Satsang <span class="m-badge" data-satsang-badge hidden></span></a>
         <a href="#/m/special"><span class="mi">✨</span> Special Telegram Msg <span class="m-badge" data-special-badge hidden></span></a>
         <a href="#/m/letterpad"><span class="mi">✍️</span> Guru's Letterpad Msg <span class="m-badge" data-letterpad-badge hidden></span></a>
         <a href="#/m/anushthan"><span class="mi">🪔</span> Anushthan Msg</a>
+        <!-- Moderator tools. The desktop nav has had these since the start; the
+             phone had no entry point at all, which left a sutradhar (the sole
+             owner) unable to approve anyone from the device they actually use.
+             Visibility is re-evaluated on every drawer open, so a role change
+             lands without a restart. -->
+        <a href="#/moderator" class="m-mod-only" hidden><span class="mi">🛡️</span> Moderator</a>
         <a href="#/random" class="m-lucky"><span class="mi m-lucky-ico">🌟</span>
           <span class="m-lucky-text">Your Lucky Msg for Today</span>
           <span class="m-lucky-spark s1">✨</span><span class="m-lucky-spark s2">✨</span><span class="m-lucky-spark s3">⭐</span></a>
@@ -3543,7 +3647,7 @@ const MOBILE_UI = (() => {
     <div class="m-exit" id="m-exit" hidden>
       <div class="m-exit-card">
         <div class="m-exit-ico">🙏</div>
-        <div class="m-exit-q">Do you want to exit Samarpan Upnishad?</div>
+        <div class="m-exit-q">Do you want to exit Samarpan Upanishad?</div>
         <div class="m-exit-btns">
           <button class="btn" id="m-exit-no">Stay</button>
           <button class="btn primary" id="m-exit-yes">Exit</button>
@@ -3561,7 +3665,9 @@ const MOBILE_UI = (() => {
       ? `<span class="m-acc-avatar">${escapeHtml((u.username || "?")[0].toUpperCase())}</span>
          <span class="m-acc-name">${escapeHtml(u.username)}<small>${escapeHtml(roleLabel(u.role))}</small></span>`
       : `<span class="m-acc-avatar">॥</span>
-         <span class="m-acc-name">Sign in<small>for community features</small></span>`;
+         <span class="m-acc-name">Sign in<small>for Samuhik Satsang</small></span>`;
+    // Moderator/sutradhar-only rows (see the drawer markup above).
+    $("m-drawer").querySelectorAll(".m-mod-only").forEach((a) => { a.hidden = !isModerator(); });
   }
   function openDrawer() { refreshAccountRow(); $("m-drawer").classList.add("open"); $("m-scrim").hidden = false; }
   function closeDrawer() {
@@ -3621,6 +3727,87 @@ const MOBILE_UI = (() => {
   const _capApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
   if (_capApp && _capApp.addListener) _capApp.addListener("backButton", onHardwareBack);
 
+  // ---- content freshness (daily notification tap + resume) ----------------
+  // The archive on this device is a bundled SQLite file that wa-native's
+  // syncOnce() refreshes. That ran exactly ONCE, asynchronously, after boot —
+  // and its post-sync repaint only fired when the hash was exactly "#/". A
+  // daily-message notification lands on "#/?latest=1", so the tap rendered
+  // YESTERDAY's latest and nothing ever repainted it; the only way through was
+  // to kill and relaunch the app twice. Fixed here, in app.js, because only
+  // app.js ships over-the-air (mobile/publish_update.py UI_FILES).
+  //
+  // ⚠ Two syncOnce() calls must never overlap: each swaps `db` and closes the
+  // one it replaced, so a racing pair can close the live database. New shells
+  // coalesce internally (WA_NATIVE.syncCoalesced); on an older shell we instead
+  // WAIT for the launch sync by watching the stored content version, and only
+  // start our own sync once the launch window has safely passed.
+  const _bootAt = Date.now();
+  const BOOT_SYNC_WINDOW_MS = 30000;
+  let _syncInFlight = null;
+  let _lastContentSync = 0;
+
+  function contentVersionNow() {
+    try { return localStorage.getItem("wa:mobile:contentVersion") || ""; } catch { return ""; }
+  }
+  function syncIsSafeToStart() {
+    const N = window.WA_NATIVE;
+    if (!N || !N.sync) return false;
+    return !!N.syncCoalesced || Date.now() - _bootAt > BOOT_SYNC_WINDOW_MS;
+  }
+  // Bounded wait for the launch sync to install new content, without starting a
+  // competing one. Resolves as soon as the version reaches `want` (or simply
+  // moves, when the notification didn't say), or the timeout expires.
+  function awaitLaunchSync(want, ms) {
+    const start = contentVersionNow();
+    if (want && start === want) return Promise.resolve(null);
+    return new Promise((res) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        const now = contentVersionNow();
+        if ((want ? now === want : now !== start) || Date.now() - t0 > ms) { clearInterval(iv); res(null); }
+      }, 400);
+    });
+  }
+  function contentSync(want) {
+    if (!syncIsSafeToStart()) return awaitLaunchSync(want, 20000);
+    if (!_syncInFlight) {
+      _syncInFlight = Promise.resolve(window.WA_NATIVE.sync()).catch(() => null)
+        .then((r) => { _syncInFlight = null; _lastContentSync = Date.now(); return r; });
+    }
+    return _syncInFlight;
+  }
+
+  // Route only AFTER this device has today's content — the whole point of
+  // tapping a daily-message notification. The splash keeps the reader from
+  // seeing yesterday's message flash past on the way.
+  async function goFresh(hash, want) {
+    document.body.insertAdjacentHTML("beforeend", `<div class="m-freshsync" id="m-freshsync">
+      <div class="m-fs-card"><div class="m-fs-spin"></div>
+        <div class="m-fs-text">आज का संदेश लाया जा रहा है…</div></div></div>`);
+    try { await contentSync(want); }
+    finally { const s = $("m-freshsync"); if (s) s.remove(); }
+    go(hash);
+  }
+
+  // Resuming a backgrounded app never re-checked for new content at all — the
+  // second half of the same bug. Re-sync on wake (throttled) and repaint when
+  // the reader is sitting on the daily feed, where "latest" is what's on screen.
+  const SYNC_ON_WAKE_MS = 10 * 60 * 1000;
+  const AT_HOME_RE = /^#\/?(\?.*)?$/;
+  if (_capApp && _capApp.addListener) {
+    _capApp.addListener("appStateChange", (st) => {
+      if (!st || !st.isActive) return;
+      // Messages may have arrived while we were backgrounded, so the badge is
+      // recounted on every wake (cheap, one query) regardless of the sync throttle.
+      SATSANG.refresh(true).catch(() => {});
+      if (!syncIsSafeToStart()) return;
+      if (Date.now() - _lastContentSync < SYNC_ON_WAKE_MS) return;
+      contentSync().then((r) => {
+        if (r && r.added && r.added.length && AT_HOME_RE.test(location.hash || "#/")) safeRoute();
+      });
+    });
+  }
+
   // ---- Push notifications (Phase 4) --------------------------------------
   // Ships OTA but only ACTIVATES on an APK that bundles @capacitor/push-
   // notifications (a new APK) — older shells (8.64) simply lack the plugin, so
@@ -3675,18 +3862,42 @@ const MOBILE_UI = (() => {
         });
         _pdiag({ channelDaily: "created" });
       } catch (e) { _pdiag({ channelDaily: "createChannel failed: " + (e && e.message || e) }); }
+      try {
+        await Push.createChannel({
+          id: "samuhik_satsang", name: "Samuhik Satsang",
+          description: "New messages in the Samuhik Satsang, and access decisions",
+          importance: 4, visibility: 1,
+        });
+        _pdiag({ channelSatsang: "created" });
+      } catch (e) { _pdiag({ channelSatsang: "createChannel failed: " + (e && e.message || e) }); }
       Push.addListener("registration", async (t) => {
         _pdiag({ token: (t && t.value || "").slice(0, 18) + "…", registeredAt: Date.now() });
         try { await WA.registerDeviceToken(t.value, "android"); _pdiag({ supabase: "OK" }); }
         catch (e) { _pdiag({ supabase: "FAIL: " + (e && e.message || e) }); }
       });
       Push.addListener("registrationError", (e) => _pdiag({ regError: JSON.stringify(e) }));
+      // Arrived while the app is in the FOREGROUND: Android won't post it to the
+      // tray, so nothing else would tell the user. Bump the Samuhik Satsang
+      // badge so the menu still shows there's something to read.
+      Push.addListener("pushNotificationReceived", (n) => {
+        const d = (n && n.data) || {};
+        if (d.kind === "chat") SATSANG.noteIncoming({ ts: new Date().toISOString() });
+      });
       // Routes by the notification's own data payload (send-push sets
       // data.route per kind) instead of a single hardcoded destination, now
-      // that three push kinds share this handler.
+      // that several push kinds share this handler.
+      //
+      // A DAILY tap is the one kind whose destination depends on content this
+      // device may not have yet, so it waits for the sync (goFresh) instead of
+      // rendering the previous day's message. `data.kind` is only present on
+      // newer send-push payloads — the route shape is the fallback test.
       Push.addListener("pushNotificationActionPerformed", (a) => {
-        const route = (a && a.notification && a.notification.data && a.notification.data.route) || "#/m/special";
-        try { go(route); } catch (_) {}
+        const data = (a && a.notification && a.notification.data) || {};
+        const route = data.route || "#/m/special";
+        try {
+          if (data.kind === "daily" || AT_HOME_RE.test(route)) goFresh(route, data.cv || "");
+          else go(route);
+        } catch (_) {}
       });
       await Push.register();
       _pdiag({ result: "register() called — awaiting token event" });
@@ -3712,7 +3923,7 @@ const MOBILE_UI = (() => {
     // normal back/title bar since it has no image to sit on top of.
     document.body.classList.toggle("m-notop", isImageScreen);
     $("m-back").style.visibility = mode === "home" ? "hidden" : "visible";
-    $("m-title").textContent = title || "Samarpan Upnishad";
+    $("m-title").textContent = title || "Samarpan Upanishad";
   }
 
   // ==========================================================================
@@ -3781,7 +3992,7 @@ const MOBILE_UI = (() => {
   // ---- message screen for an empty / Anushthan date ------------------------
   async function renderDateMessage(s) {
     if (!s) return go("#/");
-    setChrome("viewer", "Samarpan Upnishad", null);
+    setChrome("viewer", "Samarpan Upanishad", null);
     _stageId = null; _feedCards = [];
     const kind = isAnushthan(s) ? "anushthan" : "notfound";
     const dEl = $("m-panel-date");
@@ -4308,7 +4519,7 @@ const MOBILE_UI = (() => {
 
   // ---- the viewer (home + #/entry/<id>) ----------------------------------
   async function viewer(id, params, isHome) {
-    setChrome(isHome ? "home" : "viewer", "Samarpan Upnishad", null);
+    setChrome(isHome ? "home" : "viewer", "Samarpan Upanishad", null);
     $view.innerHTML = `<div class="loading">Loading…</div>`;
     const nav = _nav;
     try {
@@ -4335,7 +4546,7 @@ const MOBILE_UI = (() => {
   }
 
   function renderSingleCard(e) {
-    setChrome("viewer", "Samarpan Upnishad", e);
+    setChrome("viewer", "Samarpan Upanishad", e);
     _stageId = e.id;
     store.setLastViewed(e.id);
     paintLang(prefLang);
@@ -4379,7 +4590,10 @@ const MOBILE_UI = (() => {
     // most chat apps show. Use the same line for both.
     await P.Share.share({ title: text, text, files: [uri], dialogTitle: "Share" });
   }
-  const GALLERY_ALBUM = "Samarpan Upnishad";
+  // ⚠ Renamed with the app (2026-08-05). Images downloaded before this land in
+  // the old "Samarpan Upanishad" gallery album and stay there — Android has no
+  // rename; only new saves go to the corrected spelling.
+  const GALLERY_ALBUM = "Samarpan Upanishad";
   async function ensureGalleryAlbum() {
     const Media = window.Capacitor.Plugins.Media;
     try { await Media.createAlbum({ name: GALLERY_ALBUM }); } catch {}   // already exists — fine
@@ -4640,7 +4854,7 @@ const MOBILE_UI = (() => {
     COMMIT_FRAC: 0.10, COMMIT_VEL: 0.35, EDGE_RESIST: 0.35, DECIDE_SLOP: 8, EXTRAS_MIN: 40,
   };
   async function buildFeed(centerEntry, isHome, enter) {
-    setChrome(isHome ? "home" : "viewer", "Samarpan Upnishad", centerEntry);
+    setChrome(isHome ? "home" : "viewer", "Samarpan Upanishad", centerEntry);
     _stageId = centerEntry.id;
     store.setLastViewed(centerEntry.id);
     // replaceState (not a new history entry) — scrolling through days must
@@ -5252,7 +5466,7 @@ const MOBILE_UI = (() => {
     const pick = params && params.get("wid");
     const wid = pick || (_chatCtx && _chatCtx.wid) || _stageId || store.lastViewed();
     const node = el(`<div class="m-community"></div>`);
-    pageFrame("Community", node);
+    pageFrame("Samuhik Satsang", node);
     if (!wid) {
       node.innerHTML = `<div class="empty">Open a message first, then join its discussion here.</div>`;
       return;
@@ -5825,13 +6039,67 @@ const MOBILE_UI = (() => {
       _pageLangHook = null;
       setEnglishAvailable(true);
       _feedCards = [];
-      setChrome("page", PAGE_TITLES[seg[0]] || "Samarpan Upnishad", null);
+      setChrome("page", PAGE_TITLES[seg[0]] || "Samarpan Upanishad", null);
     },
     enhanceSettings() {
       // Temporary "Display" card at the BOTTOM of Settings (the settings page
       // will be reorganised later). Two slide switches; off = right side.
       const prose = document.querySelector(".content .prose");
       if (!prose || document.getElementById("m-display-box")) return;
+
+      // ---- Notifications ---------------------------------------------------
+      // Samuhik Satsang pushes are the only ones with a switch: daily / Special
+      // / Letterpad are announcements from Baba Swami, while a busy discussion
+      // is the one thing a sadhak may genuinely want quiet. The preference lives
+      // on the ACCOUNT (profiles.notify_satsang), so it follows the person to
+      // every device and survives a reinstall — hence the switch shows the
+      // server's value, not a local guess. Default ON.
+      const nbox = el(`<div class="sync-box" id="m-notif-box">
+        <h3 style="margin-top:0">Notifications</h3>
+        <label class="m-switchrow">Samuhik Satsang messages
+          <span class="m-switch"><input type="checkbox" id="m-notif-satsang"><i></i></span></label>
+        <div class="m-hint" id="m-notif-hint"></div>
+      </div>`);
+      prose.appendChild(nbox);
+      const nsw = nbox.querySelector("#m-notif-satsang");
+      const nhint = nbox.querySelector("#m-notif-hint");
+      const u0 = currentUser() || {};
+      nsw.checked = u0.notify_satsang !== false;
+      // A switch that silently does nothing is worse than no switch: if Android
+      // notifications are off for the app, or Satsang access isn't approved yet,
+      // say so rather than letting the toggle imply it's working.
+      let diag = {};
+      try { diag = JSON.parse(localStorage.getItem("wa:push:diag") || "{}"); } catch (_) {}
+      const granted = diag.permAfter === "granted" || diag.permBefore === "granted";
+      // Repainted after every toggle — a hint that still described the old state
+      // would flatly contradict the switch sitting next to it.
+      const paintHint = () => {
+        nhint.textContent = !granted
+          ? "Notifications are switched off for this app on your phone. Turn them on in Settings › Apps › Samarpan Upanishad › Notifications."
+          : !isCommunityMember()
+            ? "You'll start receiving these once a moderator approves your Samuhik Satsang access."
+            : nsw.checked
+              ? "New messages in the Samuhik Satsang notify you. Guru's daily, Special and Letterpad messages always notify."
+              : "Samuhik Satsang messages stay quiet. Guru's daily, Special and Letterpad messages always notify.";
+      };
+      paintHint();
+      nsw.addEventListener("change", async () => {
+        const want = nsw.checked;
+        nsw.disabled = true;
+        try {
+          await WA.setNotifyPref(want);
+          try {
+            const u = currentUser();
+            if (u) { u.notify_satsang = want; localStorage.setItem("wa:user", JSON.stringify(u)); }
+          } catch (_) {}
+          toast(want ? "Samuhik Satsang notifications on" : "Samuhik Satsang notifications off");
+        } catch (e) {
+          nsw.checked = !want;         // never leave the switch claiming something untrue
+          toast(e.message);
+        }
+        paintHint();
+        nsw.disabled = false;
+      });
       const box = el(`<div class="sync-box" id="m-display-box">
         <h3 style="margin-top:0">Display</h3>
         <label class="m-switchrow">Zoom bar on left side
@@ -5906,8 +6174,8 @@ const AUTH_GATE = (() => {
     root.id = "auth-gate";
     root.innerHTML = `<div class="ag-card">
       <div class="ag-brand">
-        <div class="ag-om">॥</div>
-        <div class="ag-title">Samarpan Upnishad</div>
+        <div class="ag-om">॥ <span class="ag-atma">आत्मा</span> ॥</div>
+        <div class="ag-title">Samarpan Upanishad</div>
         <div class="ag-sub">Timeless wisdom, always with you.</div>
       </div>
       <div class="ag-body"></div>
@@ -5934,6 +6202,7 @@ const AUTH_GATE = (() => {
     store.setToken(d.token);
     try { localStorage.setItem("wa:user", JSON.stringify(d.user)); } catch {}
     syncUserData();
+    claimPushToken();     // the token registered at launch had no owner yet
     refreshModNav();
     close();
     // First pass of the launch → start the app. If it had already started (a
@@ -5954,7 +6223,7 @@ const AUTH_GATE = (() => {
     open();
     body().innerHTML = `<div class="ag-view">
       <div class="ag-h">Sign in</div>
-      <div class="ag-p">Your account keeps your favourites and notes safe, and is how you join the community.</div>
+      <div class="ag-p">Your account keeps your favourites and notes safe, and is how you join the Samuhik Satsang.</div>
       <input class="ag-email" type="email" placeholder="Email" autocomplete="email" value="${escapeHtml(prefill || "")}">
       ${pwField("ag-pw", "Password", "current-password")}
       <button class="btn primary ag-go">Sign in</button>
@@ -6170,4 +6439,8 @@ AUTH_GATE.boot(function startApp() {
   // badge once the live index.json fetch resolves (see LETTERPAD.loadIndex()).
   LETTERPAD.refreshBadges();
   LETTERPAD.loadIndex().catch(() => {});
+  // Samuhik Satsang: same cache-first paint from the stored count, then a live
+  // recount. Skipped for non-members by SATSANG.refresh() itself.
+  SATSANG.refreshBadges();
+  SATSANG.refresh(true).catch(() => {});
 });

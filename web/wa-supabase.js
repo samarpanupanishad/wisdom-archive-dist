@@ -59,6 +59,10 @@ function _userFromProfile(p) {
   return {
     id: p.id, username: p.username, role: p.role, email: p.email,
     chat_muted: !!p.chat_muted, created: p.created,
+    // Samuhik Satsang push preference. Defaults to ON when the column doesn't
+    // exist yet (the notifications section of schema.sql hasn't been run), so a
+    // partially-applied schema never reads as "the user muted this".
+    notify_satsang: p.notify_satsang === undefined ? true : !!p.notify_satsang,
   };
 }
 function _mapMsg(row) {
@@ -87,7 +91,7 @@ function _accessMissing(error) {
   const m = (error && error.message) || "";
   return /access_requests|access_request|community_access/i.test(m) &&
     /does not exist|not find|schema cache/i.test(m)
-    ? "Community access requests aren't set up yet. (Admin: run the access_requests section of supabase/schema.sql.)"
+    ? "Samuhik Satsang access requests aren't set up yet. (Admin: run the access_requests section of supabase/schema.sql.)"
     : null;
 }
 
@@ -109,6 +113,23 @@ async function _rpc(name, args) {
   const { data, error } = await _sb.rpc(name, args || {});
   if (error) throw new Error(error.message);
   return data;
+}
+
+// Fire-and-forget notification fan-out through the send-push Edge Function
+// (which authenticates this call and works out the audience — see its header).
+// Deliberately never awaited and never allowed to throw into the caller: a
+// notification that fails to send must not make a sent message look unsent.
+//
+// ⚠ The trade-off: if the sender's app is killed in the moment between the
+// INSERT and this call, nobody gets notified about that message. A Supabase
+// Database Webhook on `messages` would be immune to that, at the cost of
+// dashboard configuration. Move to one if dropped notifications show up.
+function _firePush(payload) {
+  try {
+    _sb.functions.invoke("send-push", { body: payload })
+      .then((r) => { if (r && r.error) console.warn("send-push:", r.error.message || r.error); })
+      .catch((e) => console.warn("send-push failed:", e));
+  } catch (e) { console.warn("send-push failed:", e); }
 }
 
 const WA = {
@@ -242,6 +263,8 @@ const WA = {
     const { data, error } = await _sb.from("messages")
       .insert({ wisdom_id: String(wid), text: text }).select("*").single();
     if (error) throw new Error(error.message);
+    // Notify the other members (send-push kind "chat" verifies we're the author).
+    _firePush({ kind: "chat", id: data.id });
     return { message: _mapMsg(data) };
   },
 
@@ -285,18 +308,48 @@ const WA = {
   // it when a new Special Message publishes. Anonymous devices are allowed
   // (the archive works signed-out) — device_tokens permits anon INSERT, and
   // nothing is readable back (RLS). Idempotent on the unique token via upsert.
+  // Preferred path is the register_device_token RPC (SECURITY DEFINER), which
+  // UPSERTS and re-stamps the owner. That matters now that Samuhik Satsang
+  // pushes are addressed to people: push registration runs at launch, BEFORE the
+  // startup gate is passed, so a fresh install's token would otherwise keep
+  // user_id NULL forever and never receive a chat notification.
+  //
+  // Falls back to the original plain INSERT when the RPC isn't there yet (the
+  // notifications section of schema.sql not run): anon devices have the INSERT
+  // grant but NOT the privileges PostgREST's upsert path requires, and the
+  // unique `token` column makes a repeat registration a harmless 23505.
+  // Rotated/stale tokens are pruned server-side by send-push on FCM 404.
   async registerDeviceToken(token, platform) {
     if (!token) return { ok: false };
+    const plat = platform || "android";
+    // Remembered so app.js can re-register after sign-in without waiting for
+    // FCM to hand out the token again (it only fires once per install).
+    try { localStorage.setItem("wa:push:token", token); } catch (_) {}
+    const { error } = await _sb.rpc("register_device_token", { tok: token, plat });
+    if (!error) return { ok: true };
+    if (!/register_device_token|schema cache|does not exist|not find/i.test(error.message || "")) {
+      throw new Error(error.message);
+    }
     const { data: { session } } = await _sb.auth.getSession();
-    const row = { token, platform: platform || "android", user_id: session ? session.user.id : null };
-    // Plain INSERT — anon devices have the INSERT grant but NOT the extra
-    // privileges PostgREST's upsert / ON CONFLICT path requires (that returned
-    // "permission denied for table device_tokens"). The token column is unique,
-    // so a repeat registration returns 23505 (unique_violation) which we treat
-    // as success (already stored). Rotated/stale tokens are pruned server-side
-    // by send-push on an FCM 404/UNREGISTERED.
-    const { error } = await _sb.from("device_tokens").insert(row);
-    if (error && error.code !== "23505") throw new Error(error.message);
+    const row = { token, platform: plat, user_id: session ? session.user.id : null };
+    const { error: insErr } = await _sb.from("device_tokens").insert(row);
+    if (insErr && insErr.code !== "23505") throw new Error(insErr.message);
+    return { ok: true, legacy: true };
+  },
+
+  // The FCM token this device last registered (see above), or "".
+  storedPushToken() { try { return localStorage.getItem("wa:push:token") || ""; } catch (_) { return ""; } },
+
+  // Samuhik Satsang notifications on/off for THIS ACCOUNT (all their devices).
+  // Throws with a plain-English message when the schema section is missing, so
+  // the Settings switch can say so instead of silently doing nothing.
+  async setNotifyPref(enabled) {
+    const { error } = await _sb.rpc("set_notify_pref", { kind: "satsang", enabled: !!enabled });
+    if (error) {
+      throw new Error(/set_notify_pref|schema cache|does not exist|not find/i.test(error.message || "")
+        ? "Notification settings aren't set up on the server yet. (Admin: run the notifications section of supabase/schema.sql.)"
+        : error.message);
+    }
     return { ok: true };
   },
 
@@ -470,13 +523,34 @@ const WA = {
       throw e;
     }
   },
-  approveAccess(id) { return _rpc("approve_access_request", { rid: id }); },
-  denyAccess(id) { return _rpc("deny_access_request", { rid: id }); },
+  // `userId` (from the request row) is what the decision notification is sent
+  // to. Optional so an older caller still works — it just won't notify.
+  async approveAccess(id, userId) {
+    const d = await _rpc("approve_access_request", { rid: id });
+    if (userId) _firePush({ kind: "access", user_id: userId, status: "approved" });
+    return d;
+  },
+  async denyAccess(id, userId) {
+    const d = await _rpc("deny_access_request", { rid: id });
+    if (userId) _firePush({ kind: "access", user_id: userId, status: "denied" });
+    return d;
+  },
 
   // ----- Moderator ------------------------------------------------------
   listUsers() { return _rpc("list_users"); },
   listMembers() { return _rpc("list_members"); },
-  setRole(id, role) { return _rpc("set_user_role", { uid: id, new_role: role }); },
+  // The role dropdown is the other way a moderator settles an access request, so
+  // it notifies exactly like Approve/Deny — but ONLY when the person was
+  // actually waiting ('pending'). Without that check, routine housekeeping on a
+  // visitor who never asked would tell them they'd been turned down.
+  async setRole(id, role, prevRole) {
+    const d = await _rpc("set_user_role", { uid: id, new_role: role });
+    if (prevRole === "pending") {
+      if (role === "member" || role === "moderator") _firePush({ kind: "access", user_id: id, status: "approved" });
+      else if (role === "visitor") _firePush({ kind: "access", user_id: id, status: "denied" });
+    }
+    return d;
+  },
   renameUser(id, username) { return _rpc("rename_user", { uid: id, new_username: username }); },
   deleteUser(id) { return _rpc("delete_user", { uid: id }); },
   toggleMute(id) { return _rpc("toggle_mute", { uid: id }); },
