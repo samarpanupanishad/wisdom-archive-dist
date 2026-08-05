@@ -1952,6 +1952,27 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
 .sx-row .mx-thumb-txt .mx-ico { animation: none; }
 .sx-row .mx-thumb-txt .mx-spark { display: none; }
 
+/* Index header: reuses .m-chat-head's card so it matches the chat header it was
+   modelled on, but splits into two hit targets — the label (opens the message)
+   and the search button (find a message to discuss). Nested <button>s can't be
+   nested inside one, hence the container is a <div>. Padding stays on the
+   container so the inner buttons don't double it. */
+.sx-head { align-items: center; }
+.sx-head-main {
+  flex: 1; min-width: 0; display: flex; align-items: center;
+  background: none; border: 0; padding: 0; margin: 0;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+.sx-head-main:disabled { cursor: default; opacity: .75; }
+.sx-head-search {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; border-radius: 11px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--accent); cursor: pointer;
+}
+.sx-head-search:active { background: var(--accent-soft); }
+.sx-headwrap:empty { display: none; }
+
 /* Desktop: the same grouped list inside the narrow Samuhik Satsang panel, so
    it has its own (thumbnail-free) row markup — see renderSatsangIndex. */
 .sx-group + .sx-group { margin-top: 6px; }

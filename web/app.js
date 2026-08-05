@@ -3379,6 +3379,22 @@ async function satsangGroups(force) {
     .filter((g) => g.rows.length);
 }
 
+// Short section labels for the index header. CHAT_NS_LABEL covers only the two
+// namespaced sections; the header needs a name for daily msgs (and Anushthan) too.
+const SATSANG_SHORT_LABEL = {
+  daily: "Daily Msg", special: "Special Telegram Msg",
+  letterpad: "Guru's Letterpad Msg", anushthan: "Anushthan Msg",
+};
+// Where the FULL message lives, per section. The index header opens the message
+// itself — matching the pre-8.89 chat header, where tapping the subject opened
+// the message and Android back returned you to the discussion.
+function satsangReaderHref(v) {
+  if (!v) return "";
+  if (v.sec === "daily") return "#/entry/" + encodeURIComponent(v.wid);
+  const m = SATSANG_NS_RE.exec(v.wid);
+  return m ? "#/m/" + m[1] + "/" + encodeURIComponent(m[2]) : "";
+}
+
 // Shared line under a row's title: who spoke last and the start of what they said.
 function satsangLastLine(v) {
   const text = (v.lastText || "").replace(/\s+/g, " ").trim();
@@ -5657,13 +5673,55 @@ const MOBILE_UI = (() => {
       </a>`);
   }
 
+  // The index's top header — deliberately the SAME two-line shape the pre-8.89
+  // chat header had (.m-chat-head: label · date on top, subject beneath):
+  //   • left  → tapping it opens the FULL MESSAGE for that satsang; Android back
+  //             returns here. Applied to every section, including daily msgs,
+  //             which previously opened the picker from here instead.
+  //   • right → search, replacing the old "Change ▾". Goes to the pick-a-message
+  //             flow, which is the only way to reach a message NOBODY has
+  //             discussed yet (those have no thread, so no row in the list).
+  // `top` is the satsang with the newest message, or null when there are none.
+  function satsangHeadEl(top, emptyNote) {
+    const head = el(`<div class="m-chat-head sx-head">
+      <button class="sx-head-main" type="button">
+        <div class="m-ch-text">
+          <div class="m-ch-date"></div>
+          <div class="m-ch-topic"></div>
+        </div>
+      </button>
+      <button class="sx-head-search" type="button" title="Find a message to discuss"
+              aria-label="Find a message to discuss">${icon("search")}</button>
+    </div>`);
+    const main = head.querySelector(".sx-head-main");
+    const href = top ? satsangReaderHref(top) : "";
+    if (top) {
+      head.querySelector(".m-ch-date").textContent =
+        [SATSANG_SHORT_LABEL[top.sec] || "", top.date ? fmtHumanDate(top.date) : ""].filter(Boolean).join(" · ");
+      head.querySelector(".m-ch-topic").textContent = top.title || "";
+    } else {
+      head.querySelector(".m-ch-date").textContent = "Samuhik Satsang";
+      head.querySelector(".m-ch-topic").textContent = emptyNote || "";
+    }
+    // Nothing to open → the label must not pretend to be tappable.
+    if (href) main.addEventListener("click", () => go(href));
+    else main.disabled = true;
+    head.querySelector(".sx-head-search").addEventListener("click", () => go("#/m/search?for=chat"));
+    return head;
+  }
+
   async function satsangIndexPage() {
-    const node = el(`<div class="m-searchwrap"><div class="m-results"><div class="loading">Loading…</div></div></div>`);
+    const node = el(`<div class="m-searchwrap">
+      <div class="sx-headwrap"></div>
+      <div class="m-results"><div class="loading">Loading…</div></div>
+    </div>`);
     pageFrame("Samuhik Satsang", node, "m-page-scroll");
+    const headWrap = node.querySelector(".sx-headwrap");
     const box = node.querySelector(".m-results");
 
     // Not approved yet → the same welcome + request box the chat gate shows,
-    // rather than an empty list that looks broken.
+    // rather than an empty list that looks broken. No header either: there is
+    // nothing to search for until a moderator lets them in.
     if (!isCommunityMember()) {
       box.innerHTML = `<div class="wc-satsang-gate">
         <div class="wc-sg-ico">🪷</div>
@@ -5675,10 +5733,18 @@ const MOBILE_UI = (() => {
     }
 
     const groups = await satsangGroups(true).catch(() => []);
+    const failed = SATSANG.lastError();
+    // Newest activity across every section — the same thread the first row shows.
+    const top = groups.flatMap((g) => g.rows)
+      .reduce((best, v) => (!best || v.lastAt > best.lastAt ? v : best), null);
+    headWrap.appendChild(satsangHeadEl(top, failed
+      ? "Couldn't load the discussions — check your connection"
+      : "No discussion yet — tap search to start one"));
+
     if (!groups.length) {
-      box.innerHTML = SATSANG.lastError()
+      box.innerHTML = failed
         ? `<div class="empty">Couldn't load the Samuhik Satsang list. Check your connection and open this page again.</div>`
-        : `<div class="empty">No satsang yet. Open a Guru's msg and tap 💬 to start the first one.</div>`;
+        : `<div class="empty">No satsang yet. Tap the search button above to find a message and start the first one.</div>`;
       return;
     }
     renderSearchGroups(box, groups.map((g) => ({
