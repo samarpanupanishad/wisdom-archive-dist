@@ -303,6 +303,38 @@ const WA = {
     return { messages: data.map((r) => ({ user: r.username, wid: r.wisdom_id, text: r.text, ts: r.created_at })) };
   },
 
+  // Every discussion that actually HAS messages, newest activity first — the
+  // data behind the grouped Samuhik Satsang index. Shape:
+  // {threads:[{wid, count, last_at, last_user, last_text}]}.
+  //
+  // Prefers the list_satsang_threads RPC (one small round trip). Falls back to
+  // grouping raw messages in the browser when that section of schema.sql hasn't
+  // been run, so the feature works the moment the UI ships — just at the cost of
+  // pulling recent rows over mobile data. RLS keeps both paths members-only.
+  async listSatsangThreads() {
+    try {
+      const d = await _rpc("list_satsang_threads");
+      return { threads: (d && d.threads) || [] };
+    } catch (e) {
+      if (!/list_satsang_threads|schema cache|does not exist|not find/i.test(e.message || "")) throw e;
+    }
+    const { data, error } = await _sb.from("messages")
+      .select("wisdom_id,username,text,created_at")
+      .order("created_at", { ascending: false }).limit(4000);
+    if (error) throw new Error(error.message);
+    // Rows arrive newest-first, so the FIRST row seen for a thread is its latest.
+    const byWid = new Map();
+    for (const r of data || []) {
+      const t = byWid.get(r.wisdom_id);
+      if (t) { t.count++; continue; }
+      byWid.set(r.wisdom_id, {
+        wid: r.wisdom_id, count: 1, last_at: r.created_at,
+        last_user: r.username, last_text: (r.text || "").slice(0, 160),
+      });
+    }
+    return { threads: [...byWid.values()].sort((a, b) => (a.last_at < b.last_at ? 1 : -1)) };
+  },
+
   // ----- Push notifications (Phase 4) ------------------------------------
   // Register this device's FCM token so the send-push Edge Function can reach
   // it when a new Special Message publishes. Anonymous devices are allowed

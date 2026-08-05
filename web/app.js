@@ -972,46 +972,75 @@ async function renderCommunityTab(body) {
   if (chatTarget) {
     await renderWisdomChat(body, chatTarget, _chatCtx && _chatCtx.title);
   } else {
-    // No wisdom selected — show global recent feed
-    body.innerHTML = `<div class="cp-feed-wrap" id="cp-feed-wrap"><div class="loading" style="padding:24px">Loading…</div></div>`;
-    const wrap = body.querySelector("#cp-feed-wrap");
-    try {
-      const data = await WA.communityRecent(20);
-      if (!data.messages || !data.messages.length) {
-        wrap.innerHTML = `<div class="comm-panel-empty">
-          <div class="cpe-ico">${COMMUNITY_ICON}</div>
-          <div class="cpe-h">No discussions yet</div>
-          <div class="cpe-sub">Open a Guru's msg and join the discussion!</div>
-        </div>`;
-        return;
-      }
-      wrap.innerHTML = "";
-      data.messages.forEach((m) => {
-        const item = el(`<div class="cp-msg">
-          <div class="cpm-avatar">${escapeHtml((m.user || "?")[0].toUpperCase())}</div>
-          <div class="cpm-body">
-            <div class="cpm-meta">
-              <span class="cpm-user">${escapeHtml(m.user || "")}</span>
-              <a class="cpm-wid" data-wid="${escapeHtml(m.wid)}" href="#">${escapeHtml(chatWidLabel(m.wid))}</a>
-              <span class="cpm-time">${timeAgo(m.ts)}</span>
-            </div>
-            <div class="cpm-text">${renderMarkdown(m.text || "")}</div>
-          </div>
-        </div>`);
-        // Namespaced ids are not archive entries — route them to their own section
-        // instead of #/entry/<id>, which would 404.
-        item.querySelector(".cpm-wid").addEventListener("click", (e) => {
-          e.preventDefault();
-          if (_sidePanelClose) _sidePanelClose();
-          const ns = CHAT_NS_RE.exec(String(m.wid));
-          go(ns ? `#/m/${ns[1]}/${encodeURIComponent(ns[2])}` : `#/entry/${m.wid}`);
-        });
-        wrap.appendChild(item);
-      });
-    } catch {
-      wrap.innerHTML = `<div class="comm-empty" style="padding:28px">Could not load the Samuhik Satsang feed.</div>`;
-    }
+    // Nothing on screen to discuss → the Samuhik Satsang INDEX: every running
+    // discussion, grouped by section in the fixed order, newest activity first.
+    // (Replaced a flat "recent messages" feed, which showed individual messages
+    // and gave no sense of which discussions exist.) Same data and grouping as
+    // the mobile index — see satsangGroups().
+    await renderSatsangIndex(body);
   }
+}
+
+// The desktop panel's grouped list. Deliberately a separate renderer from the
+// mobile page: they share the DATA (satsangGroups) but not the markup — the
+// panel is a narrow column, the mobile page is a full screen with thumbnails.
+// Keep the shared part in satsangGroups(); don't fold the two views together.
+async function renderSatsangIndex(body) {
+  body.innerHTML = `<div class="cp-feed-wrap" id="cp-feed-wrap"><div class="loading" style="padding:24px">Loading…</div></div>`;
+  const wrap = body.querySelector("#cp-feed-wrap");
+
+  if (!isCommunityMember()) {
+    wrap.innerHTML = `<div class="comm-panel-empty">
+      <div class="cpe-ico">🪷</div>
+      <div class="cpe-h">Samuhik Satsang</div>
+      <div class="cpe-sub">The Samuhik Satsang is for approved members.</div>
+    </div>`;
+    wrap.appendChild(accessBox());
+    return;
+  }
+
+  const groups = await satsangGroups(true).catch(() => []);
+  if (!wrap.isConnected) return;      // panel closed while we were loading
+  if (!groups.length) {
+    wrap.innerHTML = SATSANG.lastError()
+      ? `<div class="comm-empty" style="padding:28px">Could not load the Samuhik Satsang list.</div>`
+      : `<div class="comm-panel-empty">
+          <div class="cpe-ico">${COMMUNITY_ICON}</div>
+          <div class="cpe-h">No satsang yet</div>
+          <div class="cpe-sub">Open a Guru's msg and start the first discussion!</div>
+        </div>`;
+    return;
+  }
+
+  wrap.innerHTML = "";
+  groups.forEach((g) => {
+    const sec = el(`<div class="sx-group">
+      <div class="sx-group-head">${escapeHtml(g.label)} (${g.rows.length} result${g.rows.length === 1 ? "" : "s"})</div>
+      <div class="sx-group-list"></div>
+    </div>`);
+    const list = sec.querySelector(".sx-group-list");
+    g.rows.forEach((v) => {
+      const item = el(`<a class="sx-item${v.unread ? " sx-unread" : ""}" href="#">
+        <div class="sx-ico">${g.icon}</div>
+        <div class="sx-body">
+          <div class="sx-top">
+            <span class="sx-title">${escapeHtml(v.title || "—")}</span>
+            ${v.unread ? `<span class="mx-new">NEW</span>` : ""}
+          </div>
+          <div class="sx-sub">${escapeHtml([v.date ? fmtDate(v.date) : "", satsangCountLabel(v)].filter(Boolean).join(" · "))}</div>
+          <div class="sx-last">${escapeHtml(satsangLastLine(v))}</div>
+        </div>
+      </a>`);
+      // Opening a discussion swaps the panel to that chat in place — the desktop
+      // panel is the chat surface, so there is nowhere else to navigate to.
+      item.addEventListener("click", (e) => {
+        e.preventDefault();
+        renderWisdomChat(body, v.wid, v.title);
+      });
+      list.appendChild(item);
+    });
+    wrap.appendChild(sec);
+  });
 }
 
 // ---- live chat (Server-Sent Events): one open stream per viewed wisdom ----
@@ -1070,7 +1099,7 @@ function chatAppendLive(msgsEl, m, ctx) {
   const nearBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 80;
   const isMe = m.user === ctx.me;
   msgsEl.appendChild(buildChatMsgEl(m, ctx));
-  SATSANG.markSeen(m.ts);   // it arrived on an open chat — not unread
+  SATSANG.markSeen(ctx.wid, m.ts);   // it arrived on an OPEN chat — not unread
   if (isMe || nearBottom) {
     msgsEl.scrollTop = msgsEl.scrollHeight;
   } else {
@@ -1155,7 +1184,7 @@ async function renderWisdomChat(body, wid, label) {
   const ctx = { me: data.me, canModerate: !!data.can_moderate, wid, body };
   renderChatMessages(msgsEl, data.messages, ctx);
   // Opening a discussion clears the Samuhik Satsang badge.
-  SATSANG.markSeen((data.messages || []).reduce((a, m) => (m.ts > a ? m.ts : a), ""));
+  SATSANG.markSeen(wid, (data.messages || []).reduce((a, m) => (m.ts > a ? m.ts : a), ""));
   openChatStream(wid, msgsEl, ctx);   // live updates for everyone — even muted readers
 
   // Input area — muted or normal. Members post WITHOUT limit: message credits
@@ -3163,26 +3192,51 @@ function refreshAnyMsgDot() {
 }
 
 // ==========================================================================
-// SAMUHIK SATSANG — unread count for the running discussion.
+// SAMUHIK SATSANG — the index of running discussions, and their unread state.
 //
 // The chat itself stays per-message: every Guru's msg, Special message and
-// Letterpad message has its own thread (messages.wisdom_id). But in the MENU the
-// Samuhik Satsang is ONE place, so unread is counted across every thread — other
-// people's messages newer than the last time this device opened a discussion.
+// Letterpad message has its own thread (messages.wisdom_id). The MENU presents
+// them as one place — a grouped list of every thread that actually has messages.
 //
-// Mirrors the SPECIAL / LETTERPAD badge contract on purpose
-// (unread / markSeen / refreshBadges / lastSeen) so all three behave identically
-// and `refreshAnyMsgDot` can treat them the same.
+// ⚠ Unread is tracked PER THREAD (`wa:satsang:seen` = {wid: iso}), not as one
+// global timestamp. 8.88 shipped the global version, and it cannot express what
+// the index needs: opening one discussion would clear the NEW chip on all the
+// others. So the badge counts THREADS WITH NEW MESSAGES, not messages — that is
+// the only reading that stays consistent with the per-row chips.
+//
+// Still mirrors the SPECIAL / LETTERPAD badge contract (unread / markSeen /
+// refreshBadges) so `refreshAnyMsgDot` can treat all three alike.
 // ==========================================================================
 const SATSANG = (() => {
-  const SEEN_KEY = "wa:satsang:lastSeen";    // ISO timestamp of the newest message already read
+  const SEEN_KEY = "wa:satsang:seen";        // {wid: iso of the newest message read in that thread}
   const COUNT_KEY = "wa:satsang:unread";     // last computed count, so the badge paints offline
+  const LEGACY_KEY = "wa:satsang:lastSeen";  // 8.88's single timestamp — migrated below
   let count = 0;
   try { count = parseInt(localStorage.getItem(COUNT_KEY) || "0", 10) || 0; } catch {}
+  let threads = [];        // last known [{wid, count, last_at, last_user, last_text}]
   let lastRefresh = 0;
+  let loadFailed = false;  // so the index can say "couldn't load" instead of "none yet"
 
-  function lastSeen() { try { return localStorage.getItem(SEEN_KEY) || ""; } catch { return ""; } }
+  function seenMap() {
+    try { const m = JSON.parse(localStorage.getItem(SEEN_KEY) || "{}"); return (m && typeof m === "object") ? m : {}; }
+    catch { return {}; }
+  }
+  function writeSeen(m) { try { localStorage.setItem(SEEN_KEY, JSON.stringify(m)); } catch {} }
+  // Whatever 8.88 recorded as "read up to here" applies to every thread, so it is
+  // the right floor for a device upgrading from it. Read lazily (not migrated
+  // once) because it costs nothing and survives a half-applied upgrade.
+  function legacyFloor() { try { return localStorage.getItem(LEGACY_KEY) || ""; } catch { return ""; } }
+  function seenFor(wid) { return seenMap()[wid] || legacyFloor(); }
+
+  function isUnread(t) {
+    if (!t || !t.last_at) return false;
+    // Your own last word in a thread is not something to notify you about.
+    if (t.last_user && t.last_user === (currentUser() || {}).username) return false;
+    return t.last_at > seenFor(t.wid);
+  }
+
   function unread() { return count; }
+  function known() { return threads; }
   function refreshBadges() {
     const txt = count > 99 ? "99+" : String(count);
     document.querySelectorAll("[data-satsang-badge]").forEach((b) => { b.hidden = !count; b.textContent = txt; });
@@ -3193,46 +3247,146 @@ const SATSANG = (() => {
     try { localStorage.setItem(COUNT_KEY, String(count)); } catch {}
     refreshBadges();
   }
-  function setSeen(iso) {
-    const stamp = iso || new Date().toISOString();
-    if (stamp > lastSeen()) { try { localStorage.setItem(SEEN_KEY, stamp); } catch {} }
-  }
-  // The reader opened a discussion — everything up to now counts as seen.
-  function markSeen(iso) { setSeen(iso); setCount(0); }
+  function recount() { setCount(threads.filter(isUnread).length); }
 
-  // Recount from the server: one 50-row query. Never throws into a caller and
-  // never changes the badge on failure — a boot with no signal must not wipe the
-  // count that's already on screen.
+  // The reader opened `wid` — everything in THAT thread is now read. Other
+  // threads keep their NEW chips.
+  function markSeen(wid, iso) {
+    if (!wid) return;
+    const m = seenMap();
+    const stamp = iso || new Date().toISOString();
+    if (stamp > (m[String(wid)] || "")) { m[String(wid)] = stamp; writeSeen(m); }
+    recount();
+  }
+
+  // Pull the thread list. Never throws into a caller and never clears the badge
+  // on failure — a boot with no signal must not wipe what's already on screen.
   async function refresh(force) {
-    if (!isCommunityMember()) { setCount(0); return 0; }
-    if (!force && Date.now() - lastRefresh < 30000) return count;
+    if (!isCommunityMember()) { threads = []; setCount(0); return threads; }
+    if (!force && Date.now() - lastRefresh < 30000) return threads;
     lastRefresh = Date.now();
     let d;
-    try { d = await WA.communityRecent(50); } catch { return count; }
-    const msgs = d.messages || [];
-    // No baseline yet (first run, or freshly approved): adopt the newest message
-    // as "seen" rather than badging the entire history as unread.
-    if (!lastSeen()) {
-      setSeen(msgs.reduce((a, m) => (m.ts > a ? m.ts : a), ""));
-      setCount(0);
-      return 0;
+    try { d = await WA.listSatsangThreads(); loadFailed = false; }
+    catch { loadFailed = true; return threads; }
+    threads = d.threads || [];
+    // No baseline at all (first run, or freshly approved): adopt everything as
+    // read rather than badging the whole history the moment someone joins.
+    if (!localStorage.getItem(SEEN_KEY) && !legacyFloor()) {
+      const m = {};
+      threads.forEach((t) => { if (t.last_at) m[t.wid] = t.last_at; });
+      writeSeen(m);
     }
-    const me = (currentUser() || {}).username;
-    setCount(msgs.filter((m) => m.ts > lastSeen() && m.user !== me).length);
-    return count;
+    recount();
+    return threads;
   }
 
-  // A message seen arriving while the app is open, on a screen that isn't the
-  // chat — bump without a round trip. Own messages never count.
+  // A message arriving while the app is open on some other screen — reflect it
+  // without a round trip. Own messages never count.
   function noteIncoming(m) {
     if (!m || !isCommunityMember()) return;
-    if (m.user && m.user === (currentUser() || {}).username) return;
-    if (m.ts && m.ts <= lastSeen()) return;
+    const me = (currentUser() || {}).username;
+    if (m.user && m.user === me) return;
+    const wid = m.wid ? String(m.wid) : "";
+    const ts = m.ts || new Date().toISOString();
+    if (wid) {
+      const t = threads.find((x) => x.wid === wid);
+      if (t) { t.count++; t.last_at = ts; t.last_user = m.user || t.last_user; t.last_text = m.text || t.last_text; }
+      else threads.unshift({ wid, count: 1, last_at: ts, last_user: m.user || "", last_text: m.text || "" });
+      recount();
+      return;
+    }
+    // Push payloads without a thread id (older send-push): we know something
+    // arrived but not where, so surface it and let the next refresh place it.
     setCount(count + 1);
   }
 
-  return { unread, markSeen, refreshBadges, refresh, noteIncoming, lastSeen };
+  return { unread, known, markSeen, refreshBadges, refresh, noteIncoming, isUnread, seenFor,
+           lastError: () => loadFailed };
 })();
+
+// ---- the Samuhik Satsang index: every running discussion, grouped ----------
+// Section order is fixed by the operator's brief and must not be re-sorted:
+// Daily → Special Telegram → Guru's Letterpad → Anushthan. Anushthan has no
+// message store yet, so it simply never has threads — and empty groups are
+// dropped from the list entirely.
+//
+// A SEPARATE regex from CHAT_NS_RE on purpose: that one drives navigation into
+// `#/m/<section>/<id>` readers, and adding 'anushthan' there would route into a
+// section that doesn't exist yet.
+const SATSANG_NS_RE = /^(special|letterpad|anushthan):(.+)$/;
+const SATSANG_SECTIONS = [
+  { key: "daily", label: "Daily Samuhik Satsang", icon: "🌺" },
+  { key: "special", label: "Special Telegram Satsang", icon: "✨" },
+  { key: "letterpad", label: "Guru's Letterpad Satsang", icon: "✍️" },
+  { key: "anushthan", label: "Anushthan Satsang", icon: "🪔" },
+];
+function satsangSectionOf(wid) {
+  const m = SATSANG_NS_RE.exec(String(wid || ""));
+  return m ? m[1] : "daily";     // plain numeric archive ids are the daily msgs
+}
+const satsangIconOf = (sec) => (SATSANG_SECTIONS.find((s) => s.key === sec) || {}).icon || "💬";
+
+// Resolve one thread into what a row needs. Special/Letterpad read from the
+// client caches already in memory (works offline, no round trip); daily needs its
+// archive entry, which on the phone is answered from the on-device database.
+//
+// Reads only date + title + first page. The richer per-language normalisation in
+// MSG_SECTIONS.norm() belongs to the READERS — duplicating it here would couple
+// this list to a reader concern it doesn't have.
+async function satsangThreadView(t) {
+  const wid = String(t.wid);
+  const sec = satsangSectionOf(wid);
+  const m = SATSANG_NS_RE.exec(wid);
+  const v = {
+    wid, sec, count: t.count || 0, lastAt: t.last_at || "",
+    lastUser: t.last_user || "", lastText: t.last_text || "",
+    unread: SATSANG.isUnread(t), title: "", date: "", thumb: null, entry: null,
+  };
+  if (sec === "special") {
+    const r = (SPECIAL.cached() || []).find((x) => String(x.id) === m[2]);
+    if (r) {
+      v.title = r.title_hi || r.title_en || "";
+      v.date = (r.posted_at || r.created_at || "").slice(0, 10) || r.msg_date || "";
+    }
+  } else if (sec === "letterpad") {
+    const r = (LETTERPAD.items() || []).find((x) => String(x.id) === m[2]);
+    if (r) {
+      v.title = (r.title_hi || r.title_en || "").replace(/\n/g, " · ");
+      v.date = r.date || "";
+      const p = (r.pages_hi && r.pages_hi[0]) || (r.pages_en && r.pages_en[0]);
+      if (p) v.thumb = LETTERPAD.imgUrl(p);
+    }
+  } else if (sec === "daily") {
+    try {
+      const e = await api("/api/entry/" + encodeURIComponent(wid));
+      v.entry = e;
+      v.title = e.topic_hi || e.topic_en || "";
+      v.date = e.date || "";
+      if (e.thumb_url) v.thumb = e.thumb_url;
+    } catch { /* deleted or not on this device yet — the label below carries it */ }
+  }
+  if (!v.title) v.title = chatWidLabel(wid);
+  return v;
+}
+
+// Every running discussion, resolved and grouped in the fixed section order.
+// Threads arrive newest-activity-first, so rows within a group keep that order.
+async function satsangGroups(force) {
+  const threads = await SATSANG.refresh(force);
+  const views = await Promise.all((threads || []).map(satsangThreadView));
+  return SATSANG_SECTIONS
+    .map((s) => ({ key: s.key, label: s.label, icon: s.icon, rows: views.filter((v) => v.sec === s.key) }))
+    .filter((g) => g.rows.length);
+}
+
+// Shared line under a row's title: who spoke last and the start of what they said.
+function satsangLastLine(v) {
+  const text = (v.lastText || "").replace(/\s+/g, " ").trim();
+  return [v.lastUser, text].filter(Boolean).join(": ");
+}
+function satsangCountLabel(v) {
+  return v.count === 1 ? "1 message" : v.count + " messages";
+}
 
 // One special-message card. mode = "dual" (desktop: Hindi LEFT · English
 // RIGHT, per the detail-view convention; Hindi-only rows get one wide column)
@@ -3692,8 +3846,16 @@ const MOBILE_UI = (() => {
   // Reading a Special Telegram / Letterpad message? Open THAT message's
   // discussion. The id travels in the URL (not just in _chatCtx) so the chat is
   // deep-linkable and Android back returns to the reader.
-  $("m-comm-btn").addEventListener("click", () => go(
-    _chatCtx ? "#/m/community?wid=" + encodeURIComponent(_chatCtx.wid) : "#/m/community"));
+  // Reading something → open THAT discussion; otherwise the Samuhik Satsang index.
+  // The wid must be passed EXPLICITLY: a bare "#/m/community" now means the index,
+  // so leaving communityPage to guess from _stageId would silently turn the
+  // "discuss what I'm reading" flow into a list. Deliberately no lastViewed()
+  // fallback either — from a page with nothing on screen, the index is the honest
+  // destination, not some message read days ago.
+  $("m-comm-btn").addEventListener("click", () => {
+    const wid = (_chatCtx && _chatCtx.wid) || _stageId;
+    go(wid ? "#/m/community?wid=" + encodeURIComponent(wid) : "#/m/community");
+  });
   $("m-home-btn").addEventListener("click", () => go("#/?latest=1"));
   $("m-scrim").addEventListener("click", closeDrawer);
   $("m-drawer").addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
@@ -3881,7 +4043,9 @@ const MOBILE_UI = (() => {
       // badge so the menu still shows there's something to read.
       Push.addListener("pushNotificationReceived", (n) => {
         const d = (n && n.data) || {};
-        if (d.kind === "chat") SATSANG.noteIncoming({ ts: new Date().toISOString() });
+        // send-push puts the thread id in data.wid; without it we can only say
+        // "something arrived" (see SATSANG.noteIncoming).
+        if (d.kind === "chat") SATSANG.noteIncoming({ wid: d.wid || "", ts: new Date().toISOString() });
       });
       // Routes by the notification's own data payload (send-push sets
       // data.route per kind) instead of a single hardcoded destination, now
@@ -5150,10 +5314,12 @@ const MOBILE_UI = (() => {
   };
   // Special/Letterpad/Anushthan are fully client-cached (see MSG_SECTIONS), so
   // filtering by word or date is a plain array scan — no network round trip.
-  function searchMsgSectionRows(sec, lang, matchFn) {
+  // `hrefOf(sec, v)` overrides where a row goes — the chat picker needs these
+  // rows to open the discussion, not the message reader.
+  function searchMsgSectionRows(sec, lang, matchFn, hrefOf) {
     return (sec.cached() || [])
       .filter((r) => matchFn(sec.norm(r, lang)))
-      .map((r) => el(msgIndexRowHtml(sec, r, sec.lastSeen ? sec.lastSeen() : "")));
+      .map((r) => el(msgIndexRowHtml(sec, r, sec.lastSeen ? sec.lastSeen() : "", hrefOf)));
   }
   // groups: [{ label, count, rows: HTMLElement[] }] in the fixed order above.
   // collapsible=false → always expanded (Word/Date tabs); true → collapsed by
@@ -5193,6 +5359,12 @@ const MOBILE_UI = (() => {
     // chat on that msg instead of the reader.
     const forChat = !!(params && params.get("for") === "chat");
     const hrefFor = (id) => forChat ? "#/m/community?wid=" + id : "#/entry/" + id;
+    // Special/Letterpad rows had a hardcoded reader href, so in the picker they
+    // quietly ignored `hrefFor` and dropped the user into the message instead of
+    // its discussion. Route them to the namespaced chat id the same way.
+    const secHref = forChat
+      ? (sec, v) => "#/m/community?wid=" + encodeURIComponent(sec.key + ":" + v.id)
+      : null;
     const st = forChat ? _searchState.chat : _searchState.plain;
 
     const node = el(`<div class="m-searchwrap">
@@ -5260,7 +5432,7 @@ const MOBILE_UI = (() => {
               !forChat ? { ids: dailyIds, index: i } : null, { lang: displayLang, term }));
             const t = term.toLowerCase();
             const matchFn = (v) => (v.title || "").toLowerCase().includes(t) || (v.text || "").toLowerCase().includes(t);
-            const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, displayLang, matchFn); return { label, count: rows.length, rows }; };
+            const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, displayLang, matchFn, secHref); return { label, count: rows.length, rows }; };
             renderSearchGroups(results, [
               { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
               secGroup("Special Telegram Msg", MSG_SECTIONS.special),
@@ -5358,7 +5530,7 @@ const MOBILE_UI = (() => {
           const dailyRows = dailyResults.map((r, i) => resultItem(r, hrefFor,
             !forChat ? { ids: dailyIds, index: i } : null, { lang: prefLang }));
           const matchFn = (v) => v.date === iso;
-          const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, prefLang, matchFn); return { label, count: rows.length, rows }; };
+          const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, prefLang, matchFn, secHref); return { label, count: rows.length, rows }; };
           renderSearchGroups(results, [
             { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
             secGroup("Special Telegram Msg", MSG_SECTIONS.special),
@@ -5420,7 +5592,7 @@ const MOBILE_UI = (() => {
           const dailyRows = dailyResults.map((r, i) => resultItem(r, hrefFor,
             !forChat ? { ids: dailyIds, index: i } : null, { lang: prefLang }));
           const matchFn = (v) => v.date >= st.rangeFrom && v.date <= st.rangeTo;
-          const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, prefLang, matchFn); return { label, count: rows.length, rows }; };
+          const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, prefLang, matchFn, secHref); return { label, count: rows.length, rows }; };
           renderSearchGroups(results, [
             { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
             secGroup("Special Telegram Msg", MSG_SECTIONS.special),
@@ -5462,21 +5634,72 @@ const MOBILE_UI = (() => {
     const [y, m, d] = iso.split("-").map(Number);
     return `${d} ${MONTHS[m - 1] || ""} ${y}`;
   }
-  async function communityPage(params) {
-    const pick = params && params.get("wid");
-    const wid = pick || (_chatCtx && _chatCtx.wid) || _stageId || store.lastViewed();
-    const node = el(`<div class="m-community"></div>`);
-    pageFrame("Samuhik Satsang", node);
-    if (!wid) {
-      node.innerHTML = `<div class="empty">Open a message first, then join its discussion here.</div>`;
+  // ---- the Samuhik Satsang INDEX (#/m/community with no ?wid=) -------------
+  // Every running discussion, grouped by section in the fixed order, always
+  // expanded, newest activity first — the same grouped shape Search By → Date
+  // produces (renderSearchGroups), so the two lists read identically.
+  //
+  // ⚠ `#/m/community?wid=X` still opens that chat directly and must keep doing
+  // so: live FCM payloads on installed phones point at exactly that URL. Only
+  // the bare route means "the index".
+  function satsangRowEl(v) {
+    const thumb = v.thumb
+      ? `<img class="mx-thumb" src="${v.thumb}" loading="lazy" decoding="async" alt="">`
+      : `<div class="mx-thumb mx-thumb-txt"><span class="mx-ico">${satsangIconOf(v.sec)}</span></div>`;
+    const top = [v.date ? fmtDate(v.date) : "", satsangCountLabel(v)].filter(Boolean).join(" · ");
+    return el(`<a class="mx-row sx-row" href="#/m/community?wid=${encodeURIComponent(v.wid)}">
+        ${thumb}
+        <div class="mx-meta">
+          <div class="mx-top">${escapeHtml(top)}${v.unread ? ` <span class="mx-new">NEW</span>` : ""}</div>
+          <div class="mx-title">${escapeHtml(v.title || "—")}</div>
+          <div class="mx-prev">${escapeHtml(satsangLastLine(v))}</div>
+        </div>
+      </a>`);
+  }
+
+  async function satsangIndexPage() {
+    const node = el(`<div class="m-searchwrap"><div class="m-results"><div class="loading">Loading…</div></div></div>`);
+    pageFrame("Samuhik Satsang", node, "m-page-scroll");
+    const box = node.querySelector(".m-results");
+
+    // Not approved yet → the same welcome + request box the chat gate shows,
+    // rather than an empty list that looks broken.
+    if (!isCommunityMember()) {
+      box.innerHTML = `<div class="wc-satsang-gate">
+        <div class="wc-sg-ico">🪷</div>
+        <div class="wc-sg-h">Samuhik Satsang</div>
+        <div class="wc-sg-sub">The Samuhik Satsang is for approved members. Ask to join below — a moderator will welcome you in.</div>
+      </div>`;
+      box.appendChild(accessBox());
       return;
     }
+
+    const groups = await satsangGroups(true).catch(() => []);
+    if (!groups.length) {
+      box.innerHTML = SATSANG.lastError()
+        ? `<div class="empty">Couldn't load the Samuhik Satsang list. Check your connection and open this page again.</div>`
+        : `<div class="empty">No satsang yet. Open a Guru's msg and tap 💬 to start the first one.</div>`;
+      return;
+    }
+    renderSearchGroups(box, groups.map((g) => ({
+      label: g.label, count: g.rows.length, rows: g.rows.map(satsangRowEl),
+    })), false);
+  }
+
+  async function communityPage(params) {
+    const pick = params && params.get("wid");
+    // No explicit thread → the index. Callers that mean "this message's chat"
+    // (the bottom-bar button, notification taps) always pass ?wid=.
+    if (!pick) return satsangIndexPage();
+    const wid = pick;
+    const node = el(`<div class="m-community"></div>`);
+    pageFrame("Samuhik Satsang", node);
     // A Special Telegram / Letterpad discussion. These ids are NOT archive
     // entries: /api/entry would 404, and wa:lastViewed must never hold one (it
     // drives resuming the daily reader on next launch).
     const ns = CHAT_NS_RE.exec(String(wid));
     if (!ns) {
-      if (pick) store.setLastViewed(wid);
+      store.setLastViewed(wid);
       _stageId = wid;
     }
     // Header: which message is under discussion. For an archive entry, tapping
@@ -5635,7 +5858,7 @@ const MOBILE_UI = (() => {
     </div>`;
 
   // ---- the INDEX (#/m/special · #/m/letterpad) ------------------------------
-  function msgIndexRowHtml(sec, r, seenMark) {
+  function msgIndexRowHtml(sec, r, seenMark, hrefOf) {
     const v = sec.norm(r, prefLang);
     const fresh = sec.isNew(r, seenMark);
     const np = v.pages ? v.pages.length : 0;
@@ -5646,7 +5869,8 @@ const MOBILE_UI = (() => {
       : `<div class="mx-thumb mx-thumb-txt"><span class="mx-ico">${sec.icon}</span>` +
         `<span class="mx-spark s1">✨</span><span class="mx-spark s2">✨</span><span class="mx-spark s3">⭐</span></div>`;
     const prev = (v.text || "").replace(/\s+/g, " ").slice(0, 140);
-    return `<a class="mx-row" href="#/m/${sec.key}/${encodeURIComponent(v.id)}">
+    const href = hrefOf ? hrefOf(sec, v) : `#/m/${sec.key}/${encodeURIComponent(v.id)}`;
+    return `<a class="mx-row" href="${href}">
         ${thumb}
         <div class="mx-meta">
           <div class="mx-top">${escapeHtml(v.date ? fmtDate(v.date) : "")}${np > 1 ? ` · ${np} pages` : ""}${fresh ? ` <span class="mx-new">NEW</span>` : ""}</div>
