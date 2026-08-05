@@ -4923,12 +4923,53 @@ const MOBILE_UI = (() => {
     rows.forEach((r, i) => box.appendChild(resultItem(r, hrefFor, scoped ? { ids, index: i } : null, opts)));
   }
 
+  // ---- Search By — grouped results across Daily / Special / Letterpad / Anushthan
+  // Word and Date searches show all four, always expanded; Date Range shows them
+  // collapsed (tap a header to expand). Fixed order per the operator's brief.
+  // Anushthan has no message store yet (still a placeholder section elsewhere in
+  // the app) — wired in as an always-empty category so the slot/order is ready
+  // for when that content ships; it'll just read "(0 results)" until then.
+  const ANUSHTHAN_SEARCH_SEC = {
+    key: "anushthan", icon: "🪔", listTitle: "Anushthan Msg",
+    cached: () => [],
+    norm: (m, lang) => ({ id: m.id, date: m.date || "", title: m.title || "", text: m.text || "" }),
+  };
+  // Special/Letterpad/Anushthan are fully client-cached (see MSG_SECTIONS), so
+  // filtering by word or date is a plain array scan — no network round trip.
+  function searchMsgSectionRows(sec, lang, matchFn) {
+    return (sec.cached() || [])
+      .filter((r) => matchFn(sec.norm(r, lang)))
+      .map((r) => el(msgIndexRowHtml(sec, r, sec.lastSeen ? sec.lastSeen() : "")));
+  }
+  // groups: [{ label, count, rows: HTMLElement[] }] in the fixed order above.
+  // collapsible=false → always expanded (Word/Date tabs); true → collapsed by
+  // default, each section toggled independently (Date Range tab).
+  function renderSearchGroups(container, groups, collapsible) {
+    container.innerHTML = groups.map((g, i) => `
+      <div class="m-sec${collapsible ? " collapsible collapsed" : ""}" data-gi="${i}">
+        <div class="m-sec-head">
+          <span class="m-sec-label">${escapeHtml(g.label)} (${g.count} result${g.count === 1 ? "" : "s"})</span>
+          ${collapsible ? `<span class="m-sec-chev">›</span>` : ""}
+        </div>
+        <div class="m-sec-list"></div>
+      </div>`).join("");
+    container.querySelectorAll(".m-sec").forEach((secEl, i) => {
+      const list = secEl.querySelector(".m-sec-list");
+      if (!groups[i].rows.length) list.innerHTML = `<div class="empty">No results.</div>`;
+      else groups[i].rows.forEach((node) => list.appendChild(node));
+    });
+  }
+
   // Restored when returning from a result's detail page (item 1); cleared the
   // moment the user leaves Search By for anywhere else (see route()'s
   // preserveSearch check), per context (a plain search vs. the community
   // "pick a Guru's msg" picker).
   function freshSearchState() {
-    return { tab: "word", word: "", wordResultsHtml: "", numberValue: "" };
+    return {
+      tab: "word", word: "", wordResultsHtml: "",
+      dateIso: "", dateResultsHtml: "",
+      rangeFrom: "", rangeTo: "", rangeResultsHtml: "",
+    };
   }
   const _searchState = { plain: freshSearchState(), chat: freshSearchState() };
   function resetSearchState() { _searchState.plain = freshSearchState(); _searchState.chat = freshSearchState(); _activeList = null; }
@@ -4944,7 +4985,7 @@ const MOBILE_UI = (() => {
       <div class="m-tabs">
         <button data-t="word" class="active">Word</button>
         <button data-t="date">Date</button>
-        <button data-t="number">Number</button>
+        <button data-t="range">Date Range</button>
       </div>
       <div class="m-tabbody"></div>
       <div class="m-results"></div>
@@ -4952,6 +4993,14 @@ const MOBILE_UI = (() => {
     pageFrame(forChat ? "Choose Guru's Msg" : "Search By", node, "m-page-scroll");
     const body = node.querySelector(".m-tabbody");
     const results = node.querySelector(".m-results");
+    // Section headers only toggle when collapsible (Date Range) — bound once
+    // here, delegated, so it survives however many times a tab re-renders
+    // `results` while this page stays mounted.
+    results.addEventListener("click", (ev) => {
+      const head = ev.target.closest(".m-sec.collapsible > .m-sec-head"); if (!head) return;
+      hapticTick();
+      head.parentElement.classList.toggle("collapsed");
+    });
 
     const tabs = {
       word() {
@@ -4989,12 +5038,21 @@ const MOBILE_UI = (() => {
           try {
             const d = await api("/api/search?q=" + encodeURIComponent(term));
             if (mySeq !== seq) return;   // a newer keystroke's search already ran
-            results.innerHTML = `<div class="m-count">${d.count} Guru's msg${d.count === 1 ? "" : "s"} found</div>`;
-            const list = el(`<div></div>`); results.appendChild(list);
-            // The query's script says which language FTS matched: Devanagari →
+            // The query's script says which language FTS/cache matched: Devanagari →
             // Hindi bodies, Latin → English. Cards + reader follow that language.
             const displayLang = HindiType.hasDevanagari(term) ? "hi" : "en";
-            showResults(list, d.results, "", hrefFor, !forChat, { lang: displayLang, term });
+            const dailyIds = d.results.map((r) => r.id);
+            const dailyRows = d.results.map((r, i) => resultItem(r, hrefFor,
+              !forChat ? { ids: dailyIds, index: i } : null, { lang: displayLang, term }));
+            const t = term.toLowerCase();
+            const matchFn = (v) => (v.title || "").toLowerCase().includes(t) || (v.text || "").toLowerCase().includes(t);
+            const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, displayLang, matchFn); return { label, count: rows.length, rows }; };
+            renderSearchGroups(results, [
+              { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
+              secGroup("Special Telegram Msg", MSG_SECTIONS.special),
+              secGroup("Guru's Letterpad Msg", MSG_SECTIONS.letterpad),
+              secGroup("Anushthan Msg", ANUSHTHAN_SEARCH_SEC),
+            ], false);
             st.wordResultsHtml = results.innerHTML;
           } catch (err) { if (mySeq === seq) { results.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`; st.wordResultsHtml = results.innerHTML; } }
         };
@@ -5071,9 +5129,32 @@ const MOBILE_UI = (() => {
         // Tapping the Date tab opens the same spinner+calendar picker DIRECTLY
         // (no intermediate "Pick a date" button). If cancelled, a small link
         // stays so the tab isn't a dead end and the picker can be reopened.
-        body.innerHTML = `<div class="m-hint" style="text-align:center;padding:18px"><a href="#" id="m-datelink">Tap to pick a date</a></div>`;
-        const open = () => openDatePicker(null, (iso) => {
-          if (!forChat) { goDate(iso); return; }
+        // Picking a date shows the same grouped Daily/Special/Letterpad/Anushthan
+        // results as the Word tab, instead of jumping straight into the reader.
+        body.innerHTML = `<div class="m-hint" style="text-align:center;padding:18px">
+          <a href="#" id="m-datelink">${st.dateIso ? "Change date: " + fmtDate(st.dateIso) : "Tap to pick a date"}</a></div>`;
+        results.innerHTML = st.dateResultsHtml || "";   // restore instantly, no re-fetch/flash
+        const runDateSearch = async (iso) => {
+          st.dateIso = iso;
+          body.querySelector("#m-datelink").textContent = "Change date: " + fmtDate(iso);
+          results.innerHTML = `<div class="loading">Loading…</div>`;
+          let dailyResults = [];
+          try { dailyResults = (await api("/api/browse?date=" + encodeURIComponent(iso))).results || []; } catch {}
+          const dailyIds = dailyResults.map((r) => r.id);
+          const dailyRows = dailyResults.map((r, i) => resultItem(r, hrefFor,
+            !forChat ? { ids: dailyIds, index: i } : null, { lang: prefLang }));
+          const matchFn = (v) => v.date === iso;
+          const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, prefLang, matchFn); return { label, count: rows.length, rows }; };
+          renderSearchGroups(results, [
+            { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
+            secGroup("Special Telegram Msg", MSG_SECTIONS.special),
+            secGroup("Guru's Letterpad Msg", MSG_SECTIONS.letterpad),
+            secGroup("Anushthan Msg", ANUSHTHAN_SEARCH_SEC),
+          ], false);
+          st.dateResultsHtml = results.innerHTML;
+        };
+        const open = () => openDatePicker(st.dateIso || null, (iso) => {
+          if (!forChat) { runDateSearch(iso); return; }
           // Community picker needs a real msg id — empty dates can't be chatted on.
           api("/api/browse?date=" + encodeURIComponent(iso))
             .then((d) => { if (d.results && d.results.length) go(hrefFor(d.results[0].id)); else toast(DP_MSG.notfound); })
@@ -5082,30 +5163,69 @@ const MOBILE_UI = (() => {
         body.querySelector("#m-datelink").addEventListener("click", (ev) => { ev.preventDefault(); open(); });
         open();   // open the calendar immediately on entering the Date tab
       },
-      number() {
-        body.innerHTML = `<div class="m-inputrow">
-          <div class="m-clearwrap">
-            <input type="text" id="m-n" inputmode="numeric" placeholder="Guru's msg number, e.g. 3446">
-            <button class="m-clear" id="m-n-clear" type="button" aria-label="Clear" hidden>✕</button>
+      range() {
+        // From/To pickers (blank by default) reuse the same spinner+calendar as
+        // the Date tab; the pick is shown as dd/mm/yyyy (fmtDate is already that
+        // format). Search runs once BOTH bounds are set. Results mirror the
+        // Word/Date tabs' grouping, but collapsed by default (tap a header to
+        // expand) since a wide range can turn up a lot at once.
+        body.innerHTML = `<div class="m-rangerow">
+            <button type="button" class="m-rangebtn" id="m-r-from">${st.rangeFrom ? fmtDate(st.rangeFrom) : "From date"}</button>
+            <span class="m-range-sep">–</span>
+            <button type="button" class="m-rangebtn" id="m-r-to">${st.rangeTo ? fmtDate(st.rangeTo) : "To date"}</button>
           </div>
-          <button class="btn primary" id="m-n-go">Open</button></div>`;
-        const n = body.querySelector("#m-n");
-        const nClr = body.querySelector("#m-n-clear");
-        const syncNClr = () => { nClr.hidden = !n.value; };
-        nClr.addEventListener("click", () => {
-          hapticTick();
-          n.value = ""; st.numberValue = "";
-          syncNClr(); n.focus();
-        });
-        n.value = st.numberValue;
-        syncNClr();
-        n.addEventListener("input", () => { st.numberValue = n.value; syncNClr(); });
-        const goN = () => {
-          const v = n.value.trim(); if (v) go(hrefFor(encodeURIComponent(v)));
+          <div class="m-hint" id="m-r-hint">${(st.rangeFrom && st.rangeTo) ? "" : "Pick both dates to search."}</div>`;
+        results.innerHTML = st.rangeResultsHtml || "";
+        const fromBtn = body.querySelector("#m-r-from"), toBtn = body.querySelector("#m-r-to"), hint = body.querySelector("#m-r-hint");
+        const syncBtns = () => {
+          fromBtn.textContent = st.rangeFrom ? fmtDate(st.rangeFrom) : "From date";
+          toBtn.textContent = st.rangeTo ? fmtDate(st.rangeTo) : "To date";
         };
-        body.querySelector("#m-n-go").addEventListener("click", goN);
-        n.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); goN(); } });
-        if (!st.numberValue) n.focus();
+        const runRangeSearch = async () => {
+          results.innerHTML = `<div class="loading">Loading…</div>`;
+          let dailyResults = [];
+          try {
+            const raw = await api("/api/browse?from=" + encodeURIComponent(st.rangeFrom) +
+              "&to=" + encodeURIComponent(st.rangeTo));
+            if (Array.isArray(raw.results)) {
+              dailyResults = raw.results;
+            } else {
+              // `from`/`to` is unknown to any wa-native.js bundled before this
+              // feature (OTA ships app.js but never wa-native.js — see app/static
+              // /CLAUDE.md) — it falls through to the group=month-periods branch
+              // and returns {periods:[...]} instead. Fetch per matching date
+              // instead so Daily Msg still works until that phone gets a new APK.
+              const { sorted } = await dpData();
+              const dates = sorted.filter((d) => d >= st.rangeFrom && d <= st.rangeTo);
+              const perDate = await Promise.all(dates.map((d) =>
+                api("/api/browse?date=" + encodeURIComponent(d)).catch(() => ({ results: [] }))));
+              dailyResults = perDate.flatMap((r) => r.results || []);
+            }
+          } catch {}
+          const dailyIds = dailyResults.map((r) => r.id);
+          const dailyRows = dailyResults.map((r, i) => resultItem(r, hrefFor,
+            !forChat ? { ids: dailyIds, index: i } : null, { lang: prefLang }));
+          const matchFn = (v) => v.date >= st.rangeFrom && v.date <= st.rangeTo;
+          const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, prefLang, matchFn); return { label, count: rows.length, rows }; };
+          renderSearchGroups(results, [
+            { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
+            secGroup("Special Telegram Msg", MSG_SECTIONS.special),
+            secGroup("Guru's Letterpad Msg", MSG_SECTIONS.letterpad),
+            secGroup("Anushthan Msg", ANUSHTHAN_SEARCH_SEC),
+          ], true);
+          st.rangeResultsHtml = results.innerHTML;
+        };
+        const afterPick = () => {
+          // Keep the range sane if the newly-picked bound crosses the other one.
+          if (st.rangeFrom && st.rangeTo && st.rangeFrom > st.rangeTo) {
+            const t = st.rangeFrom; st.rangeFrom = st.rangeTo; st.rangeTo = t;
+          }
+          syncBtns();
+          if (st.rangeFrom && st.rangeTo) { hint.textContent = ""; runRangeSearch(); }
+          else { hint.textContent = "Pick both dates to search."; results.innerHTML = ""; st.rangeResultsHtml = ""; }
+        };
+        fromBtn.addEventListener("click", () => openDatePicker(st.rangeFrom || null, (iso) => { st.rangeFrom = iso; afterPick(); }));
+        toBtn.addEventListener("click", () => openDatePicker(st.rangeTo || null, (iso) => { st.rangeTo = iso; afterPick(); }));
       },
     };
     node.querySelector(".m-tabs").addEventListener("click", (e) => {

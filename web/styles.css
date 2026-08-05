@@ -1435,6 +1435,28 @@ body.m-mode .content:has(.m-page-scroll) { min-height: 0; }
 .m-r-topic { font: 600 15px var(--sans); color: var(--text); margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-r-prev { font: 400 13px var(--sans); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* ---- Search By — grouped result sections (Daily/Special/Letterpad/Anushthan) ---- */
+.m-sec { margin-bottom: 18px; }
+.m-sec-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 4px 2px 10px; font: 700 13.5px var(--sans); color: #1565c0;
+  border-bottom: 1px solid var(--border); margin-bottom: 10px;
+}
+.m-sec.collapsible .m-sec-head { cursor: pointer; user-select: none; }
+.m-sec-chev { transition: transform .15s ease-out; color: var(--muted); font-size: 16px; }
+.m-sec.collapsible.collapsed .m-sec-chev { transform: rotate(90deg); }
+.m-sec.collapsible.collapsed .m-sec-list { display: none; }
+.m-sec-list .empty { margin: 0 0 6px; }
+
+/* ---- Search By — Date Range tab (From/To buttons, dd/mm/yyyy) ---- */
+.m-rangerow { display: flex; align-items: center; gap: 10px; }
+.m-rangebtn {
+  flex: 1; padding: 12px 14px; font: 15px var(--sans); text-align: center;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text);
+  cursor: pointer;
+}
+.m-range-sep { color: var(--muted); font: 600 15px var(--sans); }
+
 /* ---- placeholders / contact / account ---- */
 .m-holder { text-align: center; padding: 60px 20px; }
 .m-holder-ico { font-size: 52px; margin-bottom: 14px; }
