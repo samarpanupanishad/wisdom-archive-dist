@@ -65,8 +65,19 @@ function _userFromProfile(p) {
     notify_satsang: p.notify_satsang === undefined ? true : !!p.notify_satsang,
   };
 }
+// The single row -> message mapper. Every new column lands here, once.
+// The reply fields are DENORMALISED on the row (add_satsang_chat.sql §1), so a
+// quote renders with no join and survives its parent being removed. They read as
+// undefined against a database where the migration hasn't been run yet — the UI
+// simply draws no quote, which is the correct pre-migration behaviour.
 function _mapMsg(row) {
-  return { id: row.id, user: row.username, text: row.text, ts: row.created_at };
+  return {
+    id: row.id, user: row.username, text: row.text, ts: row.created_at,
+    replyTo: row.reply_to || null,
+    replyUser: row.reply_user || null,
+    replySnippet: row.reply_snippet || null,
+    deletedAt: row.deleted_at || null,
+  };
 }
 
 // Friendly text when the admin_messages table hasn't been created yet (the
@@ -233,8 +244,15 @@ const WA = {
   },
 
   // ----- Chat -----------------------------------------------------------
-  // Returns {messages, can_moderate, me, is_muted} or throws an Error tagged with
-  // .code = "AUTH" (not signed in) / "FORBIDDEN" (not a member).
+  // Returns {messages, can_moderate, can_delete, me, is_muted} or throws an Error
+  // tagged with .code = "AUTH" (not signed in) / "FORBIDDEN" (not a member).
+  //
+  // ⚠ can_moderate and can_delete are NOT the same thing (2026-08-06). Removing a
+  // message is SUTRADHAR-ONLY — moderators keep every other power but lost this
+  // one. Postgres enforces it (`messages_delete` uses wa_is_sutradhar(), see
+  // supabase/add_satsang_chat.sql); this flag only decides whether the UI offers
+  // an action that would be rejected anyway. Anything reading can_moderate to
+  // decide "may delete" is now wrong.
   async getChat(wid) {
     const { data: { session } } = await _sb.auth.getSession();
     if (!session) throw Object.assign(new Error("Not signed in."), { code: "AUTH" });
@@ -246,7 +264,8 @@ const WA = {
     const { data, error } = await _sb.from("messages").select("*")
       .eq("wisdom_id", String(wid)).order("created_at", { ascending: true });
     if (error) throw new Error(error.message);
-    const res = { messages: (data || []).map(_mapMsg), can_moderate: isMod, me: user.username };
+    const res = { messages: (data || []).map(_mapMsg), can_moderate: isMod, me: user.username,
+                  can_delete: user.role === "sutradhar" };
     if (!isMod) res.is_muted = !!user.chat_muted;
     return res;
   },
@@ -254,38 +273,74 @@ const WA = {
   // Returns {message}; throws Error.code MUTED. Members post without limit —
   // message credits were removed (membership is capped by invitation instead),
   // so muting is the only thing that can block a post.
-  async postMessage(wid, text) {
+  //
+  // `reply` is {id, user, text} of the message being answered. It is stored
+  // DENORMALISED (reply_user / reply_snippet) so the quote needs no join and
+  // still reads after the sutradhar removes the parent.
+  async postMessage(wid, text, reply) {
     const { data: { session } } = await _sb.auth.getSession();
     if (!session) throw Object.assign(new Error("Not signed in."), { code: "AUTH" });
     const me = await _loadProfile(session.user.id);
     const isMod = me.role === "moderator" || me.role === "sutradhar";
     if (!isMod && me.chat_muted) throw Object.assign(new Error("You have been muted."), { code: "MUTED" });
-    const { data, error } = await _sb.from("messages")
-      .insert({ wisdom_id: String(wid), text: text }).select("*").single();
+    const row = { wisdom_id: String(wid), text: text };
+    if (reply && reply.id) {
+      row.reply_to = reply.id;
+      row.reply_user = reply.user || null;
+      row.reply_snippet = String(reply.text || "").slice(0, 160);
+    }
+    let { data, error } = await _sb.from("messages").insert(row).select("*").single();
+    // Replying against a database where add_satsang_chat.sql hasn't been run:
+    // send it as a plain message rather than losing what the member typed.
+    if (error && row.reply_to && /reply_to|reply_user|reply_snippet|column|schema cache/i.test(error.message || "")) {
+      ({ data, error } = await _sb.from("messages")
+        .insert({ wisdom_id: String(wid), text: text }).select("*").single());
+    }
     if (error) throw new Error(error.message);
     // Notify the other members (send-push kind "chat" verifies we're the author).
     _firePush({ kind: "chat", id: data.id });
     return { message: _mapMsg(data) };
   },
 
+  // SOFT delete: stamp deleted_at and let the row stay. A hard DELETE can only
+  // tell open clients "this row vanished", which loses the moderation record and
+  // leaves replies quoting nothing; the tombstone repaints in place instead.
+  // Postgres blanks the text and files the original in message_audit (the
+  // before-update trigger), so this sends nothing but the timestamp.
+  //
+  // ⚠ SUTRADHAR-ONLY — RLS rejects everyone else. Falls back to the old hard
+  // delete when the column isn't there yet (migration not yet run), so the
+  // control keeps working during the changeover.
   async deleteMessage(wid, mid) {
-    const { error } = await _sb.from("messages").delete().eq("id", mid);
-    if (error) throw new Error(error.message);
-    return { ok: true };
-  },
-  async clearChat(wid) {
-    const { error } = await _sb.from("messages").delete().eq("wisdom_id", String(wid));
-    if (error) throw new Error(error.message);
-    return { ok: true };
+    const { error } = await _sb.from("messages")
+      .update({ deleted_at: new Date().toISOString() }).eq("id", mid);
+    if (!error) return { ok: true };
+    if (/deleted_at|column|schema cache/i.test(error.message || "")) {
+      const { error: e2 } = await _sb.from("messages").delete().eq("id", mid);
+      if (e2) throw new Error(e2.message);
+      return { ok: true, hard: true };
+    }
+    throw new Error(error.message);
   },
 
+  // (clearChat was REMOVED 2026-08-06. It deleted every message in a thread, had
+  // no caller anywhere in the app, and was reachable from any member's console.
+  // Removing a whole discussion is a sutradhar act — if it's ever wanted, it
+  // belongs behind an RPC with a role check, not a raw table delete.)
+
   // Live chat via Supabase Realtime (replaces the SSE stream). Returns a handle
-  // with .close(). onMessage(msg) / onDelete(id) fire on inserts/deletes.
-  subscribeChat(wid, { onMessage, onDelete }) {
+  // with .close(). onMessage / onUpdate / onDelete fire on inserts / updates /
+  // deletes.
+  //
+  // ⚠ UPDATE is what carries a soft delete (and, from phase C, anything else that
+  // edits a row in place). Without it a tombstone only appears on reload.
+  subscribeChat(wid, { onMessage, onUpdate, onDelete }) {
     const filter = "wisdom_id=eq." + String(wid);
     const ch = _sb.channel("wa-chat-" + wid)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter },
           (p) => { if (onMessage) onMessage(_mapMsg(p.new)); })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages", filter },
+          (p) => { if (onUpdate && p.new) onUpdate(_mapMsg(p.new)); })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages", filter },
           (p) => { if (onDelete && p.old) onDelete(p.old.id); })
       .subscribe();
@@ -294,13 +349,19 @@ const WA = {
 
   // Recent messages across all wisdoms (members+ only; guests get an empty list
   // because RLS hides messages from non-members). Shape: {messages:[{user,wid,text,ts}]}.
+  //
+  // ⚠ Selects `*` rather than a column list so it can drop soft-deleted rows
+  // (`!r.deleted_at`) on BOTH sides of the migration: naming deleted_at would
+  // error where the column doesn't exist yet, and omitting it would let
+  // tombstones through once it does.
   async communityRecent(limit) {
     const n = Math.max(1, Math.min(parseInt(limit, 10) || 20, 50));
     const { data, error } = await _sb.from("messages")
-      .select("wisdom_id, username, text, created_at")
+      .select("*")
       .order("created_at", { ascending: false }).limit(n);
     if (error || !data) return { messages: [] };
-    return { messages: data.map((r) => ({ user: r.username, wid: r.wisdom_id, text: r.text, ts: r.created_at })) };
+    return { messages: data.filter((r) => !r.deleted_at)
+      .map((r) => ({ user: r.username, wid: r.wisdom_id, text: r.text, ts: r.created_at })) };
   },
 
   // Every discussion that actually HAS messages, newest activity first — the
@@ -318,13 +379,15 @@ const WA = {
     } catch (e) {
       if (!/list_satsang_threads|schema cache|does not exist|not find/i.test(e.message || "")) throw e;
     }
+    // `*` + a JS filter, not a deleted_at column list — see communityRecent.
     const { data, error } = await _sb.from("messages")
-      .select("wisdom_id,username,text,created_at")
+      .select("*")
       .order("created_at", { ascending: false }).limit(4000);
     if (error) throw new Error(error.message);
     // Rows arrive newest-first, so the FIRST row seen for a thread is its latest.
     const byWid = new Map();
     for (const r of data || []) {
+      if (r.deleted_at) continue;      // a removed message is not a thread's last line
       const t = byWid.get(r.wisdom_id);
       if (t) { t.count++; continue; }
       byWid.set(r.wisdom_id, {

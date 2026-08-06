@@ -662,19 +662,70 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   box-shadow: 0 4px 12px rgba(38,28,60,.20); cursor: pointer; transition: filter .12s; }
 .wc-new-msg:hover { filter: brightness(1.08); }
 .wc-new-msg[hidden] { display: none; }   /* [hidden] and .wc-new-msg tie on specificity — this must win */
-.wc-msg { display: flex; align-items: flex-start; gap: 10px; padding: 10px 18px; }
+.wc-msg { display: flex; align-items: flex-start; gap: 10px; padding: 10px 18px 2px; }
 .wc-msg:hover { background: #faf9fc; }
+/* Consecutive messages from one sender: the avatar keeps its gutter (so bubbles
+   stay in one column) but goes invisible, and the name line is not drawn. */
+.wc-msg-grp { padding-top: 2px; }
+.wc-msg-grp .wc-avatar { visibility: hidden; }
+.wc-msg-grp .wc-bubble { border-radius: 14px; }
 .wc-msg-me .wc-avatar { order: 2; background: var(--accent-2); }
 .wc-msg-me .wc-bubble { order: 1; align-items: flex-end; }
 .wc-msg-me .wc-bubble { background: var(--accent-soft); border-radius: 14px 14px 4px 14px; }
+.wc-msg-me.wc-msg-grp .wc-bubble { border-radius: 14px; }
 .wc-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: 0 0 32px; }
-.wc-bubble { flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px 14px 14px 14px; padding: 8px 12px; }
-.wc-meta { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.wc-bubble { position: relative; flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px 14px 14px 14px; padding: 8px 12px; }
+.wc-meta { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
 .wc-user { font-weight: 700; font-size: 12.5px; color: var(--accent); }
-.wc-time { font-size: 11px; color: var(--muted); }
-.wc-del { margin-left: auto; border: none; background: none; color: var(--muted); font-size: 11px; cursor: pointer; padding: 0 2px; opacity: 0; transition: opacity .15s, color .15s; }
+.wc-stamp { display: flex; justify-content: flex-end; margin-top: 2px; }
+.wc-time { font-size: 10.5px; color: var(--muted); }
+/* Absolutely positioned, not part of .wc-meta — grouped bubbles have no meta
+   row, and the sutradhar must still be able to reach every message. */
+.wc-del { position: absolute; top: 4px; right: 6px; border: none; background: none; color: var(--muted); font-size: 11px; cursor: pointer; padding: 0 2px; opacity: 0; transition: opacity .15s, color .15s; }
 .wc-msg:hover .wc-del { opacity: 1; }
 .wc-del:hover { color: #c0392b; }
+
+/* Day + unread separators */
+.wc-daysep, .wc-newsep { display: flex; align-items: center; gap: 8px; padding: 10px 18px 6px; }
+.wc-daysep::before, .wc-daysep::after, .wc-newsep::before, .wc-newsep::after { content: ""; flex: 1; height: 1px; background: var(--border-soft); }
+.wc-daysep span { font-size: 11px; color: var(--muted); background: #f2f0f6; border-radius: 10px; padding: 3px 10px; white-space: nowrap; }
+.wc-newsep::before, .wc-newsep::after { background: #e8c3ab; }
+.wc-newsep span { font-size: 10.5px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+
+/* Quoted reply inside a bubble. Denormalised text, so it renders with no join
+   and still reads after the parent is removed (see add_satsang_chat.sql). */
+.wc-quote { display: block; width: 100%; text-align: left; border: none; border-left: 3px solid var(--accent); background: #f7f5fa; border-radius: 0; padding: 5px 9px; margin-bottom: 5px; cursor: pointer; }
+.wc-quote:hover { background: #f1eef7; }
+.wc-q-user { display: block; font-size: 11px; font-weight: 700; color: var(--accent); }
+.wc-q-text { display: block; font-size: 12px; color: #6d6975; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wc-msg-me .wc-quote { background: #fbe6d4; }
+
+/* Tombstone: a removed message keeps its slot so replies still point somewhere. */
+.wc-msg-dead .wc-bubble { background: #f4f2f7; border-style: dashed; }
+.wc-gone { font-size: 13px; color: var(--muted); font-style: italic; }
+
+/* Jump-to-parent flash, and the nudge a swipe-to-reply gives back */
+.wc-msg-flash .wc-bubble { animation: wcFlash 1.2s ease-out; }
+@keyframes wcFlash { 0%, 40% { background: var(--accent-soft); } 100% { background: var(--surface); } }
+.wc-msg-swipe { transform: translateX(14px); transition: transform .18s ease-out; }
+
+/* Reply chip above the composer */
+.wc-replybar { display: flex; align-items: center; gap: 8px; margin: 8px 12px 0; padding: 6px 9px; background: #f7f5fa; border-left: 3px solid var(--accent); }
+.wc-replybar[hidden] { display: none; }
+.wc-rb-body { flex: 1; min-width: 0; }
+.wc-rb-user { font-size: 11px; font-weight: 700; color: var(--accent); }
+.wc-rb-text { font-size: 12px; color: #6d6975; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wc-rb-x { border: none; background: none; color: var(--muted); font-size: 14px; cursor: pointer; padding: 2px 4px; }
+.wc-rb-x:hover { color: var(--accent); }
+
+/* Long-press / right-click action sheet */
+.wc-sheet-back { position: fixed; inset: 0; background: rgba(30, 24, 44, .38); z-index: 200; display: flex; align-items: flex-end; justify-content: center; }
+.wc-sheet { width: min(420px, 100%); background: var(--surface); border-radius: 16px 16px 0 0; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.wc-sheet-quote { font-size: 12.5px; color: var(--muted); padding: 8px 12px 10px; border-bottom: 1px solid var(--border-soft); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wc-sheet-item { border: none; background: none; text-align: left; font-size: 15px; color: var(--text); padding: 13px 12px; border-radius: 10px; cursor: pointer; }
+.wc-sheet-item:hover { background: var(--accent-soft); }
+.wc-sheet-danger { color: #c0392b; }
+.wc-sheet-cancel { color: var(--muted); text-align: center; }
 .wc-text { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: #3a3742; word-break: break-word; }
 .wc-text mark.chat-hl, mark.chat-hl { background: #fde68a; color: #78450a; border-radius: 3px; padding: 0 2px; }
 .wc-empty { text-align: center; color: var(--muted); font-size: 13.5px; padding: 36px 20px; font-style: italic; line-height: 1.6; }
@@ -693,17 +744,24 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 
 /* Input area */
 .wc-foot { flex: 0 0 auto; border-top: 1px solid var(--border-soft); background: var(--surface); }
-.wc-toolbar { display: flex; align-items: center; gap: 4px; padding: 8px 12px 4px; position: relative; }
-.wc-tb-btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 7px; width: 30px; height: 28px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; cursor: pointer; transition: background .12s, border-color .12s; }
-.wc-tb-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-.wc-emoji-picker { position: absolute; bottom: calc(100% + 4px); left: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 10px; display: none; flex-wrap: wrap; gap: 4px; width: 244px; z-index: 60; }
+.wc-tb-btn { border: none; background: none; color: var(--muted); border-radius: 7px; width: 28px; height: 26px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; cursor: pointer; transition: background .12s, color .12s; }
+.wc-tb-btn:hover { background: var(--accent-soft); color: var(--accent); }
+.wc-emoji-picker { position: absolute; bottom: calc(100% + 4px); left: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 10px; display: none; flex-wrap: wrap; gap: 4px; width: 244px; z-index: 60; }
 .wc-emoji-picker.open { display: flex; }
 .wc-emoji-item { border: none; background: none; font-size: 20px; cursor: pointer; width: 34px; height: 34px; border-radius: 7px; display: flex; align-items: center; justify-content: center; transition: background .1s; }
 .wc-emoji-item:hover { background: var(--accent-soft); }
-.wc-compose { display: flex; gap: 8px; padding: 4px 12px 10px; align-items: flex-end; }
-.wc-ta { flex: 1; resize: none; border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-family: var(--sans); font-size: 14px; line-height: 1.45; background: var(--bg); color: var(--text); outline: none; transition: border-color .15s, box-shadow .15s; }
-.wc-ta:focus { border-color: var(--accent); box-shadow: var(--ring); }
-.wc-send { padding: 9px 18px; border-radius: 10px; font-size: 14px; white-space: nowrap; }
+/* The composer is deliberately TALLER than a typical chat app's (operator's
+   call, 2026-08-06): a satsang reflection is a paragraph, not a one-liner. The
+   format buttons sit inside the box so the extra height costs no message space.
+   .wc-compose is the emoji picker's positioning context. */
+.wc-compose { position: relative; display: flex; gap: 8px; padding: 8px 12px 10px; align-items: flex-end; }
+.wc-inputbox { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); padding: 8px 10px 4px; transition: border-color .15s, box-shadow .15s; }
+.wc-inputbox:focus-within { border-color: var(--accent); box-shadow: var(--ring); }
+.wc-ta { width: 100%; resize: none; border: none; background: none; padding: 0; min-height: 56px; max-height: 160px; overflow-y: auto; font-family: var(--sans); font-size: 14.5px; line-height: 1.5; color: var(--text); outline: none; }
+.wc-tools { display: flex; align-items: center; gap: 2px; padding-top: 2px; }
+.wc-send { flex: 0 0 auto; width: 44px; height: 44px; border: none; border-radius: 50%; background: var(--accent); color: #fff; font-size: 17px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: filter .12s; }
+.wc-send:hover { filter: brightness(1.08); }
+.wc-send:disabled { opacity: .55; cursor: default; }
 .wc-muted { padding: 18px; text-align: center; color: var(--muted); font-size: 14px; background: #fafafa; border-top: 1px solid var(--border-soft); }
 /* Mod panel — chat controls per member */
 .mu-chat-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 0 2px; }
@@ -1587,8 +1645,10 @@ body.m-mode .m-chatbody .wc-wrap { flex: 1; min-height: 0; display: flex; flex-d
 body.m-mode .m-chatbody .wc-hdr { display: none; }   /* replaced by .m-chat-head */
 body.m-mode .m-chatbody .wc-msgs { flex: 1; min-height: 0; overflow-y: auto; }
 body.m-mode .m-chatbody .wc-foot { flex: none; }
-body.m-mode .m-chatbody .wc-ta { min-height: 64px; font-size: 15.5px; }
-body.m-mode .m-chatbody .wc-send { padding: 12px 22px; font-size: 15px; }
+/* Roughly three lines of Devanagari before it starts scrolling — the operator
+   asked for a composer noticeably bigger than the usual chat app's (~44px). */
+body.m-mode .m-chatbody .wc-ta { min-height: 88px; font-size: 15.5px; }
+body.m-mode .m-chatbody .wc-send { width: 46px; height: 46px; font-size: 18px; }
 
 /* ---- zoom mode: double-tap a Guru's msg image ---- */
 body.m-mode.m-zoom .m-top, body.m-mode.m-zoom .m-bottom,

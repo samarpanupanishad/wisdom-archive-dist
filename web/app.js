@@ -1050,30 +1050,176 @@ function closeChatStream() {
   if (_chatStream) { try { _chatStream.close(); } catch {} _chatStream = null; }
 }
 
-// Single source of truth for a message bubble — used by the initial render,
-// our own optimistic send, and incoming live messages, so they all match.
-function buildChatMsgEl(m, ctx) {
-  const isMe = m.user === ctx.me;
-  const msgEl = el(`<div class="wc-msg ${isMe ? "wc-msg-me" : ""}" data-mid="${escapeHtml(m.id || "")}">
-    <div class="wc-avatar">${escapeHtml((m.user || "?")[0].toUpperCase())}</div>
-    <div class="wc-bubble">
-      <div class="wc-meta">
-        <span class="wc-user">${escapeHtml(m.user || "")}</span>
-        <span class="wc-time">${timeAgo(m.ts)}</span>
-        ${ctx.canModerate ? `<button class="wc-del" title="Delete">✕</button>` : ""}
-      </div>
-      <div class="wc-text">${renderMarkdown(m.text || "")}</div>
+// ---- chat time / grouping helpers ----------------------------------------
+// The bubble carries a CLOCK ("7:12"), not timeAgo() — a satsang is read like a
+// conversation, and "3 hours ago" on every line reads like a feed. timeAgo()
+// still belongs on the thread index, where relative age is the useful fact.
+function chatClock(ts) {
+  const d = new Date(ts);
+  return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+function chatDayKey(ts) { const d = new Date(ts); return isNaN(d) ? "" : d.toDateString(); }
+function chatDayLabel(ts) {
+  const d = new Date(ts);
+  if (isNaN(d)) return "";
+  const today = new Date();
+  const yest = new Date(); yest.setDate(yest.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === yest.toDateString()) return "Yesterday";
+  return d.toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" });
+}
+function chatDaySepEl(ts) {
+  return el(`<div class="wc-daysep"><span>${escapeHtml(chatDayLabel(ts))}</span></div>`);
+}
+// Consecutive messages from one person collapse into a block: the avatar and
+// name are drawn once and the rest are bare bubbles. Same sender, same day,
+// within five minutes.
+const CHAT_GROUP_MS = 5 * 60 * 1000;
+function chatGroupsWith(prev, m) {
+  if (!prev || !m || prev.user !== m.user) return false;
+  if (chatDayKey(prev.ts) !== chatDayKey(m.ts)) return false;
+  const gap = new Date(m.ts) - new Date(prev.ts);
+  return gap >= 0 && gap < CHAT_GROUP_MS;
+}
+// The last bubble already on screen, as a {user, ts} — so a live arrival can
+// group against it exactly the way the initial render would have.
+function chatLastRendered(msgsEl) {
+  const all = msgsEl.querySelectorAll(".wc-msg");
+  const last = all[all.length - 1];
+  return last ? { user: last.dataset.user || "", ts: last.dataset.ts || "" } : null;
+}
+
+// Long-press (touch) / right-click (desktop) → the message action sheet.
+// ⚠ Delete is SUTRADHAR-ONLY (ctx.canDelete, not ctx.canModerate) — see the note
+// on WA.getChat in wa-supabase.js.
+function openChatMsgMenu(m, ctx, msgEl) {
+  if (m.deletedAt) return;      // nothing to copy, reply to, or delete twice
+  const sheet = el(`<div class="wc-sheet-back">
+    <div class="wc-sheet">
+      <div class="wc-sheet-quote">${escapeHtml((m.text || "").slice(0, 120))}</div>
+      ${ctx.canReply ? `<button class="wc-sheet-item" data-act="reply">Reply</button>` : ""}
+      <button class="wc-sheet-item" data-act="copy">Copy text</button>
+      ${ctx.canDelete ? `<button class="wc-sheet-item wc-sheet-danger" data-act="del">Delete for everyone</button>` : ""}
+      <button class="wc-sheet-item wc-sheet-cancel" data-act="cancel">Cancel</button>
     </div>
   </div>`);
-  if (ctx.canModerate) {
+  const close = () => sheet.remove();
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+  sheet.querySelectorAll(".wc-sheet-item").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const act = b.dataset.act;
+      close();
+      if (act === "reply") {
+        if (ctx.setReply) ctx.setReply(m);
+      } else if (act === "copy") {
+        try { await navigator.clipboard.writeText(m.text || ""); toast("Message copied."); }
+        catch { toast("Could not copy here."); }
+      } else if (act === "del") {
+        if (!confirm("Delete this message for everyone?")) return;
+        try {
+          await WA.deleteMessage(ctx.wid, m.id);
+          msgEl.remove();   // remove now; the live stream removes it for everyone else
+        } catch { toast("Could not delete message."); }
+      }
+    });
+  });
+  document.body.appendChild(sheet);
+  hapticTickHook();   // hapticTick() itself lives inside MOBILE_UI; this is its shared handle
+}
+
+// Long-press opens the sheet; a short drag to the RIGHT is reply, the way every
+// chat app does it. Both live on the same touch sequence: any movement cancels
+// the press timer, and the swipe only fires once per gesture.
+function wireChatMsgMenu(msgEl, m, ctx) {
+  let timer = null, x0 = 0, y0 = 0, swiped = false;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  msgEl.addEventListener("touchstart", (e) => {
+    const t = e.touches[0];
+    x0 = t ? t.clientX : 0; y0 = t ? t.clientY : 0; swiped = false;
+    cancel();
+    timer = setTimeout(() => { timer = null; openChatMsgMenu(m, ctx, msgEl); }, 450);
+  }, { passive: true });
+  msgEl.addEventListener("touchmove", (e) => {
+    cancel();
+    if (swiped || m.deletedAt || !ctx.canReply || !ctx.setReply) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const dx = t.clientX - x0, dy = Math.abs(t.clientY - y0);
+    // Mostly-horizontal and far enough to be deliberate — otherwise it's a scroll.
+    if (dx > 56 && dy < 34) {
+      swiped = true;
+      msgEl.classList.add("wc-msg-swipe");
+      setTimeout(() => msgEl.classList.remove("wc-msg-swipe"), 220);
+      ctx.setReply(m);
+    }
+  }, { passive: true });
+  ["touchend", "touchcancel"].forEach((ev) =>
+    msgEl.addEventListener(ev, cancel, { passive: true }));
+  msgEl.addEventListener("contextmenu", (e) => { e.preventDefault(); openChatMsgMenu(m, ctx, msgEl); });
+}
+
+// Scroll to the message a quote points at and flash it, so a reply chain can be
+// walked back. A quote whose parent is off-screen (older than what's loaded) or
+// already removed simply does nothing — the snippet still reads on its own,
+// which is the whole reason it's denormalised.
+function chatJumpToParent(msgsEl, mid) {
+  const target = mid && msgsEl.querySelector(`[data-mid="${mid}"]`);
+  if (!target) { toast("That message isn't in view."); return; }
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.add("wc-msg-flash");
+  setTimeout(() => target.classList.remove("wc-msg-flash"), 1200);
+}
+
+// Single source of truth for a message bubble — used by the initial render,
+// our own optimistic send, and incoming live messages, so they all match.
+// `prev` is the message above it (or null): grouping is decided here so every
+// path produces the same block structure.
+function buildChatMsgEl(m, ctx, prev) {
+  const isMe = m.user === ctx.me;
+  const grouped = chatGroupsWith(prev, m);
+  // A removed message keeps its slot: replies still point somewhere, and the
+  // absence is stated rather than leaving a hole in the conversation.
+  if (m.deletedAt) {
+    const dead = el(`<div class="wc-msg wc-msg-dead ${isMe ? "wc-msg-me" : ""}${grouped ? " wc-msg-grp" : ""}"
+         data-mid="${escapeHtml(m.id || "")}" data-user="${escapeHtml(m.user || "")}" data-ts="${escapeHtml(m.ts || "")}">
+      <div class="wc-avatar">${escapeHtml((m.user || "?")[0].toUpperCase())}</div>
+      <div class="wc-bubble"><div class="wc-gone">Removed by the Sutradhar</div></div>
+    </div>`);
+    return dead;
+  }
+  const quote = m.replySnippet
+    ? `<button class="wc-quote" data-to="${escapeHtml(m.replyTo || "")}">
+         <span class="wc-q-user">${escapeHtml(m.replyUser || "")}</span>
+         <span class="wc-q-text">${escapeHtml(m.replySnippet)}</span>
+       </button>`
+    : "";
+  const msgEl = el(`<div class="wc-msg ${isMe ? "wc-msg-me" : ""}${grouped ? " wc-msg-grp" : ""}"
+       data-mid="${escapeHtml(m.id || "")}" data-user="${escapeHtml(m.user || "")}" data-ts="${escapeHtml(m.ts || "")}">
+    <div class="wc-avatar">${escapeHtml((m.user || "?")[0].toUpperCase())}</div>
+    <div class="wc-bubble">
+      ${grouped && !quote ? "" : `<div class="wc-meta"><span class="wc-user">${escapeHtml(m.user || "")}</span></div>`}
+      ${quote}
+      <div class="wc-text">${renderMarkdown(m.text || "")}</div>
+      <div class="wc-stamp"><span class="wc-time">${escapeHtml(chatClock(m.ts))}</span></div>
+      ${ctx.canDelete ? `<button class="wc-del" title="Delete">✕</button>` : ""}
+    </div>
+  </div>`);
+  if (quote) {
+    msgEl.querySelector(".wc-quote").addEventListener("click", (e) => {
+      e.stopPropagation();
+      chatJumpToParent(msgEl.parentElement, m.replyTo);
+    });
+  }
+  if (ctx.canDelete) {
     msgEl.querySelector(".wc-del").addEventListener("click", async () => {
-      if (!confirm("Delete this message?")) return;
+      if (!confirm("Delete this message for everyone?")) return;
       try {
         await WA.deleteMessage(ctx.wid, m.id);
         msgEl.remove();   // remove now; the live stream also removes it for everyone else
       } catch { toast("Could not delete message."); }
     });
   }
+  wireChatMsgMenu(msgEl, m, ctx);
   return msgEl;
 }
 
@@ -1083,7 +1229,20 @@ function renderChatMessages(msgsEl, messages, ctx) {
     return;
   }
   msgsEl.innerHTML = "";
-  messages.forEach((m) => msgsEl.appendChild(buildChatMsgEl(m, ctx)));
+  // `ctx.seenBefore` is the read mark captured BEFORE this render (see
+  // renderWisdomChat) — the divider has to sit where the reader left off, and
+  // opening the thread is itself what clears that mark.
+  let dividerDone = !ctx.seenBefore;
+  let prev = null;
+  messages.forEach((m) => {
+    if (!prev || chatDayKey(prev.ts) !== chatDayKey(m.ts)) msgsEl.appendChild(chatDaySepEl(m.ts));
+    if (!dividerDone && m.ts > ctx.seenBefore && m.user !== ctx.me) {
+      msgsEl.appendChild(el(`<div class="wc-newsep"><span>New messages</span></div>`));
+      dividerDone = true;
+    }
+    msgsEl.appendChild(buildChatMsgEl(m, ctx, prev));
+    prev = m;
+  });
   msgsEl.scrollTop = msgsEl.scrollHeight;
 }
 
@@ -1098,7 +1257,11 @@ function chatAppendLive(msgsEl, m, ctx) {
   if (empty) msgsEl.innerHTML = "";
   const nearBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 80;
   const isMe = m.user === ctx.me;
-  msgsEl.appendChild(buildChatMsgEl(m, ctx));
+  // Group and date-separate against what's actually on screen, so a message that
+  // arrives live lands in the same block structure a reload would have drawn.
+  const prev = chatLastRendered(msgsEl);
+  if (!prev || chatDayKey(prev.ts) !== chatDayKey(m.ts)) msgsEl.appendChild(chatDaySepEl(m.ts));
+  msgsEl.appendChild(buildChatMsgEl(m, ctx, prev));
   SATSANG.markSeen(ctx.wid, m.ts);   // it arrived on an OPEN chat — not unread
   if (isMe || nearBottom) {
     msgsEl.scrollTop = msgsEl.scrollHeight;
@@ -1108,13 +1271,28 @@ function chatAppendLive(msgsEl, m, ctx) {
   }
 }
 
+// Repaint one message in place. A soft delete arrives here as an UPDATE, so the
+// bubble becomes a tombstone without the conversation jumping: the replacement
+// is built with the SAME `prev` the original had, or grouping would recompute
+// against the wrong neighbour and the block structure would shift.
+function chatUpdateLive(msgsEl, m, ctx) {
+  const node = m.id && msgsEl.querySelector(`[data-mid="${m.id}"]`);
+  if (!node) return;
+  let prevEl = node.previousElementSibling;
+  while (prevEl && !prevEl.classList.contains("wc-msg")) prevEl = prevEl.previousElementSibling;
+  const prev = prevEl ? { user: prevEl.dataset.user || "", ts: prevEl.dataset.ts || "" } : null;
+  node.replaceWith(buildChatMsgEl(m, ctx, prev));
+}
+
 function openChatStream(wid, msgsEl, ctx) {
   closeChatStream();
   if (!isSignedIn()) return;   // not signed in; the manual refresh button still works
-  // Live updates via Supabase Realtime (replaces the old SSE stream). Clearing a
-  // chat deletes its rows, which arrive here as individual delete events.
+  // Live updates via Supabase Realtime (replaces the old SSE stream). Deleting a
+  // message is an UPDATE (a soft delete), not a DELETE — the DELETE path stays
+  // for rows removed before the migration, and for a true purge.
   _chatStream = WA.subscribeChat(wid, {
     onMessage: (m) => chatAppendLive(msgsEl, m, ctx),
+    onUpdate: (m) => chatUpdateLive(msgsEl, m, ctx),
     onDelete: (id) => {
       const node = msgsEl.querySelector(`[data-mid="${id}"]`);
       if (node) node.remove();
@@ -1180,8 +1358,12 @@ async function renderWisdomChat(body, wid, label) {
     return;
   }
 
-  // Messages (shared renderer; the live stream reuses the same bubble builder)
-  const ctx = { me: data.me, canModerate: !!data.can_moderate, wid, body };
+  // Messages (shared renderer; the live stream reuses the same bubble builder).
+  // Read the thread's seen mark BEFORE rendering — markSeen() below clears it,
+  // and the "New messages" divider needs where the reader actually left off.
+  const ctx = { me: data.me, canModerate: !!data.can_moderate, canDelete: !!data.can_delete,
+                canReply: !(!data.can_moderate && data.is_muted),
+                seenBefore: SATSANG.seenFor(wid) || "", wid, body };
   renderChatMessages(msgsEl, data.messages, ctx);
   // Opening a discussion clears the Samuhik Satsang badge.
   SATSANG.markSeen(wid, (data.messages || []).reduce((a, m) => (m.ts > a ? m.ts : a), ""));
@@ -1196,17 +1378,27 @@ async function renderWisdomChat(body, wid, label) {
   if (isMuted) {
     footEl.innerHTML = `<div class="wc-muted">🔇 You have been muted by the moderator.</div>`;
   } else {
+    // The format controls live INSIDE the input box, not in a toolbar row above
+    // it (2026-08-06). A tall composer plus a separate toolbar would cost ~130px
+    // of message space on a phone; folding the icons onto the box's bottom edge
+    // is what pays for the bigger typing area the operator asked for.
     footEl.innerHTML = `
-      <div class="wc-toolbar">
-        <button class="wc-tb-btn" data-wrap="**||**" title="Bold"><strong>B</strong></button>
-        <button class="wc-tb-btn" data-wrap="*||*" title="Italic"><em>I</em></button>
-        <button class="wc-tb-btn wc-hl-btn" data-wrap="==||==" title="Highlight"><mark class="chat-hl">H</mark></button>
-        <button class="wc-tb-btn wc-emoji-btn" title="Emoji">😊</button>
-        <div class="wc-emoji-picker" id="wc-emoji-picker"></div>
+      <div class="wc-replybar" id="wc-replybar" hidden>
+        <div class="wc-rb-body"><div class="wc-rb-user"></div><div class="wc-rb-text"></div></div>
+        <button class="wc-rb-x" title="Cancel reply" aria-label="Cancel reply">✕</button>
       </div>
       <div class="wc-compose">
-        <textarea class="wc-ta" id="wc-ta" placeholder="Share your reflection… (Enter to send, Shift+Enter for new line)" rows="2"></textarea>
-        <button class="wc-send btn primary" id="wc-send">Send</button>
+        <div class="wc-inputbox">
+          <textarea class="wc-ta" id="wc-ta" placeholder="Share your reflection… (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
+          <div class="wc-tools">
+            <button class="wc-tb-btn wc-emoji-btn" title="Emoji">😊</button>
+            <button class="wc-tb-btn" data-wrap="**||**" title="Bold"><strong>B</strong></button>
+            <button class="wc-tb-btn" data-wrap="*||*" title="Italic"><em>I</em></button>
+            <button class="wc-tb-btn wc-hl-btn" data-wrap="==||==" title="Highlight"><mark class="chat-hl">H</mark></button>
+          </div>
+        </div>
+        <button class="wc-send" id="wc-send" title="Send" aria-label="Send">➤</button>
+        <div class="wc-emoji-picker" id="wc-emoji-picker"></div>
       </div>
     `;
   }
@@ -1247,13 +1439,43 @@ async function renderWisdomChat(body, wid, label) {
     // Send
     const ta = footEl.querySelector("#wc-ta");
     const sendBtn = footEl.querySelector("#wc-send");
+    // Grow with the text, then scroll internally — the CSS min-height sets the
+    // resting size, this only takes it up to the cap.
+    const TA_MAX = 160;
+    const autoGrow = () => {
+      ta.style.height = "auto";
+      ta.style.height = Math.min(ta.scrollHeight, TA_MAX) + "px";
+    };
+    ta.addEventListener("input", autoGrow);
+
+    // Reply state. `ctx.setReply` is what the action sheet and the swipe gesture
+    // call — it lives on ctx (not a module variable) so it dies with this chat
+    // render and can never point at a message from a thread you've left.
+    let replyTo = null;
+    const replyBar = footEl.querySelector("#wc-replybar");
+    const paintReply = () => {
+      replyBar.hidden = !replyTo;
+      if (!replyTo) return;
+      replyBar.querySelector(".wc-rb-user").textContent = "Replying to " + (replyTo.user || "");
+      replyBar.querySelector(".wc-rb-text").textContent = replyTo.text || "";
+    };
+    const clearReply = () => { replyTo = null; paintReply(); };
+    ctx.setReply = (m) => {
+      replyTo = { id: m.id, user: m.user, text: m.text };
+      paintReply();
+      ta.focus();
+    };
+    replyBar.querySelector(".wc-rb-x").addEventListener("click", clearReply);
+
     const doSend = async () => {
       const text = ta.value.trim();
       if (!text) return;
       sendBtn.disabled = true;
       try {
-        const d = await WA.postMessage(wid, text);
+        const d = await WA.postMessage(wid, text, replyTo);
         ta.value = "";
+        ta.style.height = "";        // back to the resting height, not the grown one
+        clearReply();
         // Show our message at once; the live stream echoes it, but dedup-by-id avoids a double.
         if (d.message) chatAppendLive(msgsEl, d.message, ctx);
         sendBtn.disabled = false;
