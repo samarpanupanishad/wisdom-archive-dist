@@ -1135,6 +1135,118 @@ function openChatMsgMenu(m, ctx, msgEl) {
   hapticTickHook();   // hapticTick() itself lives inside MOBILE_UI; this is its shared handle
 }
 
+// ---- attachments (phase D) ------------------------------------------------
+// Images and PDFs. NO VIDEO, NO AUDIO — the file picker's accept list is the
+// polite gate, this check is the honest one (a renamed .mp4 fails here), and
+// the bucket + database reject them again server-side.
+const MEDIA_ACCEPT = "image/jpeg,image/png,image/webp,image/gif,application/pdf";
+const MEDIA_MAX = 10;                 // matches the attachments trigger
+const MEDIA_MAX_BYTES = 10 * 1024 * 1024;
+const IMG_MAX_EDGE = 1600;            // longest side after downscale
+const IMG_QUALITY = 0.82;
+
+function isMediaOk(file) {
+  return !!file && WA.MEDIA_MIMES.includes(file.type) && !/\.(mp4|mov|avi|mkv|webm|mp3|m4a|wav|ogg)$/i.test(file.name || "");
+}
+
+// Shrink a photo before it ever leaves the phone: a 4 MB camera JPEG becomes
+// ~200 KB, which is the difference between a satsang that loads on rural mobile
+// data and one that doesn't. PDFs and GIFs pass through untouched (re-encoding
+// a GIF would kill the animation; a PDF isn't an image at all).
+async function downscaleImage(file) {
+  if (file.type === "application/pdf" || file.type === "image/gif") {
+    return { blob: file, w: 0, h: 0 };
+  }
+  const bmp = await createImageBitmap(file).catch(() => null);
+  if (!bmp) return { blob: file, w: 0, h: 0 };
+  const scale = Math.min(1, IMG_MAX_EDGE / Math.max(bmp.width, bmp.height));
+  const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  canvas.getContext("2d").drawImage(bmp, 0, 0, w, h);
+  bmp.close && bmp.close();
+  const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", IMG_QUALITY));
+  // If "shrinking" made it bigger (already-optimised small PNGs do this), keep
+  // the original — but then keep its type too.
+  if (!blob || blob.size >= file.size) return { blob: file, w, h };
+  return { blob, w, h };
+}
+
+// Signed URLs for a private bucket, cached in memory. Batched per repaint, and
+// re-signed well before the hour is up so a long-open chat doesn't start
+// showing broken images.
+const MEDIA_URLS = new Map();          // path -> {url, exp}
+async function mediaUrls(paths) {
+  const now = Date.now();
+  const need = paths.filter((p) => { const e = MEDIA_URLS.get(p); return !e || e.exp < now + 60000; });
+  if (need.length) {
+    const got = await WA.signedMediaUrls(need, 3600);
+    Object.keys(got).forEach((p) => MEDIA_URLS.set(p, { url: got[p], exp: now + 3300000 }));
+  }
+  const out = {};
+  paths.forEach((p) => { const e = MEDIA_URLS.get(p); if (e) out[p] = e.url; });
+  return out;
+}
+
+function isImageAtt(a) { return a && a.mime && a.mime.indexOf("image/") === 0; }
+
+// A media-only message still needs words: `text` is NOT NULL, and the thread
+// index, the push preview and any un-updated shell all read it.
+function mediaPlaceholder(atts) {
+  if (!atts || !atts.length) return "";
+  const imgs = atts.filter(isImageAtt).length;
+  const docs = atts.length - imgs;
+  if (imgs && !docs) return imgs > 1 ? `📷 ${imgs} फोटो` : "📷 फोटो";
+  if (docs && !imgs) return docs > 1 ? `📄 ${docs} फाइल` : `📄 ${atts[0].name || "फाइल"}`;
+  return `📷 ${imgs} · 📄 ${docs}`;
+}
+
+function attachmentsHtml(atts) {
+  if (!atts || !atts.length) return "";
+  const cells = atts.map((a, i) => {
+    if (isImageAtt(a)) {
+      const ratio = (a.w && a.h) ? ` style="aspect-ratio:${a.w}/${a.h}"` : "";
+      return `<button class="wc-att-img" data-att="${i}"${ratio}><img alt="" loading="lazy" decoding="async"></button>`;
+    }
+    return `<button class="wc-att-doc" data-att="${i}">
+        <span class="wc-att-ico">📄</span>
+        <span class="wc-att-name">${escapeHtml(a.name || "File")}</span>
+      </button>`;
+  }).join("");
+  return `<div class="wc-atts${atts.length > 1 ? " wc-atts-grid" : ""}">${cells}</div>`;
+}
+
+// Fill in the <img> srcs once their signed URLs arrive. Separate from the
+// builder so a bubble renders instantly (with the aspect ratio reserved, so
+// nothing jumps) and the pictures arrive a beat later.
+async function paintAttachments(msgEl, atts) {
+  const imgs = atts.filter(isImageAtt);
+  if (!imgs.length) return;
+  let urls;
+  try { urls = await mediaUrls(imgs.map((a) => a.path)); }
+  catch { return; }
+  atts.forEach((a, i) => {
+    if (!isImageAtt(a)) return;
+    const img = msgEl.querySelector(`.wc-att-img[data-att="${i}"] img`);
+    if (img && urls[a.path]) img.src = urls[a.path];
+  });
+}
+
+// Full-screen view of one shared image. Deliberately its own overlay rather
+// than the reader's zoom mode (MOBILE_UI m-zoomwrap) — that one is wired to the
+// archive's pages and its gestures, and borrowing it would tangle the two.
+async function openMediaViewer(att) {
+  let url;
+  try { url = (await mediaUrls([att.path]))[att.path]; } catch { url = null; }
+  if (!url) { toast("Couldn't open that file."); return; }
+  if (!isImageAtt(att)) { window.open(url, "_blank", "noopener"); return; }
+  const box = el(`<div class="wc-lightbox"><img alt=""><button class="wc-lb-x" aria-label="Close">✕</button></div>`);
+  box.querySelector("img").src = url;
+  const close = () => box.remove();
+  box.addEventListener("click", (e) => { if (e.target !== box.querySelector("img")) close(); });
+  document.body.appendChild(box);
+}
+
 // ---- reactions (phase C) --------------------------------------------------
 // The quick strip in the action sheet. A deliberate subset of CHAT_EMOJIS —
 // a reaction bar is a one-tap decision, so it must fit on one row on a phone.
@@ -1292,18 +1404,33 @@ function buildChatMsgEl(m, ctx, prev) {
        </button>`
     : "";
   const reacts = reactsRowHtml(ctx, m.id);
+  const atts = Array.isArray(m.attachments) ? m.attachments : null;
+  // A caption that is only the auto placeholder would read as a caption. The
+  // words matter on the thread index and in the push preview, but not here,
+  // under the picture they describe.
+  const isPlaceholder = atts && m.text === mediaPlaceholder(atts);
   const msgEl = el(`<div class="wc-msg ${isMe ? "wc-msg-me" : ""}${grouped ? " wc-msg-grp" : ""}"
        data-mid="${escapeHtml(m.id || "")}" data-user="${escapeHtml(m.user || "")}" data-ts="${escapeHtml(m.ts || "")}">
     <div class="wc-avatar">${escapeHtml((m.user || "?")[0].toUpperCase())}</div>
     <div class="wc-bubble">
       ${grouped && !quote ? "" : `<div class="wc-meta"><span class="wc-user">${escapeHtml(m.user || "")}</span></div>`}
       ${quote}
-      <div class="wc-text">${renderMarkdown(m.text || "")}</div>
+      ${atts ? attachmentsHtml(atts) : ""}
+      ${isPlaceholder ? "" : `<div class="wc-text">${renderMarkdown(m.text || "")}</div>`}
       <div class="wc-stamp"><span class="wc-time">${escapeHtml(chatClock(m.ts))}</span></div>
       ${ctx.canDelete ? `<button class="wc-del" title="Delete">✕</button>` : ""}
       ${reacts ? `<div class="wc-reacts">${reacts}</div>` : ""}
     </div>
   </div>`);
+  if (atts) {
+    msgEl.querySelectorAll("[data-att]").forEach((b) => {
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openMediaViewer(atts[parseInt(b.dataset.att, 10)]);
+      });
+    });
+    paintAttachments(msgEl, atts);
+  }
   if (reacts) {
     msgEl.querySelectorAll(".wc-react").forEach((b) => {
       b.addEventListener("click", (e) => {
@@ -1485,6 +1612,16 @@ async function renderWisdomChat(body, wid, label) {
       ctx.reacts.set(r.mid, list);
     });
   } catch { /* reactions are decoration; the conversation is not */ }
+  // Sign every image in the thread in ONE batch, before the first paint. Each
+  // bubble then asks mediaUrls() for its own paths and gets a cache hit — without
+  // this prime, a thread with twenty photos would make twenty signing round trips
+  // on open, which on rural mobile data is the difference between usable and not.
+  try {
+    const paths = [...new Set((data.messages || [])
+      .flatMap((m) => (Array.isArray(m.attachments) ? m.attachments : []))
+      .filter(isImageAtt).map((a) => a.path))];
+    if (paths.length) await mediaUrls(paths);
+  } catch { /* unsigned images just don't appear; the words still do */ }
   renderChatMessages(msgsEl, data.messages, ctx);
   // Opening a discussion clears the Samuhik Satsang badge.
   SATSANG.markSeen(wid, (data.messages || []).reduce((a, m) => (m.ts > a ? m.ts : a), ""));
@@ -1508,11 +1645,14 @@ async function renderWisdomChat(body, wid, label) {
         <div class="wc-rb-body"><div class="wc-rb-user"></div><div class="wc-rb-text"></div></div>
         <button class="wc-rb-x" title="Cancel reply" aria-label="Cancel reply">✕</button>
       </div>
+      <div class="wc-tray" id="wc-tray" hidden></div>
+      <input type="file" id="wc-file" accept="${MEDIA_ACCEPT}" multiple hidden>
       <div class="wc-compose">
         <div class="wc-inputbox">
           <textarea class="wc-ta" id="wc-ta" placeholder="Share your reflection… (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
           <div class="wc-tools">
             <button class="wc-tb-btn wc-emoji-btn" title="Emoji">😊</button>
+            <button class="wc-tb-btn wc-attach-btn" title="Attach a photo or PDF">📎</button>
             <button class="wc-tb-btn" data-wrap="**||**" title="Bold"><strong>B</strong></button>
             <button class="wc-tb-btn" data-wrap="*||*" title="Italic"><em>I</em></button>
             <button class="wc-tb-btn wc-hl-btn" data-wrap="==||==" title="Highlight"><mark class="chat-hl">H</mark></button>
@@ -1588,20 +1728,79 @@ async function renderWisdomChat(body, wid, label) {
     };
     replyBar.querySelector(".wc-rb-x").addEventListener("click", clearReply);
 
+    // Pending attachments: picked and downscaled on the device, but NOT uploaded
+    // until Send. Nothing reaches the bucket for a message the member abandons.
+    let pending = [];
+    const trayEl = footEl.querySelector("#wc-tray");
+    const fileEl = footEl.querySelector("#wc-file");
+    const paintTray = () => {
+      trayEl.hidden = !pending.length;
+      trayEl.innerHTML = pending.map((p, i) => `<div class="wc-tray-item">
+          ${p.url ? `<img src="${p.url}" alt="">` : `<span class="wc-tray-doc">📄</span>`}
+          <span class="wc-tray-name">${escapeHtml(p.name)}</span>
+          <button class="wc-tray-x" data-i="${i}" aria-label="Remove">✕</button>
+        </div>`).join("");
+      trayEl.querySelectorAll(".wc-tray-x").forEach((b) => {
+        b.addEventListener("click", () => {
+          const i = parseInt(b.dataset.i, 10);
+          if (pending[i] && pending[i].url) URL.revokeObjectURL(pending[i].url);
+          pending.splice(i, 1);
+          paintTray();
+        });
+      });
+    };
+    const clearTray = () => {
+      pending.forEach((p) => p.url && URL.revokeObjectURL(p.url));
+      pending = [];
+      paintTray();
+    };
+    footEl.querySelector(".wc-attach-btn").addEventListener("click", () => fileEl.click());
+    fileEl.addEventListener("change", async () => {
+      const files = [...(fileEl.files || [])];
+      fileEl.value = "";                     // so picking the same file twice still fires
+      for (const f of files) {
+        if (pending.length >= MEDIA_MAX) { toast(`Up to ${MEDIA_MAX} files per message.`); break; }
+        if (!isMediaOk(f)) { toast("Only photos and PDF files can be shared."); continue; }
+        if (f.size > MEDIA_MAX_BYTES) { toast(`"${f.name}" is larger than 10 MB.`); continue; }
+        const { blob, w, h } = await downscaleImage(f);
+        pending.push({ blob, w, h, name: f.name, mime: blob.type || f.type,
+                       url: blob.type.indexOf("image/") === 0 ? URL.createObjectURL(blob) : "" });
+        paintTray();
+      }
+    });
+
     const doSend = async () => {
       const text = ta.value.trim();
-      if (!text) return;
+      if (!text && !pending.length) return;
       sendBtn.disabled = true;
       try {
-        const d = await WA.postMessage(wid, text, replyTo);
+        // Upload FIRST, insert second — a row pointing at a missing object is
+        // unrecoverable; an orphaned object is just garbage.
+        let uploaded = null;
+        if (pending.length) {
+          sendBtn.classList.add("wc-send-busy");
+          uploaded = [];
+          for (const p of pending) {
+            uploaded.push(await WA.uploadChatMedia(wid, p.blob, p.name, { w: p.w, h: p.h }));
+          }
+        }
+        // NOT `body` — that name is renderWisdomChat's own DOM parameter, which
+        // the MUTED path below re-renders with.
+        const outText = text || mediaPlaceholder(uploaded);
+        const d = await WA.postMessage(wid, outText, replyTo, uploaded);
         ta.value = "";
         ta.style.height = "";        // back to the resting height, not the grown one
         clearReply();
+        clearTray();
+        sendBtn.classList.remove("wc-send-busy");
         // Show our message at once; the live stream echoes it, but dedup-by-id avoids a double.
         if (d.message) chatAppendLive(msgsEl, d.message, ctx);
         sendBtn.disabled = false;
       } catch (err) {
+        sendBtn.classList.remove("wc-send-busy");
         if (err.code === "MUTED") { renderWisdomChat(body, wid); return; }
+        // The words and the picked files stay in the composer so the member can
+        // retry — losing what someone wrote is the worst possible failure here.
         toast(err.message || "Could not send message."); sendBtn.disabled = false;
       }
     };

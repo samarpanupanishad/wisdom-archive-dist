@@ -77,6 +77,7 @@ function _mapMsg(row) {
     replyUser: row.reply_user || null,
     replySnippet: row.reply_snippet || null,
     deletedAt: row.deleted_at || null,
+    attachments: Array.isArray(row.attachments) ? row.attachments : null,
   };
 }
 
@@ -277,7 +278,7 @@ const WA = {
   // `reply` is {id, user, text} of the message being answered. It is stored
   // DENORMALISED (reply_user / reply_snippet) so the quote needs no join and
   // still reads after the sutradhar removes the parent.
-  async postMessage(wid, text, reply) {
+  async postMessage(wid, text, reply, attachments) {
     const { data: { session } } = await _sb.auth.getSession();
     if (!session) throw Object.assign(new Error("Not signed in."), { code: "AUTH" });
     const me = await _loadProfile(session.user.id);
@@ -289,9 +290,15 @@ const WA = {
       row.reply_user = reply.user || null;
       row.reply_snippet = String(reply.text || "").slice(0, 160);
     }
+    if (attachments && attachments.length) row.attachments = attachments;
     let { data, error } = await _sb.from("messages").insert(row).select("*").single();
-    // Replying against a database where add_satsang_chat.sql hasn't been run:
-    // send it as a plain message rather than losing what the member typed.
+    // Replying/attaching against a database where add_satsang_chat.sql hasn't
+    // been run: send the words rather than losing what the member typed. An
+    // attachment can't survive that fallback, so it is reported, not dropped
+    // silently — the uploaded object is left for the sweep.
+    if (error && row.attachments && /attachments|column|schema cache/i.test(error.message || "")) {
+      throw new Error("Sharing isn't set up yet. (Admin: run supabase/add_satsang_chat.sql.)");
+    }
     if (error && row.reply_to && /reply_to|reply_user|reply_snippet|column|schema cache/i.test(error.message || "")) {
       ({ data, error } = await _sb.from("messages")
         .insert({ wisdom_id: String(wid), text: text }).select("*").single());
@@ -321,6 +328,52 @@ const WA = {
       return { ok: true, hard: true };
     }
     throw new Error(error.message);
+  },
+
+  // ----- Attachments (phase D) -------------------------------------------
+  // Images and PDFs only. VIDEO AND AUDIO ARE NEVER ALLOWED — the bucket's
+  // allowed_mime_types rejects them server-side, the messages trigger rejects
+  // them again, and this list is the third gate. Don't widen it.
+  MEDIA_MIMES: ["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"],
+
+  // Upload one file and return the attachment record to store on the message.
+  //
+  // ⚠ Upload FIRST, insert the message second (the caller does this): a row
+  // pointing at a missing object is unrecoverable, an orphaned object is just
+  // garbage a sweep can collect.
+  //
+  // The path is <wid>/<random>.<ext>, with the wid SANITISED — thread ids like
+  // "special:2564" carry a colon, which is not safe in a storage key.
+  async uploadChatMedia(wid, blob, name, extra) {
+    const mime = blob.type || "application/octet-stream";
+    if (!WA.MEDIA_MIMES.includes(mime)) {
+      throw new Error("Only images and PDF files can be shared here.");
+    }
+    const safeWid = String(wid).replace(/[^A-Za-z0-9_-]/g, "_");
+    const ext = (mime === "application/pdf") ? "pdf" : (mime.split("/")[1] || "bin");
+    const rand = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+    const path = `${safeWid}/${rand}.${ext}`;
+    const { error } = await _sb.storage.from("satsang-media")
+      .upload(path, blob, { contentType: mime, upsert: false });
+    if (error) {
+      if (/Bucket not found|not found/i.test(error.message || "")) {
+        throw new Error("Sharing isn't set up yet. (Admin: run section 10 of supabase/add_satsang_chat.sql.)");
+      }
+      throw new Error(error.message);
+    }
+    return Object.assign({ path, mime, bytes: blob.size, name: name || "" }, extra || {});
+  },
+
+  // The bucket is PRIVATE, so rendering needs short-lived signed URLs. Batched —
+  // one round trip per screenful, not one per image. Returns {path: url}.
+  async signedMediaUrls(paths, seconds) {
+    if (!paths || !paths.length) return {};
+    const { data, error } = await _sb.storage.from("satsang-media")
+      .createSignedUrls(paths, seconds || 3600);
+    if (error) throw new Error(error.message);
+    const out = {};
+    (data || []).forEach((d) => { if (d && d.path && d.signedUrl) out[d.path] = d.signedUrl; });
+    return out;
   },
 
   // ----- Reactions (phase C) --------------------------------------------
