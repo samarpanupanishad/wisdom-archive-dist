@@ -1092,6 +1092,16 @@ body.m-mode.m-notop .m-top { display: none; }
   font-size: 30px; line-height: 1; color: var(--accent); border-radius: 50%;
 }
 .m-top .m-back:active { background: var(--accent-soft, #f6e7dc); }
+/* Right-hand action slot (the Samuhik Satsang "+"). Always occupies its 42px,
+   even when inactive, so the centred title doesn't shift between pages that
+   have an action and pages that don't — same trick .m-back uses for home. */
+.m-top .m-topact {
+  width: 42px; height: 42px; flex: none; border: none; background: none;
+  font: 300 30px/1 var(--sans); color: var(--accent);
+  border-radius: 50%; visibility: hidden; cursor: pointer;
+}
+.m-top .m-topact.on { visibility: visible; }
+.m-top .m-topact:active { background: var(--accent-soft, #f6e7dc); }
 .m-top .m-title {
   flex: 1; text-align: center; font-family: var(--serif); font-size: 17px;
   font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
@@ -1566,7 +1576,9 @@ body.m-mode .page-head { padding-top: 4px; }
 .m-ch-text { flex: 1; min-width: 0; }
 .m-ch-date { font: 700 14.5px var(--sans); color: var(--text); }
 .m-ch-topic { font: 500 13px var(--sans); color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.m-ch-change { font: 600 12px var(--sans); color: var(--muted); flex: none; }
+/* (.m-ch-change removed: the chat header's trailing "Change ▾"/"Back ›" is gone
+   — starting a new satsang moved to the top bar's "+", and the header itself now
+   simply opens the message.) */
 
 /* WhatsApp-style chat: fill the viewport, messages scroll, composer pinned */
 body.m-mode .m-community { display: flex; flex-direction: column; height: calc(100vh - 78px - env(safe-area-inset-top)); min-height: 0; }
@@ -1952,26 +1964,40 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
 .sx-row .mx-thumb-txt .mx-ico { animation: none; }
 .sx-row .mx-thumb-txt .mx-spark { display: none; }
 
-/* Index header: reuses .m-chat-head's card so it matches the chat header it was
-   modelled on, but splits into two hit targets — the label (opens the message)
-   and the search button (find a message to discuss). Nested <button>s can't be
-   nested inside one, hence the container is a <div>. Padding stays on the
-   container so the inner buttons don't double it. */
-.sx-head { align-items: center; }
-.sx-head-main {
-  flex: 1; min-width: 0; display: flex; align-items: center;
-  background: none; border: 0; padding: 0; margin: 0;
-  font: inherit; color: inherit; text-align: left; cursor: pointer;
-}
-.sx-head-main:disabled { cursor: default; opacity: .75; }
-.sx-head-search {
-  flex: none; display: flex; align-items: center; justify-content: center;
-  width: 38px; height: 38px; border-radius: 11px;
-  border: 1px solid var(--border); background: var(--surface);
-  color: var(--accent); cursor: pointer;
-}
-.sx-head-search:active { background: var(--accent-soft); }
+/* The pinned "latest running" satsang. The row inside is the SAME element the
+   groups use, so only the caption distinguishes it. */
 .sx-headwrap:empty { display: none; }
+.sx-latest { margin-bottom: 18px; }
+.sx-latest-cap {
+  padding: 4px 2px 8px; font: 700 13.5px var(--sans); color: #1565c0;
+  border-bottom: 1px solid var(--border); margin-bottom: 10px;
+}
+
+/* Two tap targets per row: the thumbnail opens the message, the rest opens the
+   chat. .mx-row is normally an <a> (display:flex); as a <div> container it keeps
+   that layout, and the two children carry the padding/press states. */
+.sx-row { align-items: stretch; }
+.sx-thumb-link {
+  flex: none; display: flex; align-items: center; border-radius: 10px;
+  text-decoration: none; -webkit-tap-highlight-color: transparent;
+}
+.sx-thumb-link[href]:active { opacity: .6; }
+.sx-row-main {
+  flex: 1; min-width: 0; display: flex; align-items: center;
+  text-decoration: none; color: inherit;
+}
+.sx-row-main:active { opacity: .6; }
+/* Special Telegram posts are text — the tile shows their opening words. */
+.sx-thumb-text {
+  display: flex; align-items: center; justify-content: center;
+  padding: 5px 6px; overflow: hidden;
+  background: var(--accent-soft); border: 1px solid var(--border);
+}
+.sx-thumb-text span {
+  font: 500 8.5px/1.35 var(--sans); color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical;
+  overflow: hidden; text-align: center; word-break: break-word;
+}
 
 /* Desktop: the same grouped list inside the narrow Samuhik Satsang panel, so
    it has its own (thumbnail-free) row markup — see renderSatsangIndex. */

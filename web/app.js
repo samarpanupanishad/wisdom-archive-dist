@@ -3340,13 +3340,16 @@ async function satsangThreadView(t) {
   const v = {
     wid, sec, count: t.count || 0, lastAt: t.last_at || "",
     lastUser: t.last_user || "", lastText: t.last_text || "",
-    unread: SATSANG.isUnread(t), title: "", date: "", thumb: null, entry: null,
+    unread: SATSANG.isUnread(t), title: "", date: "", thumb: null, body: "", entry: null,
   };
   if (sec === "special") {
     const r = (SPECIAL.cached() || []).find((x) => String(x.id) === m[2]);
     if (r) {
       v.title = r.title_hi || r.title_en || "";
       v.date = (r.posted_at || r.created_at || "").slice(0, 10) || r.msg_date || "";
+      // Telegram posts are TEXT — there is no image to thumbnail, so the tile
+      // shows the opening words instead (see satsangThumbHtml).
+      v.body = r.body_hi || r.body_en || "";
     }
   } else if (sec === "letterpad") {
     const r = (LETTERPAD.items() || []).find((x) => String(x.id) === m[2]);
@@ -3379,20 +3382,26 @@ async function satsangGroups(force) {
     .filter((g) => g.rows.length);
 }
 
-// Short section labels for the index header. CHAT_NS_LABEL covers only the two
-// namespaced sections; the header needs a name for daily msgs (and Anushthan) too.
-const SATSANG_SHORT_LABEL = {
-  daily: "Daily Msg", special: "Special Telegram Msg",
-  letterpad: "Guru's Letterpad Msg", anushthan: "Anushthan Msg",
-};
-// Where the FULL message lives, per section. The index header opens the message
-// itself — matching the pre-8.89 chat header, where tapping the subject opened
-// the message and Android back returned you to the discussion.
+// Where the FULL message lives, per section. Opened by a row's THUMBNAIL (the
+// row body opens the chat instead) and by the chat header.
 function satsangReaderHref(v) {
   if (!v) return "";
   if (v.sec === "daily") return "#/entry/" + encodeURIComponent(v.wid);
   const m = SATSANG_NS_RE.exec(v.wid);
   return m ? "#/m/" + m[1] + "/" + encodeURIComponent(m[2]) : "";
+}
+
+// The row's thumbnail — its own tap target, opening the FULL MESSAGE.
+//   daily     → the entry's scanned image
+//   letterpad → the first scanned page
+//   special   → no image exists at all (Telegram posts are text), so the tile
+//               shows the message's opening words, like a page preview. A bare
+//               glyph read as a missing image rather than something to tap.
+function satsangThumbHtml(v) {
+  if (v.thumb) return `<img class="mx-thumb" src="${v.thumb}" loading="lazy" decoding="async" alt="">`;
+  const words = (v.body || v.title || "").replace(/\s+/g, " ").trim().slice(0, 60);
+  if (words) return `<div class="mx-thumb sx-thumb-text"><span>${escapeHtml(words)}</span></div>`;
+  return `<div class="mx-thumb mx-thumb-txt"><span class="mx-ico">${satsangIconOf(v.sec)}</span></div>`;
 }
 
 // Shared line under a row's title: who spoke last and the start of what they said.
@@ -3760,6 +3769,7 @@ const MOBILE_UI = (() => {
     <header class="m-top" id="m-top">
       <button class="m-back" id="m-back" aria-label="Back">‹</button>
       <div class="m-title" id="m-title">Samarpan Upanishad</div>
+      <button class="m-topact" id="m-topact" type="button"></button>
     </header>
     <div class="m-vpanel" id="m-vpanel">
       <button class="m-vback" id="m-panel-back" type="button" aria-label="Back" hidden>‹</button>
@@ -3877,6 +3887,24 @@ const MOBILE_UI = (() => {
   $("m-drawer").addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
   $("m-back").addEventListener("click", () => history.back());
   $("m-panel-back").addEventListener("click", () => history.back());
+
+  // ---- top-bar right-hand action ------------------------------------------
+  // One reusable slot (currently the Samuhik Satsang "+"). setChrome() clears it
+  // on EVERY navigation, so a page wanting one must call setTopAction() AFTER
+  // its pageFrame() — otherwise the button would leak onto Settings, Favorites
+  // and everything else. It keeps its 42px even when inactive so the centred
+  // title doesn't jump between pages that have one and pages that don't.
+  let _topActFn = null;
+  $("m-topact").addEventListener("click", () => { if (_topActFn) _topActFn(); });
+  function setTopAction(spec) {
+    const b = $("m-topact");
+    if (!b) return;
+    _topActFn = (spec && spec.onClick) || null;
+    b.classList.toggle("on", !!spec);
+    b.textContent = (spec && spec.label) || "";
+    if (spec && spec.title) { b.title = spec.title; b.setAttribute("aria-label", spec.title); }
+    else { b.removeAttribute("title"); b.removeAttribute("aria-label"); }
+  }
 
   // ---- Android BACK + exit confirmation -----------------------------------
   // Registered here (not in wa-native.js) so the behaviour ships over-the-air.
@@ -4104,6 +4132,7 @@ const MOBILE_UI = (() => {
     document.body.classList.toggle("m-notop", isImageScreen);
     $("m-back").style.visibility = mode === "home" ? "hidden" : "visible";
     $("m-title").textContent = title || "Samarpan Upanishad";
+    setTopAction(null);   // pages that want one re-set it after pageFrame()
   }
 
   // ==========================================================================
@@ -5658,56 +5687,45 @@ const MOBILE_UI = (() => {
   // ⚠ `#/m/community?wid=X` still opens that chat directly and must keep doing
   // so: live FCM payloads on installed phones point at exactly that URL. Only
   // the bare route means "the index".
+  // One satsang row, with TWO separate tap targets:
+  //   thumbnail → the full message
+  //   the rest  → that satsang's chat
+  // So the container is a <div> holding two <a>s. An <a> cannot legally contain
+  // another <a>; the parser closes the outer one early and the nesting breaks in
+  // ways that differ between engines, so this is not a style preference.
   function satsangRowEl(v) {
-    const thumb = v.thumb
-      ? `<img class="mx-thumb" src="${v.thumb}" loading="lazy" decoding="async" alt="">`
-      : `<div class="mx-thumb mx-thumb-txt"><span class="mx-ico">${satsangIconOf(v.sec)}</span></div>`;
+    const readerHref = satsangReaderHref(v);
     const top = [v.date ? fmtDate(v.date) : "", satsangCountLabel(v)].filter(Boolean).join(" · ");
-    return el(`<a class="mx-row sx-row" href="#/m/community?wid=${encodeURIComponent(v.wid)}">
-        ${thumb}
-        <div class="mx-meta">
-          <div class="mx-top">${escapeHtml(top)}${v.unread ? ` <span class="mx-new">NEW</span>` : ""}</div>
-          <div class="mx-title">${escapeHtml(v.title || "—")}</div>
-          <div class="mx-prev">${escapeHtml(satsangLastLine(v))}</div>
-        </div>
-      </a>`);
+    const row = el(`<div class="mx-row sx-row">
+        <a class="sx-thumb-link" href="${readerHref || "#"}" title="Open the message" aria-label="Open the message">${satsangThumbHtml(v)}</a>
+        <a class="sx-row-main" href="#/m/community?wid=${encodeURIComponent(v.wid)}">
+          <div class="mx-meta">
+            <div class="mx-top">${escapeHtml(top)}${v.unread ? ` <span class="mx-new">NEW</span>` : ""}</div>
+            <div class="mx-title">${escapeHtml(v.title || "—")}</div>
+            <div class="mx-prev">${escapeHtml(satsangLastLine(v))}</div>
+          </div>
+        </a>
+      </div>`);
+    // Anushthan has no reader yet — don't dress the tile up as tappable.
+    if (!readerHref) {
+      const t = row.querySelector(".sx-thumb-link");
+      t.removeAttribute("href");
+      t.removeAttribute("title");
+      t.setAttribute("aria-hidden", "true");
+    }
+    return row;
   }
 
-  // The index's top header — deliberately the SAME two-line shape the pre-8.89
-  // chat header had (.m-chat-head: label · date on top, subject beneath):
-  //   • left  → tapping it opens the FULL MESSAGE for that satsang; Android back
-  //             returns here. Applied to every section, including daily msgs,
-  //             which previously opened the picker from here instead.
-  //   • right → search, replacing the old "Change ▾". Goes to the pick-a-message
-  //             flow, which is the only way to reach a message NOBODY has
-  //             discussed yet (those have no thread, so no row in the list).
-  // `top` is the satsang with the newest message, or null when there are none.
-  function satsangHeadEl(top, emptyNote) {
-    const head = el(`<div class="m-chat-head sx-head">
-      <button class="sx-head-main" type="button">
-        <div class="m-ch-text">
-          <div class="m-ch-date"></div>
-          <div class="m-ch-topic"></div>
-        </div>
-      </button>
-      <button class="sx-head-search" type="button" title="Find a message to discuss"
-              aria-label="Find a message to discuss">${icon("search")}</button>
+  // The satsang with the newest message, pinned above the groups as a shortcut.
+  // Deliberately the SAME row element the groups use (satsangRowEl) so the two
+  // can't drift apart — hence the caption, which is the only thing telling the
+  // reader why this row is up here. It stays in its group below as well.
+  function satsangLatestEl(top) {
+    const wrap = el(`<div class="sx-latest">
+      <div class="sx-latest-cap">Latest running Samuhik Satsang</div>
     </div>`);
-    const main = head.querySelector(".sx-head-main");
-    const href = top ? satsangReaderHref(top) : "";
-    if (top) {
-      head.querySelector(".m-ch-date").textContent =
-        [SATSANG_SHORT_LABEL[top.sec] || "", top.date ? fmtHumanDate(top.date) : ""].filter(Boolean).join(" · ");
-      head.querySelector(".m-ch-topic").textContent = top.title || "";
-    } else {
-      head.querySelector(".m-ch-date").textContent = "Samuhik Satsang";
-      head.querySelector(".m-ch-topic").textContent = emptyNote || "";
-    }
-    // Nothing to open → the label must not pretend to be tappable.
-    if (href) main.addEventListener("click", () => go(href));
-    else main.disabled = true;
-    head.querySelector(".sx-head-search").addEventListener("click", () => go("#/m/search?for=chat"));
-    return head;
+    wrap.appendChild(satsangRowEl(top));
+    return wrap;
   }
 
   async function satsangIndexPage() {
@@ -5716,6 +5734,10 @@ const MOBILE_UI = (() => {
       <div class="m-results"><div class="loading">Loading…</div></div>
     </div>`);
     pageFrame("Samuhik Satsang", node, "m-page-scroll");
+    // "+" = start a new Samuhik Satsang. It has to be set AFTER pageFrame,
+    // which calls setChrome() and clears any previous page's action.
+    setTopAction({ label: "+", title: "Start a new Samuhik Satsang",
+                   onClick: () => go("#/m/search?for=chat") });
     const headWrap = node.querySelector(".sx-headwrap");
     const box = node.querySelector(".m-results");
 
@@ -5734,17 +5756,15 @@ const MOBILE_UI = (() => {
 
     const groups = await satsangGroups(true).catch(() => []);
     const failed = SATSANG.lastError();
-    // Newest activity across every section — the same thread the first row shows.
+    // Newest activity across every section, whichever group it happens to be in.
     const top = groups.flatMap((g) => g.rows)
       .reduce((best, v) => (!best || v.lastAt > best.lastAt ? v : best), null);
-    headWrap.appendChild(satsangHeadEl(top, failed
-      ? "Couldn't load the discussions — check your connection"
-      : "No discussion yet — tap search to start one"));
+    if (top) headWrap.appendChild(satsangLatestEl(top));
 
     if (!groups.length) {
       box.innerHTML = failed
         ? `<div class="empty">Couldn't load the Samuhik Satsang list. Check your connection and open this page again.</div>`
-        : `<div class="empty">No satsang yet. Tap the search button above to find a message and start the first one.</div>`;
+        : `<div class="empty">No satsang yet. Tap + above to find a message and start the first one.</div>`;
       return;
     }
     renderSearchGroups(box, groups.map((g) => ({
@@ -5760,6 +5780,8 @@ const MOBILE_UI = (() => {
     const wid = pick;
     const node = el(`<div class="m-community"></div>`);
     pageFrame("Samuhik Satsang", node);
+    setTopAction({ label: "+", title: "Start a new Samuhik Satsang",
+                   onClick: () => go("#/m/search?for=chat") });
     // A Special Telegram / Letterpad discussion. These ids are NOT archive
     // entries: /api/entry would 404, and wa:lastViewed must never hold one (it
     // drives resuming the daily reader on next launch).
@@ -5768,12 +5790,12 @@ const MOBILE_UI = (() => {
       store.setLastViewed(wid);
       _stageId = wid;
     }
-    // Header: which message is under discussion. For an archive entry, tapping
-    // it swaps to a different Guru's msg; for the other sections it goes back to
-    // the message being read (the daily picker would silently move the chat).
-    const head = el(`<button class="m-chat-head" title="${ns ? "Back to the message" : "Change Guru's msg"}">
+    // Header: which message is under discussion. Tapping it opens THAT MESSAGE —
+    // now for every section, daily included. Daily used to open the pick-a-msg
+    // search from here ("Change ▾"); that moved to the top bar's "+", so the
+    // header has one consistent meaning and no trailing affordance.
+    const head = el(`<button class="m-chat-head" title="Open the message">
         <div class="m-ch-text"><div class="m-ch-date">Loading…</div><div class="m-ch-topic"></div></div>
-        <span class="m-ch-change">${ns ? "Back ›" : "Change ▾"}</span>
       </button>`);
     const body = el(`<div class="m-chatbody"></div>`);
     node.appendChild(head);
@@ -5792,7 +5814,7 @@ const MOBILE_UI = (() => {
       const back = (_chatCtx && _chatCtx.back) || ("#/m/" + ns[1] + "/" + encodeURIComponent(ns[2]));
       head.addEventListener("click", () => go(back));
     } else {
-      head.addEventListener("click", () => go("#/m/search?for=chat"));
+      head.addEventListener("click", () => go("#/entry/" + encodeURIComponent(wid)));
       api("/api/entry/" + encodeURIComponent(wid)).then((e) => {
         head.querySelector(".m-ch-date").textContent = fmtHumanDate(e.date) + (e.weekday ? " · " + e.weekday : "");
         head.querySelector(".m-ch-topic").textContent = e.topic_hi || e.topic_en || "";
