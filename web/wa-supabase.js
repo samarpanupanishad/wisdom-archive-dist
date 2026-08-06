@@ -323,6 +323,46 @@ const WA = {
     throw new Error(error.message);
   },
 
+  // ----- Reactions (phase C) --------------------------------------------
+  // Every reaction in one thread, in a single round trip. Reactions live in
+  // their OWN table (not a counter on the message) so two people tapping the
+  // same emoji can't clobber each other, and so a member never needs write
+  // access to a message row — which is what keeps deletion sutradhar-only.
+  //
+  // Returns {reactions:[{mid, user, emoji}]}; an empty list where the migration
+  // hasn't been run, so the chat renders normally instead of failing.
+  async listReactions(wid) {
+    const { data, error } = await _sb.from("message_reactions")
+      .select("message_id,username,emoji").eq("wisdom_id", String(wid));
+    if (error) {
+      if (/message_reactions|does not exist|not find|schema cache/i.test(error.message || "")) {
+        return { reactions: [], missing: true };
+      }
+      throw new Error(error.message);
+    }
+    return { reactions: (data || []).map((r) => ({ mid: r.message_id, user: r.username, emoji: r.emoji })) };
+  },
+
+  // wisdom_id / user_id / username are stamped server-side by the table's
+  // before-insert trigger — the client sends only what it is allowed to choose.
+  // A duplicate (same person, same emoji, same message) is the primary key
+  // doing its job, not an error worth surfacing.
+  async addReaction(mid, emoji) {
+    const { error } = await _sb.from("message_reactions")
+      .insert({ message_id: mid, emoji: emoji });
+    if (error && !/duplicate key|23505/i.test(error.message || "")) throw new Error(error.message);
+    return { ok: true };
+  },
+
+  async removeReaction(mid, emoji) {
+    const { data: { session } } = await _sb.auth.getSession();
+    if (!session) throw Object.assign(new Error("Not signed in."), { code: "AUTH" });
+    const { error } = await _sb.from("message_reactions").delete()
+      .eq("message_id", mid).eq("emoji", emoji).eq("user_id", session.user.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  },
+
   // (clearChat was REMOVED 2026-08-06. It deleted every message in a thread, had
   // no caller anywhere in the app, and was reachable from any member's console.
   // Removing a whole discussion is a sutradhar act — if it's ever wanted, it
@@ -334,7 +374,12 @@ const WA = {
   //
   // ⚠ UPDATE is what carries a soft delete (and, from phase C, anything else that
   // edits a row in place). Without it a tombstone only appears on reload.
-  subscribeChat(wid, { onMessage, onUpdate, onDelete }) {
+  // Reactions ride the SAME channel, so `closeChatStream()` still tears
+  // everything down in one call and a thread costs one connection, not two.
+  // ⚠ That is only possible because message_reactions carries its own
+  // `wisdom_id`: a postgres_changes filter is a single-column equality, so
+  // without it every device would receive every reaction in the archive.
+  subscribeChat(wid, { onMessage, onUpdate, onDelete, onReact, onUnreact }) {
     const filter = "wisdom_id=eq." + String(wid);
     const ch = _sb.channel("wa-chat-" + wid)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter },
@@ -343,6 +388,10 @@ const WA = {
           (p) => { if (onUpdate && p.new) onUpdate(_mapMsg(p.new)); })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages", filter },
           (p) => { if (onDelete && p.old) onDelete(p.old.id); })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "message_reactions", filter },
+          (p) => { if (onReact && p.new) onReact({ mid: p.new.message_id, user: p.new.username, emoji: p.new.emoji }); })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "message_reactions", filter },
+          (p) => { if (onUnreact && p.old) onUnreact({ mid: p.old.message_id, user: p.old.username, emoji: p.old.emoji }); })
       .subscribe();
     return { close() { try { _sb.removeChannel(ch); } catch (_) {} } };
   },

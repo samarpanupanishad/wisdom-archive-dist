@@ -718,6 +718,20 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-rb-x { border: none; background: none; color: var(--muted); font-size: 14px; cursor: pointer; padding: 2px 4px; }
 .wc-rb-x:hover { color: var(--accent); }
 
+/* Reaction pills. They hang off the bottom of the bubble and overlap it
+   slightly, so a reacted message reads as one object rather than two. */
+.wc-reacts { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 -14px; position: relative; z-index: 1; }
+.wc-react { border: 1px solid var(--border-soft); background: var(--surface); border-radius: 11px; padding: 1px 7px; font-size: 11.5px; line-height: 1.5; cursor: pointer; transition: background .12s, border-color .12s; }
+.wc-react:hover { border-color: var(--accent); }
+.wc-react-mine { background: var(--accent-soft); border-color: #f0c3a1; font-weight: 600; }
+.wc-msg { padding-bottom: 2px; }
+.wc-msg:has(.wc-reacts) { padding-bottom: 16px; }
+
+/* Quick-reaction strip at the top of the action sheet */
+.wc-sheet-react { display: flex; justify-content: space-between; gap: 4px; padding: 6px 6px 10px; border-bottom: 1px solid var(--border-soft); margin-bottom: 4px; }
+.wc-sr-btn { border: none; background: none; font-size: 24px; line-height: 1; cursor: pointer; width: 42px; height: 42px; border-radius: 50%; transition: background .12s, transform .12s; }
+.wc-sr-btn:hover { background: var(--accent-soft); transform: scale(1.12); }
+
 /* Long-press / right-click action sheet */
 .wc-sheet-back { position: fixed; inset: 0; background: rgba(30, 24, 44, .38); z-index: 200; display: flex; align-items: flex-end; justify-content: center; }
 .wc-sheet { width: min(420px, 100%); background: var(--surface); border-radius: 16px 16px 0 0; padding: 8px; display: flex; flex-direction: column; gap: 2px; }

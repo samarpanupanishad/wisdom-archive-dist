@@ -1096,6 +1096,8 @@ function openChatMsgMenu(m, ctx, msgEl) {
   if (m.deletedAt) return;      // nothing to copy, reply to, or delete twice
   const sheet = el(`<div class="wc-sheet-back">
     <div class="wc-sheet">
+      ${ctx.canReply ? `<div class="wc-sheet-react">${REACT_EMOJIS.map((e) =>
+        `<button class="wc-sr-btn" data-emoji="${escapeHtml(e)}">${e}</button>`).join("")}</div>` : ""}
       <div class="wc-sheet-quote">${escapeHtml((m.text || "").slice(0, 120))}</div>
       ${ctx.canReply ? `<button class="wc-sheet-item" data-act="reply">Reply</button>` : ""}
       <button class="wc-sheet-item" data-act="copy">Copy text</button>
@@ -1105,6 +1107,12 @@ function openChatMsgMenu(m, ctx, msgEl) {
   </div>`);
   const close = () => sheet.remove();
   sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+  sheet.querySelectorAll(".wc-sr-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      close();
+      toggleReact(ctx, m.id, b.dataset.emoji, msgEl.parentElement);
+    });
+  });
   sheet.querySelectorAll(".wc-sheet-item").forEach((b) => {
     b.addEventListener("click", async () => {
       const act = b.dataset.act;
@@ -1125,6 +1133,96 @@ function openChatMsgMenu(m, ctx, msgEl) {
   });
   document.body.appendChild(sheet);
   hapticTickHook();   // hapticTick() itself lives inside MOBILE_UI; this is its shared handle
+}
+
+// ---- reactions (phase C) --------------------------------------------------
+// The quick strip in the action sheet. A deliberate subset of CHAT_EMOJIS —
+// a reaction bar is a one-tap decision, so it must fit on one row on a phone.
+const REACT_EMOJIS = ["🙏", "🌺", "❤️", "👍", "✨", "🕉️"];
+
+// ctx.reacts is Map(messageId -> [{user, emoji}]). It is the single client-side
+// store: the initial fetch, the optimistic toggle and the live events all write
+// here, and every repaint reads from here.
+function reactsFor(ctx, mid) { return (ctx.reacts && ctx.reacts.get(mid)) || []; }
+
+// [{emoji, count, users, mine}] in first-seen order, so pills don't reshuffle
+// under the reader's finger when someone else reacts.
+function reactSummary(ctx, mid) {
+  const out = [];
+  const seen = new Map();
+  reactsFor(ctx, mid).forEach((r) => {
+    let row = seen.get(r.emoji);
+    if (!row) { row = { emoji: r.emoji, count: 0, users: [], mine: false }; seen.set(r.emoji, row); out.push(row); }
+    row.count++;
+    row.users.push(r.user);
+    if (r.user === ctx.me) row.mine = true;
+  });
+  return out;
+}
+
+function reactsRowHtml(ctx, mid) {
+  const rows = reactSummary(ctx, mid);
+  if (!rows.length) return "";
+  return rows.map((r) =>
+    `<button class="wc-react${r.mine ? " wc-react-mine" : ""}" data-emoji="${escapeHtml(r.emoji)}"
+       title="${escapeHtml(r.users.join(", "))}">${escapeHtml(r.emoji)} ${r.count}</button>`).join("");
+}
+
+// Repaint ONE message's pills. Live reactions must not rebuild the bubble —
+// that would drop the reader's text selection and re-run the markdown render
+// for a change of one digit.
+function paintReacts(ctx, mid, msgsEl) {
+  const node = msgsEl && msgsEl.querySelector(`[data-mid="${mid}"]`);
+  if (!node) return;
+  let row = node.querySelector(".wc-reacts");
+  const html = reactsRowHtml(ctx, mid);
+  if (!html) { if (row) row.remove(); return; }
+  if (!row) {
+    row = el(`<div class="wc-reacts"></div>`);
+    const bubble = node.querySelector(".wc-bubble");
+    if (!bubble) return;
+    bubble.appendChild(row);
+  }
+  row.innerHTML = html;
+  row.querySelectorAll(".wc-react").forEach((b) => {
+    b.addEventListener("click", (e) => { e.stopPropagation(); toggleReact(ctx, mid, b.dataset.emoji, msgsEl); });
+  });
+}
+
+// Optimistic: the store is updated and repainted before the network call, then
+// rolled back if the write fails. Realtime echoes our own change back, which the
+// store absorbs idempotently (same user + same emoji is one entry).
+async function toggleReact(ctx, mid, emoji, msgsEl) {
+  if (!ctx.reacts || !ctx.canReply) return;
+  const list = reactsFor(ctx, mid).slice();
+  const mineAt = list.findIndex((r) => r.user === ctx.me && r.emoji === emoji);
+  const adding = mineAt < 0;
+  if (adding) list.push({ user: ctx.me, emoji });
+  else list.splice(mineAt, 1);
+  ctx.reacts.set(mid, list);
+  paintReacts(ctx, mid, msgsEl);
+  hapticTickHook();
+  try {
+    if (adding) await WA.addReaction(mid, emoji);
+    else await WA.removeReaction(mid, emoji);
+  } catch (err) {
+    const back = reactsFor(ctx, mid).filter((r) => !(r.user === ctx.me && r.emoji === emoji));
+    if (!adding) back.push({ user: ctx.me, emoji });
+    ctx.reacts.set(mid, back);
+    paintReacts(ctx, mid, msgsEl);
+    toast(/message_reactions|schema cache|does not exist/i.test(err.message || "")
+      ? "Reactions aren't set up yet." : "Could not save that reaction.");
+  }
+}
+
+// Live event -> store -> repaint. Keyed on (user, emoji) so a duplicate echo of
+// our own optimistic tap doesn't double the count.
+function applyReactEvent(ctx, msgsEl, r, adding) {
+  if (!ctx.reacts || !r || !r.mid) return;
+  const list = reactsFor(ctx, r.mid).filter((x) => !(x.user === r.user && x.emoji === r.emoji));
+  if (adding) list.push({ user: r.user, emoji: r.emoji });
+  ctx.reacts.set(r.mid, list);
+  paintReacts(ctx, r.mid, msgsEl);
 }
 
 // Long-press opens the sheet; a short drag to the RIGHT is reply, the way every
@@ -1193,6 +1291,7 @@ function buildChatMsgEl(m, ctx, prev) {
          <span class="wc-q-text">${escapeHtml(m.replySnippet)}</span>
        </button>`
     : "";
+  const reacts = reactsRowHtml(ctx, m.id);
   const msgEl = el(`<div class="wc-msg ${isMe ? "wc-msg-me" : ""}${grouped ? " wc-msg-grp" : ""}"
        data-mid="${escapeHtml(m.id || "")}" data-user="${escapeHtml(m.user || "")}" data-ts="${escapeHtml(m.ts || "")}">
     <div class="wc-avatar">${escapeHtml((m.user || "?")[0].toUpperCase())}</div>
@@ -1202,8 +1301,17 @@ function buildChatMsgEl(m, ctx, prev) {
       <div class="wc-text">${renderMarkdown(m.text || "")}</div>
       <div class="wc-stamp"><span class="wc-time">${escapeHtml(chatClock(m.ts))}</span></div>
       ${ctx.canDelete ? `<button class="wc-del" title="Delete">✕</button>` : ""}
+      ${reacts ? `<div class="wc-reacts">${reacts}</div>` : ""}
     </div>
   </div>`);
+  if (reacts) {
+    msgEl.querySelectorAll(".wc-react").forEach((b) => {
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleReact(ctx, m.id, b.dataset.emoji, msgEl.parentElement);
+      });
+    });
+  }
   if (quote) {
     msgEl.querySelector(".wc-quote").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1293,6 +1401,8 @@ function openChatStream(wid, msgsEl, ctx) {
   _chatStream = WA.subscribeChat(wid, {
     onMessage: (m) => chatAppendLive(msgsEl, m, ctx),
     onUpdate: (m) => chatUpdateLive(msgsEl, m, ctx),
+    onReact: (r) => applyReactEvent(ctx, msgsEl, r, true),
+    onUnreact: (r) => applyReactEvent(ctx, msgsEl, r, false),
     onDelete: (id) => {
       const node = msgsEl.querySelector(`[data-mid="${id}"]`);
       if (node) node.remove();
@@ -1362,8 +1472,19 @@ async function renderWisdomChat(body, wid, label) {
   // Read the thread's seen mark BEFORE rendering — markSeen() below clears it,
   // and the "New messages" divider needs where the reader actually left off.
   const ctx = { me: data.me, canModerate: !!data.can_moderate, canDelete: !!data.can_delete,
-                canReply: !(!data.can_moderate && data.is_muted),
+                canReply: !(!data.can_moderate && data.is_muted), reacts: new Map(),
                 seenBefore: SATSANG.seenFor(wid) || "", wid, body };
+  // Reactions load in ONE query for the whole thread, before the first paint, so
+  // pills don't pop in a moment after the messages. A failure here must never
+  // cost the chat itself — an empty store just means no pills.
+  try {
+    const rx = await WA.listReactions(wid);
+    (rx.reactions || []).forEach((r) => {
+      const list = ctx.reacts.get(r.mid) || [];
+      list.push({ user: r.user, emoji: r.emoji });
+      ctx.reacts.set(r.mid, list);
+    });
+  } catch { /* reactions are decoration; the conversation is not */ }
   renderChatMessages(msgsEl, data.messages, ctx);
   // Opening a discussion clears the Samuhik Satsang badge.
   SATSANG.markSeen(wid, (data.messages || []).reduce((a, m) => (m.ts > a ? m.ts : a), ""));
