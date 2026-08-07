@@ -136,12 +136,48 @@ async function _rpc(name, args) {
 // INSERT and this call, nobody gets notified about that message. A Supabase
 // Database Webhook on `messages` would be immune to that, at the cost of
 // dashboard configuration. Move to one if dropped notifications show up.
+// ⚠ The send-push RESPONSE is recorded to localStorage (`wa:push:lastfire`), not
+// just console.warn'd. On a phone there is no console: a push that silently
+// returns {sent:0,"no devices"} or 403 looked identical to one that worked, and
+// that is exactly what made "chat notifications don't arrive" so hard to place.
+// Settings → Notification diagnostics reads this back.
+function _lastFire(patch) {
+  try {
+    localStorage.setItem("wa:push:lastfire",
+      JSON.stringify(Object.assign({ at: new Date().toISOString() }, patch)));
+  } catch (_) {}
+}
+
 function _firePush(payload) {
   try {
+    _lastFire({ kind: payload && payload.kind, state: "sending" });
     _sb.functions.invoke("send-push", { body: payload })
-      .then((r) => { if (r && r.error) console.warn("send-push:", r.error.message || r.error); })
-      .catch((e) => console.warn("send-push failed:", e));
-  } catch (e) { console.warn("send-push failed:", e); }
+      .then((r) => {
+        if (r && r.error) {
+          console.warn("send-push:", r.error.message || r.error);
+          // supabase-js hides the HTTP body on non-2xx; dig it out so the reason
+          // ("no devices" / "not your message") survives, not just "non-2xx".
+          const ctx = r.error.context;
+          if (ctx && typeof ctx.text === "function") {
+            ctx.text().then((t) => _lastFire({ kind: payload.kind, state: "error",
+                                               status: ctx.status, body: String(t).slice(0, 300) }))
+                      .catch(() => _lastFire({ kind: payload.kind, state: "error",
+                                               error: r.error.message || String(r.error) }));
+          } else {
+            _lastFire({ kind: payload.kind, state: "error", error: r.error.message || String(r.error) });
+          }
+        } else {
+          _lastFire({ kind: payload.kind, state: "ok", reply: r && r.data });
+        }
+      })
+      .catch((e) => {
+        console.warn("send-push failed:", e);
+        _lastFire({ kind: payload && payload.kind, state: "threw", error: (e && e.message) || String(e) });
+      });
+  } catch (e) {
+    console.warn("send-push failed:", e);
+    _lastFire({ kind: payload && payload.kind, state: "threw", error: (e && e.message) || String(e) });
+  }
 }
 
 const WA = {
