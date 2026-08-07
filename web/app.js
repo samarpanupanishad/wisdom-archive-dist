@@ -1916,12 +1916,22 @@ async function renderWisdomChat(body, wid, label) {
       <div class="wc-live" id="wc-live" hidden></div>
       <div class="wc-tray" id="wc-tray" hidden></div>
       <input type="file" id="wc-file" accept="${MEDIA_ACCEPT}" multiple hidden>
+      <!-- Phase E: capture="environment" asks Android to open the CAMERA rather
+           than the gallery. Pure HTML — no Capacitor plugin, so it ships OTA.
+           A shell that doesn't support capture ignores the attribute and shows
+           the ordinary picker, which is a fine outcome rather than a broken one.
+           ⚠ Deliberately NOT accompanied by a CAMERA manifest permission: the
+           WebView delegates to the system camera app by intent, and an app that
+           DECLARES the permission must then also be GRANTED it, so adding it
+           without a runtime request would break capture instead of enabling it. -->
+      <input type="file" id="wc-cam" accept="image/*" capture="environment" hidden>
       <div class="wc-compose">
         <div class="wc-inputbox">
           <textarea class="wc-ta" id="wc-ta" placeholder="Share your reflection… (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
           <div class="wc-tools">
             <button class="wc-tb-btn wc-emoji-btn" title="Emoji">😊</button>
             <button class="wc-tb-btn wc-attach-btn" title="Attach a photo or PDF">📎</button>
+            <button class="wc-tb-btn wc-cam-btn" title="Take a photo">📷</button>
             <button class="wc-tb-btn" data-wrap="**||**" title="Bold"><strong>B</strong></button>
             <button class="wc-tb-btn" data-wrap="*||*" title="Italic"><em>I</em></button>
             <button class="wc-tb-btn wc-hl-btn" data-wrap="==||==" title="Highlight"><mark class="chat-hl">H</mark></button>
@@ -2048,20 +2058,27 @@ async function renderWisdomChat(body, wid, label) {
       pending = [];
       paintTray();
     };
-    footEl.querySelector(".wc-attach-btn").addEventListener("click", () => fileEl.click());
-    fileEl.addEventListener("change", async () => {
-      const files = [...(fileEl.files || [])];
-      fileEl.value = "";                     // so picking the same file twice still fires
+    // One intake path for both the gallery picker and the camera (phase E) —
+    // a captured photo is just another File, and must go through the same size
+    // cap, the same MIME+extension check and the same downscale.
+    const takeFiles = async (inputEl) => {
+      const files = [...(inputEl.files || [])];
+      inputEl.value = "";                    // so picking the same file twice still fires
       for (const f of files) {
         if (pending.length >= MEDIA_MAX) { toast(`Up to ${MEDIA_MAX} files per message.`); break; }
         if (!isMediaOk(f)) { toast("Only photos and PDF files can be shared."); continue; }
         if (f.size > MEDIA_MAX_BYTES) { toast(`"${f.name}" is larger than 10 MB.`); continue; }
         const { blob, w, h } = await downscaleImage(f);
-        pending.push({ blob, w, h, name: f.name, mime: blob.type || f.type,
+        pending.push({ blob, w, h, name: f.name || "photo.jpg", mime: blob.type || f.type,
                        url: blob.type.indexOf("image/") === 0 ? URL.createObjectURL(blob) : "" });
         paintTray();
       }
-    });
+    };
+    const camEl = footEl.querySelector("#wc-cam");
+    footEl.querySelector(".wc-attach-btn").addEventListener("click", () => fileEl.click());
+    footEl.querySelector(".wc-cam-btn").addEventListener("click", () => camEl.click());
+    fileEl.addEventListener("change", () => takeFiles(fileEl));
+    camEl.addEventListener("change", () => takeFiles(camEl));
 
     const doSend = async () => {
       const text = ta.value.trim();
