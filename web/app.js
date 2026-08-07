@@ -1101,6 +1101,8 @@ function openChatMsgMenu(m, ctx, msgEl) {
       <div class="wc-sheet-quote">${escapeHtml((m.text || "").slice(0, 120))}</div>
       ${ctx.canReply ? `<button class="wc-sheet-item" data-act="reply">Reply</button>` : ""}
       <button class="wc-sheet-item" data-act="copy">Copy text</button>
+      ${ctx.canReply ? `<button class="wc-sheet-item" data-act="forward">Forward to another satsang</button>` : ""}
+      ${ctx.canModerate ? `<button class="wc-sheet-item" data-act="pin">${ctx.pinnedId === m.id ? "Unpin" : "Pin this message"}</button>` : ""}
       ${ctx.canDelete ? `<button class="wc-sheet-item wc-sheet-danger" data-act="del">Delete for everyone</button>` : ""}
       <button class="wc-sheet-item wc-sheet-cancel" data-act="cancel">Cancel</button>
     </div>
@@ -1119,6 +1121,16 @@ function openChatMsgMenu(m, ctx, msgEl) {
       close();
       if (act === "reply") {
         if (ctx.setReply) ctx.setReply(m);
+      } else if (act === "forward") {
+        openForwardPicker(m, ctx);
+      } else if (act === "pin") {
+        try {
+          if (ctx.pinnedId === m.id) { await WA.clearPin(ctx.wid); }
+          else { await WA.setPin(ctx.wid, m.id); }
+          // The Realtime pin event repaints for everyone, this device included —
+          // but paint now so it never looks like the tap did nothing.
+          if (ctx.repaintPin) ctx.repaintPin(ctx.pinnedId === m.id ? null : m.id);
+        } catch (err) { toast(err.message || "Could not pin."); }
       } else if (act === "copy") {
         try { await navigator.clipboard.writeText(m.text || ""); toast("Message copied."); }
         catch { toast("Could not copy here."); }
@@ -1133,6 +1145,223 @@ function openChatMsgMenu(m, ctx, msgEl) {
   });
   document.body.appendChild(sheet);
   hapticTickHook();   // hapticTick() itself lives inside MOBILE_UI; this is its shared handle
+}
+
+// ---- pin, forward, search, mentions (phase F) ------------------------------
+
+// Tint @names in a rendered bubble. Operates on renderMarkdown's OUTPUT, which
+// is already escaped, and only on the text between tags — running the regex over
+// whole HTML could rewrite an attribute value inside a tag.
+function highlightMentions(html) {
+  return String(html).split(/(<[^>]+>)/).map((part) => (
+    part[0] === "<" ? part
+      : part.replace(/(^|\s)@([\wऀ-ॿ]{2,32})/g, '$1<span class="wc-at">@$2</span>')
+  )).join("");
+}
+
+// The pinned line, shown above the conversation. Tapping it jumps to the
+// message, the same way a quote does.
+async function paintPin(body, msgsEl, ctx, midOrUndefined) {
+  const bar = body.querySelector("#wc-pinbar");
+  if (!bar) return;
+  let mid = midOrUndefined;
+  if (mid === undefined) {
+    const p = await WA.getPin(ctx.wid).catch(() => null);
+    mid = p ? p.mid : null;
+  }
+  ctx.pinnedId = mid || null;
+  if (!mid) { bar.hidden = true; bar.innerHTML = ""; return; }
+  const node = msgsEl.querySelector(`[data-mid="${mid}"]`);
+  // The pinned message may be older than what's loaded — say so plainly rather
+  // than showing an empty banner.
+  const who = node ? (node.dataset.user || "") : "";
+  const text = node ? (node.querySelector(".wc-text") || {}).textContent || "" : "(older message)";
+  bar.hidden = false;
+  bar.innerHTML = `<span class="wc-pin-ico">📌</span>
+    <span class="wc-pin-body"><span class="wc-pin-user">${escapeHtml(who)}</span>
+    <span class="wc-pin-text">${escapeHtml(text.slice(0, 120))}</span></span>
+    ${ctx.canModerate ? `<button class="wc-pin-x" title="Unpin" aria-label="Unpin">✕</button>` : ""}`;
+  bar.querySelector(".wc-pin-body").addEventListener("click", () => chatJumpToParent(msgsEl, mid));
+  const x = bar.querySelector(".wc-pin-x");
+  if (x) x.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try { await WA.clearPin(ctx.wid); paintPin(body, msgsEl, ctx, null); }
+    catch (err) { toast(err.message || "Could not unpin."); }
+  });
+}
+
+// Forward: copy the words into another satsang, carrying who said it as
+// provenance. NOT a reply_to — the original lives in a different thread, so a
+// jumpable quote would be a broken promise.
+async function openForwardPicker(m, ctx) {
+  let groups = [];
+  try { groups = await satsangGroups(); } catch { groups = []; }
+  // satsangGroups() returns {label, rows:[view]} — a view already carries the
+  // human title (the message's subject), which reads far better in this list
+  // than "Guru's msg #special:2564".
+  const rows = groups.flatMap((g) => (g.rows || []).map((v) => ({
+    wid: v.wid, section: g.label, title: v.title || v.date || chatWidLabel(v.wid),
+  })));
+  const others = rows.filter((r) => r.wid !== ctx.wid);
+  if (!others.length) { toast("No other satsang to forward to."); return; }
+  const sheet = el(`<div class="wc-sheet-back">
+    <div class="wc-sheet">
+      <div class="wc-sheet-quote">Forward: ${escapeHtml((m.text || "").slice(0, 90))}</div>
+      <div class="wc-fwd-list">${others.slice(0, 40).map((r, i) =>
+        `<button class="wc-sheet-item" data-i="${i}">${escapeHtml(r.title)}
+           <span class="wc-fwd-sec">${escapeHtml(r.section || "")}</span></button>`).join("")}</div>
+      <button class="wc-sheet-item wc-sheet-cancel" data-act="cancel">Cancel</button>
+    </div>
+  </div>`);
+  const close = () => sheet.remove();
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+  sheet.querySelector(".wc-sheet-cancel").addEventListener("click", close);
+  sheet.querySelectorAll(".wc-fwd-list .wc-sheet-item").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const target = others[parseInt(b.dataset.i, 10)];
+      close();
+      try {
+        await WA.postMessage(target.wid, m.text || "", { user: m.user, text: m.text });
+        toast("Forwarded.");
+      } catch (err) { toast(err.message || "Could not forward."); }
+    });
+  });
+  document.body.appendChild(sheet);
+}
+
+// In-thread search over what's already rendered — no round trip, and it works
+// offline. Walks hits with the up/down buttons.
+function wireChatSearch(body, msgsEl) {
+  const bar = body.querySelector("#wc-search");
+  const input = bar && bar.querySelector("input");
+  if (!input) return;
+  let hits = [], at = -1;
+  const clear = () => {
+    msgsEl.querySelectorAll(".wc-find").forEach((n) => n.classList.remove("wc-find", "wc-find-on"));
+    hits = []; at = -1;
+    bar.querySelector(".wc-find-n").textContent = "";
+  };
+  const run = () => {
+    clear();
+    const q = input.value.trim().toLowerCase();
+    if (q.length < 2) return;
+    msgsEl.querySelectorAll(".wc-msg:not(.wc-msg-dead)").forEach((n) => {
+      const t = (n.querySelector(".wc-text") || {}).textContent || "";
+      if (t.toLowerCase().indexOf(q) >= 0) { n.classList.add("wc-find"); hits.push(n); }
+    });
+    bar.querySelector(".wc-find-n").textContent = hits.length ? `1/${hits.length}` : "none";
+    if (hits.length) { at = 0; focusHit(); }
+  };
+  const focusHit = () => {
+    hits.forEach((n) => n.classList.remove("wc-find-on"));
+    const n = hits[at];
+    if (!n) return;
+    n.classList.add("wc-find-on");
+    n.scrollIntoView({ behavior: "smooth", block: "center" });
+    bar.querySelector(".wc-find-n").textContent = `${at + 1}/${hits.length}`;
+  };
+  input.addEventListener("input", run);
+  bar.querySelector(".wc-find-up").addEventListener("click", () => {
+    if (!hits.length) return; at = (at - 1 + hits.length) % hits.length; focusHit();
+  });
+  bar.querySelector(".wc-find-dn").addEventListener("click", () => {
+    if (!hits.length) return; at = (at + 1) % hits.length; focusHit();
+  });
+  bar.querySelector(".wc-find-x").addEventListener("click", () => {
+    clear(); input.value = ""; bar.hidden = true;
+  });
+  return { open() { bar.hidden = false; input.focus(); } };
+}
+
+// @mention autocomplete over the people ACTUALLY IN THIS THREAD. Deliberately
+// not the full member list: there is no members-list API for a plain member
+// (roles are moderator-gated), and the people you want to name are the ones
+// already talking.
+function wireMentions(ta, msgsEl) {
+  const pop = el(`<div class="wc-mentions" hidden></div>`);
+  ta.parentElement.appendChild(pop);
+  const close = () => { pop.hidden = true; pop.innerHTML = ""; };
+  const names = () => [...new Set([...msgsEl.querySelectorAll(".wc-msg")]
+    .map((n) => n.dataset.user).filter(Boolean))];
+  ta.addEventListener("input", () => {
+    const upto = ta.value.slice(0, ta.selectionStart || 0);
+    const m = /@([\wऀ-ॿ]*)$/.exec(upto);
+    if (!m) return close();
+    const q = m[1].toLowerCase();
+    const list = names().filter((n) => n.toLowerCase().indexOf(q) === 0).slice(0, 6);
+    if (!list.length) return close();
+    pop.hidden = false;
+    pop.innerHTML = list.map((n) => `<button class="wc-mention-item">${escapeHtml(n)}</button>`).join("");
+    pop.querySelectorAll(".wc-mention-item").forEach((b) => {
+      b.addEventListener("mousedown", (e) => {
+        e.preventDefault();                       // don't blur the textarea
+        const start = (ta.selectionStart || 0) - m[1].length;
+        ta.value = ta.value.slice(0, start) + b.textContent + " " + ta.value.slice(ta.selectionStart || 0);
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = start + b.textContent.length + 1;
+        close();
+      });
+    });
+  });
+  ta.addEventListener("blur", () => setTimeout(close, 120));
+}
+
+// ---- presence, typing, read receipts (phase F) -----------------------------
+// All three ride the chat's existing Realtime channel or one small table. No
+// new socket, and nothing here is allowed to break the conversation if it fails
+// — every one of them is decoration over a chat that must work regardless.
+
+const TYPING_PING_MS = 2000;    // at most one broadcast per member per 2s
+const TYPING_HOLD_MS = 4500;    // how long a name lingers after their last ping
+
+// Who is currently typing, name -> expiry. A plain object beats a timer per
+// person: one repaint tick sweeps the expired ones.
+// `onIdle` runs when the last typer expires, so the strip can fall back to
+// showing presence instead of just going blank.
+function makeTypingBoard(lineEl, onIdle) {
+  const seen = new Map();
+  let tick = 0;
+  const paint = () => {
+    const now = Date.now();
+    [...seen.keys()].forEach((u) => { if (seen.get(u) < now) seen.delete(u); });
+    const names = [...seen.keys()];
+    if (!names.length) {
+      if (tick) { clearInterval(tick); tick = 0; }
+      lineEl.hidden = true;
+      if (onIdle) onIdle();
+      return;
+    }
+    lineEl.hidden = false;
+    lineEl.textContent = names.length === 1
+      ? `${names[0]} is typing…`
+      : (names.length === 2 ? `${names[0]} and ${names[1]} are typing…`
+                            : `${names.length} people are typing…`);
+  };
+  return {
+    note(user) {
+      if (!user) return;
+      seen.set(user, Date.now() + TYPING_HOLD_MS);
+      if (!tick) tick = setInterval(paint, 1000);
+      paint();
+    },
+    // Their message arrived, so they have demonstrably stopped typing — waiting
+    // out the hold would leave a stale "X is typing…" under their own message.
+    clear(user) { if (user && seen.delete(user)) paint(); },
+    stop() { if (tick) { clearInterval(tick); tick = 0; } seen.clear(); lineEl.hidden = true; },
+  };
+}
+
+// "Seen by N" under your OWN latest message only. Anywhere else it would be
+// noise, and per-message receipts would need a row per member per message.
+async function paintSeenBy(msgsEl, ctx) {
+  const mine = [...msgsEl.querySelectorAll(".wc-msg-me")].pop();
+  msgsEl.querySelectorAll(".wc-seen").forEach((n) => n.remove());
+  if (!mine || !mine.dataset.ts) return;
+  let n = -1;
+  try { n = await WA.threadReadCount(ctx.wid, mine.dataset.ts); } catch { return; }
+  if (n < 1) return;             // -1 = couldn't tell, 0 = nobody yet: say nothing
+  const bubble = mine.querySelector(".wc-bubble");
+  if (bubble) bubble.appendChild(el(`<div class="wc-seen">Seen by ${n}</div>`));
 }
 
 // ---- attachments (phase D) ------------------------------------------------
@@ -1416,7 +1645,7 @@ function buildChatMsgEl(m, ctx, prev) {
       ${grouped && !quote ? "" : `<div class="wc-meta"><span class="wc-user">${escapeHtml(m.user || "")}</span></div>`}
       ${quote}
       ${atts ? attachmentsHtml(atts) : ""}
-      ${isPlaceholder ? "" : `<div class="wc-text">${renderMarkdown(m.text || "")}</div>`}
+      ${isPlaceholder ? "" : `<div class="wc-text">${highlightMentions(renderMarkdown(m.text || ""))}</div>`}
       <div class="wc-stamp"><span class="wc-time">${escapeHtml(chatClock(m.ts))}</span></div>
       ${ctx.canDelete ? `<button class="wc-del" title="Delete">✕</button>` : ""}
       ${reacts ? `<div class="wc-reacts">${reacts}</div>` : ""}
@@ -1526,10 +1755,25 @@ function openChatStream(wid, msgsEl, ctx) {
   // message is an UPDATE (a soft delete), not a DELETE — the DELETE path stays
   // for rows removed before the migration, and for a true purge.
   _chatStream = WA.subscribeChat(wid, {
-    onMessage: (m) => chatAppendLive(msgsEl, m, ctx),
+    me: ctx.me,
+    onMessage: (m) => {
+      chatAppendLive(msgsEl, m, ctx);
+      // Someone just spoke, so they've plainly stopped typing.
+      if (ctx.typing) ctx.typing.clear(m.user);
+      // Their message arriving means we've read up to it — and any "Seen by"
+      // on our own older message is now stale.
+      WA.markThreadRead(ctx.wid);
+      paintSeenBy(msgsEl, ctx);
+    },
     onUpdate: (m) => chatUpdateLive(msgsEl, m, ctx),
     onReact: (r) => applyReactEvent(ctx, msgsEl, r, true),
     onUnreact: (r) => applyReactEvent(ctx, msgsEl, r, false),
+    onTyping: (user) => { if (ctx.typing && user !== ctx.me) ctx.typing.note(user); },
+    onPin: (mid) => { if (ctx.repaintPin) ctx.repaintPin(mid); },
+    onPresence: (users) => {
+      ctx.present = users.filter((u) => u !== ctx.me);
+      if (ctx.paintPresence) ctx.paintPresence();
+    },
     onDelete: (id) => {
       const node = msgsEl.querySelector(`[data-mid="${id}"]`);
       if (node) node.remove();
@@ -1547,8 +1791,17 @@ async function renderWisdomChat(body, wid, label) {
   body.innerHTML = `<div class="wc-wrap">
     <div class="wc-hdr">
       <span class="wc-title">${COMMUNITY_ICON} ${escapeHtml(label || chatWidLabel(wid))}</span>
+      <button class="wc-find-btn" title="Search in this satsang" aria-label="Search in this satsang">🔍</button>
       <button class="wc-refresh cp-refresh" title="Refresh">↻</button>
     </div>
+    <div class="wc-search" id="wc-search" hidden>
+      <input type="search" placeholder="Find in this satsang…" aria-label="Find in this satsang">
+      <span class="wc-find-n"></span>
+      <button class="wc-find-up" title="Previous" aria-label="Previous match">↑</button>
+      <button class="wc-find-dn" title="Next" aria-label="Next match">↓</button>
+      <button class="wc-find-x" title="Close" aria-label="Close search">✕</button>
+    </div>
+    <div class="wc-pinbar" id="wc-pinbar" hidden></div>
     <div class="wc-msgs" id="wc-msgs"><div class="loading" style="padding:20px">Loading…</div></div>
     <button class="wc-new-msg" id="wc-new-msg" type="button" title="New message" aria-label="Jump to new message" hidden>↓</button>
     <div class="wc-foot" id="wc-foot"></div>
@@ -1626,6 +1879,21 @@ async function renderWisdomChat(body, wid, label) {
   // Opening a discussion clears the Samuhik Satsang badge.
   SATSANG.markSeen(wid, (data.messages || []).reduce((a, m) => (m.ts > a ? m.ts : a), ""));
   openChatStream(wid, msgsEl, ctx);   // live updates for everyone — even muted readers
+  // Opening the thread IS the read receipt. Both are best-effort: a missing
+  // thread_reads table costs a line of small print, never the conversation.
+  WA.markThreadRead(wid);
+  paintSeenBy(msgsEl, ctx);
+  // Pin banner + in-thread search. Both read what is already rendered, so they
+  // are wired after the first paint, not before it.
+  ctx.repaintPin = (mid) => paintPin(body, msgsEl, ctx, mid);
+  paintPin(body, msgsEl, ctx);
+  const finder = wireChatSearch(body, msgsEl);
+  const findBtn = body.querySelector(".wc-find-btn");
+  if (findBtn && finder) findBtn.addEventListener("click", () => finder.open());
+  // Reaching the bottom is the other moment "read" genuinely means read.
+  msgsEl.addEventListener("scroll", () => {
+    if (msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 40) WA.markThreadRead(wid);
+  });
 
   // Input area — muted or normal. Members post WITHOUT limit: message credits
   // were removed (membership is capped by invitation instead), so muting is the
@@ -1645,6 +1913,7 @@ async function renderWisdomChat(body, wid, label) {
         <div class="wc-rb-body"><div class="wc-rb-user"></div><div class="wc-rb-text"></div></div>
         <button class="wc-rb-x" title="Cancel reply" aria-label="Cancel reply">✕</button>
       </div>
+      <div class="wc-live" id="wc-live" hidden></div>
       <div class="wc-tray" id="wc-tray" hidden></div>
       <input type="file" id="wc-file" accept="${MEDIA_ACCEPT}" multiple hidden>
       <div class="wc-compose">
@@ -1707,7 +1976,32 @@ async function renderWisdomChat(body, wid, label) {
       ta.style.height = "auto";
       ta.style.height = Math.min(ta.scrollHeight, TA_MAX) + "px";
     };
-    ta.addEventListener("input", autoGrow);
+    // Typing + presence share one strip above the composer. Presence only shows
+    // when someone else is actually here, and typing outranks it — "Anjali is
+    // typing…" is the more useful of the two when both are true.
+    const liveEl = footEl.querySelector("#wc-live");
+    ctx.typing = makeTypingBoard(liveEl, () => ctx.paintPresence && ctx.paintPresence());
+    ctx.present = ctx.present || [];
+    ctx.paintPresence = () => {
+      if (!liveEl.hidden && liveEl.textContent.indexOf("typing") >= 0) return;
+      const n = ctx.present.length;
+      liveEl.hidden = !n;
+      if (n) liveEl.textContent = n === 1 ? `${ctx.present[0]} is here` : `${n} others are here`;
+    };
+    ctx.paintPresence();
+
+    wireMentions(ta, msgsEl);
+
+    let lastPing = 0;
+    ta.addEventListener("input", () => {
+      autoGrow();
+      // Throttled to one broadcast per 2s per member — a keystroke-per-event
+      // stream would be the noisiest thing on the socket by far.
+      const now = Date.now();
+      if (now - lastPing < TYPING_PING_MS) return;
+      lastPing = now;
+      if (_chatStream && _chatStream.sendTyping) _chatStream.sendTyping(ctx.me);
+    });
 
     // Reply state. `ctx.setReply` is what the action sheet and the swipe gesture
     // call — it lives on ctx (not a module variable) so it dies with this chat

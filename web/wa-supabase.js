@@ -284,9 +284,12 @@ const WA = {
     const me = await _loadProfile(session.user.id);
     const isMod = me.role === "moderator" || me.role === "sutradhar";
     if (!isMod && me.chat_muted) throw Object.assign(new Error("You have been muted."), { code: "MUTED" });
+    // `reply.id` is only set for a reply within THIS thread. A forward carries
+    // the same user/snippet as provenance but no reply_to: the original lives in
+    // another discussion, so a quote pointing at it could never be jumped to.
     const row = { wisdom_id: String(wid), text: text };
-    if (reply && reply.id) {
-      row.reply_to = reply.id;
+    if (reply && (reply.id || reply.user)) {
+      if (reply.id) row.reply_to = reply.id;
       row.reply_user = reply.user || null;
       row.reply_snippet = String(reply.text || "").slice(0, 160);
     }
@@ -432,9 +435,77 @@ const WA = {
   // ⚠ That is only possible because message_reactions carries its own
   // `wisdom_id`: a postgres_changes filter is a single-column equality, so
   // without it every device would receive every reaction in the archive.
-  subscribeChat(wid, { onMessage, onUpdate, onDelete, onReact, onUnreact }) {
+  // ----- Pinned message (phase F) -----------------------------------------
+  // ⚠ Lives in its OWN table, not a column on messages. Pinning would otherwise
+  // be an UPDATE to a message row, and `messages_update` is sutradhar-only on
+  // purpose — a moderator with UPDATE could blank any message's text and delete
+  // it by another name. See supabase/add_satsang_pin.sql.
+  //
+  // Returns {mid, by, at} or null. Silent when the table doesn't exist, so the
+  // chat opens normally before the migration is run.
+  async getPin(wid) {
+    const { data, error } = await _sb.from("thread_pins")
+      .select("message_id,pinned_by,pinned_at").eq("wisdom_id", String(wid)).maybeSingle();
+    if (error || !data) return null;
+    return { mid: data.message_id, by: data.pinned_by, at: data.pinned_at };
+  },
+
+  // One pin per thread — enforced by the primary key, so this is an upsert and
+  // no caller has to remember to clear the previous one.
+  async setPin(wid, mid) {
+    const { error } = await _sb.from("thread_pins")
+      .upsert({ wisdom_id: String(wid), message_id: mid }, { onConflict: "wisdom_id" });
+    if (error) {
+      if (/thread_pins|does not exist|not find|schema cache/i.test(error.message || "")) {
+        throw new Error("Pinning isn't set up yet. (Admin: run supabase/add_satsang_pin.sql.)");
+      }
+      throw new Error(error.message);
+    }
+    return { ok: true };
+  },
+
+  async clearPin(wid) {
+    const { error } = await _sb.from("thread_pins").delete().eq("wisdom_id", String(wid));
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  },
+
+  // ----- Read state: "Seen by N" (phase F) --------------------------------
+  // ONE row per member per thread, never one per message — per-message receipts
+  // would be members x messages rows for a line of small print.
+  //
+  // Silent by design: a missing table (migration not run) isn't worth an error
+  // in someone's face for a cosmetic feature.
+  async markThreadRead(wid) {
+    const { data: { session } } = await _sb.auth.getSession();
+    if (!session) return { ok: false };
+    const { error } = await _sb.from("thread_reads")
+      .upsert({ user_id: session.user.id, wisdom_id: String(wid), last_read_at: new Date().toISOString() },
+              { onConflict: "user_id,wisdom_id" });
+    return { ok: !error };
+  },
+
+  // How many OTHER members have read as far as `sinceIso` (the timestamp of your
+  // own latest message). Returns -1 when it can't tell, so the caller shows
+  // nothing rather than a wrong "Seen by 0".
+  async threadReadCount(wid, sinceIso) {
+    const { data: { session } } = await _sb.auth.getSession();
+    if (!session || !sinceIso) return -1;
+    const { data, error } = await _sb.from("thread_reads")
+      .select("user_id").eq("wisdom_id", String(wid)).gte("last_read_at", sinceIso);
+    if (error) return -1;
+    return (data || []).filter((r) => r.user_id !== session.user.id).length;
+  },
+
+  // `me` is the username presence announces and the typing broadcast carries.
+  //
+  // ⚠ Typing and presence ride the chat's EXISTING channel — no second socket.
+  // Concurrent Realtime connections are the scarcest free-tier resource, so a
+  // thread must never cost more than the one connection it already opens.
+  // `broadcast: {self: false}` keeps your own typing off your own screen.
+  subscribeChat(wid, { me, onMessage, onUpdate, onDelete, onReact, onUnreact, onTyping, onPresence, onPin }) {
     const filter = "wisdom_id=eq." + String(wid);
-    const ch = _sb.channel("wa-chat-" + wid)
+    const ch = _sb.channel("wa-chat-" + wid, { config: { broadcast: { self: false } } })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter },
           (p) => { if (onMessage) onMessage(_mapMsg(p.new)); })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages", filter },
@@ -445,8 +516,35 @@ const WA = {
           (p) => { if (onReact && p.new) onReact({ mid: p.new.message_id, user: p.new.username, emoji: p.new.emoji }); })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "message_reactions", filter },
           (p) => { if (onUnreact && p.old) onUnreact({ mid: p.old.message_id, user: p.old.username, emoji: p.old.emoji }); })
-      .subscribe();
-    return { close() { try { _sb.removeChannel(ch); } catch (_) {} } };
+      // Pin changes are INSERT (first pin), UPDATE (moved to another message) or
+      // DELETE (unpinned) — all three mean "repaint the banner", so one handler
+      // takes the lot. `wisdom_id` is this table's primary key, so the same
+      // single-column Realtime filter works.
+      .on("postgres_changes", { event: "*", schema: "public", table: "thread_pins", filter },
+          (p) => { if (onPin) onPin(p.new && p.new.message_id ? p.new.message_id : null); })
+      .on("broadcast", { event: "typing" },
+          (p) => { if (onTyping && p.payload && p.payload.user) onTyping(p.payload.user); })
+      .on("presence", { event: "sync" }, () => {
+        if (!onPresence) return;
+        const state = ch.presenceState();
+        const users = [];
+        Object.keys(state).forEach((k) => (state[k] || []).forEach((v) => {
+          if (v && v.user && users.indexOf(v.user) < 0) users.push(v.user);
+        }));
+        onPresence(users);
+      })
+      .subscribe((status) => {
+        // track() must wait for SUBSCRIBED — calling it earlier is a no-op and
+        // the member silently never appears as present.
+        if (status === "SUBSCRIBED" && me) { try { ch.track({ user: me }); } catch (_) {} }
+      });
+    return {
+      close() { try { _sb.removeChannel(ch); } catch (_) {} },
+      // Fire-and-forget: a dropped typing ping is not worth a retry or an error.
+      sendTyping(user) {
+        try { ch.send({ type: "broadcast", event: "typing", payload: { user: user } }); } catch (_) {}
+      },
+    };
   },
 
   // Recent messages across all wisdoms (members+ only; guests get an empty list
