@@ -8167,7 +8167,7 @@ const AUTH_GATE = (() => {
       <div class="ag-brand">
         <div class="ag-om">॥ <span class="ag-atma">आत्मा</span> ॥</div>
         <div class="ag-title">Samarpan Upanishad</div>
-        <div class="ag-sub">Timeless wisdom, always with you.</div>
+        <div class="ag-sub">Sitting under the grace of Guru.</div>
       </div>
       <div class="ag-body"></div>
     </div>`;

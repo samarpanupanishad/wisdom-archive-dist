@@ -1,6 +1,6 @@
 "use strict";
 // ==========================================================================
-// Wisdom Archive — Supabase community client (Phase 1).
+// Samarpan Upanishad — Supabase community client (Phase 1).
 //
 // The archive (search, entries, images) stays on the LOCAL FastAPI app. Only
 // chat + accounts live in the cloud now, on Supabase. This file creates the
