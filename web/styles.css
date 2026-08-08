@@ -1464,9 +1464,16 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
    --dp-pink-deep  : slightly deeper light pink for the spinner selection band
    --dp-dark       : dark pink accent (dot, Set, selected day, header text) */
 .m-dp { --dp-pink: #fce4ec; --dp-pink-deep: #f7d6e4; --dp-dark: #c2185b; }
+/* Section-scoped picker (Special / Letterpad / Anushthan): PURPLE, and the only
+   selectable days are the ones that actually have a message in that section.
+   The whole palette is already scoped to .m-dp, so a section picker is a
+   variable swap — nothing below this line needs a second rule per colour. */
+.m-dp.m-dp-only { --dp-pink: #ede7f6; --dp-pink-deep: #ddd0f0; --dp-dark: #6a1b9a; }
 /* Slim single-line header (day, date, month, year on one line). */
 .m-dp-head { background: var(--dp-pink); color: var(--dp-dark); padding: 7px 18px; }
 .m-dp-d { font-size: 15px; font-weight: 500; }
+/* Which section this picker is scoped to — only rendered when a title is given. */
+.m-dp-scope { font-size: 11px; font-weight: 500; opacity: .8; margin-top: 1px; }
 /* 3-row rolling spinner: each wheel is a 3-row-tall viewport; a strip of all
    values translates inside it (GPU transform), edges faded by a mask. The pink
    band marks the centred (selected) value. */
@@ -1522,6 +1529,11 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
 .m-dp-day.anu { background: var(--dp-pink); }
 .m-dp-day.sel > span { background: var(--dp-dark); color: #fff; font-weight: 500; }
 .m-dp-day:disabled { opacity: .26; cursor: default; }
+/* Section picker: every day that HAS a message wears the filled circle, so the
+   month reads at a glance as "these are the days with messages". The currently
+   selected one is still distinguishable by the ring. */
+.m-dp-day.has > span { background: var(--dp-dark); color: #fff; font-weight: 500; }
+.m-dp-day.has.sel > span { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--dp-dark); }
 .m-dp-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--dp-dark); margin-top: -2px; }
 .m-dp-day.sel .m-dp-dot { background: #fff; }
 .m-dp-btns { display: flex; justify-content: space-between; gap: 8px; padding: 6px 14px 10px; border-top: 1px solid var(--border-soft); }
@@ -2063,11 +2075,27 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
 
 /* ==== mobile message index (#/m/special · #/m/letterpad) ================== */
 .m-msgindex { padding: 4px 0 calc(80px + env(safe-area-inset-bottom)); }
+/* "Showing <date>" bar, present only while a section's date filter is on.
+   Purple to match the section date picker that set it. */
+.mx-filter {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 6px 10px 4px; padding: 8px 12px; border-radius: 12px;
+  background: #ede7f6; color: #6a1b9a; font: 500 13px var(--sans);
+}
+.mx-f-txt { flex: 1 1 auto; min-width: 0; }
+.mx-f-btn {
+  flex: none; border: 1px solid #6a1b9a; background: transparent; color: #6a1b9a;
+  font: 500 12px var(--sans); padding: 4px 10px; border-radius: 999px; cursor: pointer;
+}
+.mx-f-btn:active { background: #6a1b9a; color: #fff; }
 .mx-row {
   display: flex; gap: 12px; align-items: flex-start; text-decoration: none;
   color: var(--text); padding: 12px 14px; border-bottom: 1px solid var(--border-soft);
 }
 .mx-row:active { background: var(--accent-soft, #f6e7dc); }
+/* A row with nowhere to go (an Anushthan message with no reader) — still a row,
+   just not dressed up as tappable. */
+.mx-row-flat:active { background: transparent; }
 .mx-thumb {
   width: 56px; height: 72px; flex: none; object-fit: cover;
   border-radius: 6px; border: 1px solid var(--border-soft); background: #faf8f4;
@@ -2087,6 +2115,9 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
   background: #e0483e; color: #fff; font: 700 10px var(--sans);
   padding: 1px 6px; border-radius: 8px; margin-left: 4px; letter-spacing: .04em;
 }
+/* The signature date of a re-posted teaching — why a row can answer a date
+   search that doesn't match the date shown next to it. */
+.mx-note { color: var(--muted); font-weight: 400; }
 .mx-title {
   font: 700 15px var(--serif); color: var(--accent); margin: 2px 0 3px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;

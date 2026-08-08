@@ -5375,6 +5375,36 @@ const MOBILE_UI = (() => {
   };
   const isAnushthan = (s) => ANUSHTHAN_RANGES.some((r) => s >= r.from && s <= r.to);
 
+  // ---- OTA-EDITABLE: Anushthan MESSAGES ------------------------------------
+  // ⚠ Deliberately EMPTY — Anushthan has no message store of its own yet, and
+  // the operator will supply the content later (2026-08-08). Everything that
+  // consumes it (Search By's Anushthan group, the section's own date picker,
+  // the union picker behind Search By → Date) is already wired through here, so
+  // the day content arrives this is the ONLY place that changes.
+  //
+  // Two ways to fill it, both OTA-shippable:
+  //   1. Literal rows in ANUSHTHAN_MESSAGES below.
+  //   2. Date ranges in ANUSHTHAN_FROM_LETTERPAD — Letterpad messages whose
+  //      date falls inside a range are ALSO surfaced as Anushthan messages.
+  //      Per the operator: they appear in BOTH sections, they are not moved out
+  //      of Letterpad. e.g. { from: "2026-01-01", to: "2026-02-15" }.
+  //      (That exact window was checked on 2026-08-08 and holds no letterpad
+  //      messages at all — the earliest of all time is 2026-02-20 — which is
+  //      why it is not seeded here.)
+  const ANUSHTHAN_MESSAGES = [
+  ];
+  const ANUSHTHAN_FROM_LETTERPAD = [
+  ];
+  // Rows in the shape the Letterpad section already normalises (`norm` below
+  // reuses MSG_SECTIONS.letterpad's), so borrowed rows need no conversion.
+  function anushthanRows() {
+    const borrowed = ANUSHTHAN_FROM_LETTERPAD.length && typeof LETTERPAD !== "undefined"
+      ? (LETTERPAD.items() || []).filter((m) =>
+          ANUSHTHAN_FROM_LETTERPAD.some((r) => m.date >= r.from && m.date <= r.to))
+      : [];
+    return ANUSHTHAN_MESSAGES.concat(borrowed);
+  }
+
   // ---- localized labels (follow the हिंदी/English toggle; numerals stay 0-9)
   const DP_WD = { en: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
                   hi: ["रवि", "सोम", "मंगल", "बुध", "गुरु", "शुक्र", "शनि"] };
@@ -5393,19 +5423,83 @@ const MOBILE_UI = (() => {
     return DP_WD[L][dt.getDay()] + ", " + t.d + " " + DP_MON[L][t.m] + " " + t.y;
   }
 
-  // ---- availability (ONE fetch: every date that has wisdom) ----------------
-  let _dpData = null;
-  async function dpData() {
-    if (_dpData) return _dpData;
+  // ---- availability -------------------------------------------------------
+  // ⚠ The picker used to know about the DAILY archive only, and that was the
+  // whole bug behind "Search By → 2019 finds nothing": the daily archive has no
+  // 2019/2020/2021 entries at all, so 2019 was never even offered on the year
+  // wheel — while ~380 Special Telegram messages sit in exactly those years.
+  // Availability is therefore per-SCOPE now:
+  //   "daily"                     — the home reader's date pill (unchanged)
+  //   "all"                       — Search By (Date + Date Range): the UNION
+  //   "special"/"letterpad"/"anushthan" — that one section's own picker
+  // Only "daily" hits the network; the message sections are already fully
+  // client-cached (see SPECIAL/LETTERPAD), so their dates are a local scan.
+  const DP_SCOPES = ["daily", "special", "letterpad", "anushthan"];
+  const isIsoDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+  // A Special message carries TWO dates and a search must honour both (operator
+  // decision): `posted_at` is when it hit Telegram, `msg_date` is the date
+  // printed in its signature block. They diverge because the guru re-posts old
+  // teachings — a teaching signed 2019 and re-posted in 2026 must be findable
+  // under BOTH years. msg_date is parsed out of message text, so it carries
+  // occasional junk (rows dated 2000, 2029, 2030); bound it to something a
+  // human could have written rather than letting it invent year-wheel entries.
+  const SPECIAL_MSGDATE_MIN = "2010-01-01";
+  const todayIso = () => { const t = new Date(); return dpIso(t.getFullYear(), t.getMonth(), t.getDate()); };
+  function specialDatesOf(r) {
+    const out = [];
+    const posted = (r.posted_at || r.created_at || "").slice(0, 10);
+    if (isIsoDate(posted)) out.push(posted);
+    const sig = (r.msg_date || "").slice(0, 10);
+    if (isIsoDate(sig) && sig >= SPECIAL_MSGDATE_MIN && sig <= todayIso() && !out.includes(sig)) out.push(sig);
+    return out;
+  }
+
+  // Every date each source can answer for. Returned as a Set of "YYYY-MM-DD".
+  // ⚠ Memoized ONLY on success. A failed/empty fetch must not stick: this set is
+  // one input to the union scope, so caching a failure would silently drop every
+  // Daily date from Search By for the rest of the session — the picker would
+  // look fine and just quietly stop offering daily-only dates.
+  let _dpDaily = null;
+  async function dpDailyDates() {
+    if (_dpDaily) return _dpDaily;
     let periods = [];
     try { periods = (await api("/api/browse?group=date")).periods || []; } catch {}
-    const sorted = periods.map((p) => p.period).filter(Boolean).sort();
-    _dpData = {
-      avail: new Set(sorted), sorted,
+    const s = new Set(periods.map((p) => p.period).filter(isIsoDate));
+    if (s.size) _dpDaily = s;
+    return s;
+  }
+  async function dpDatesForScope(scope) {
+    if (scope === "daily") return dpDailyDates();
+    if (scope === "special") {
+      const rows = (typeof SPECIAL !== "undefined" ? SPECIAL.cached() : []) || [];
+      return new Set(rows.flatMap(specialDatesOf));
+    }
+    if (scope === "letterpad") {
+      const rows = (typeof LETTERPAD !== "undefined" ? LETTERPAD.items() : []) || [];
+      return new Set(rows.map((m) => m.date).filter(isIsoDate));
+    }
+    // Anushthan has no message store yet (see ANUSHTHAN_SEARCH_SEC). Wired in as
+    // an empty source on purpose: the picker + search slot are built, and light
+    // up with zero further code changes the day that content ships.
+    if (scope === "anushthan") return new Set(anushthanRows().map((m) => m.date).filter(isIsoDate));
+    return new Set();
+  }
+  // Cached per scope. "all" is deliberately NOT cached across calls beyond the
+  // daily fetch — Special/Letterpad sync in the background, so re-deriving the
+  // union on each open is what lets a freshly-synced message become pickable
+  // without a reload. The scan is a few thousand strings; it is not hot.
+  async function dpData(scope) {
+    const sc = scope || "daily";
+    const sets = sc === "all"
+      ? await Promise.all(DP_SCOPES.map(dpDatesForScope))
+      : [await dpDatesForScope(sc)];
+    const sorted = [...new Set(sets.flatMap((s) => [...s]))].sort();
+    return {
+      scope: sc, avail: new Set(sorted), sorted,
       years: [...new Set(sorted.map((s) => +s.slice(0, 4)))].sort((a, b) => a - b),
       min: sorted[0] || null, max: sorted[sorted.length - 1] || null,
     };
-    return _dpData;
   }
   function dpNearest(sortedAsc, s, dir) {
     if (dir === "newer") { for (let i = 0; i < sortedAsc.length; i++) if (sortedAsc[i] > s) return sortedAsc[i]; return null; }
@@ -5451,35 +5545,72 @@ const MOBILE_UI = (() => {
   }
 
   // ---- the picker itself ---------------------------------------------------
+  // opts (all optional):
+  //   scope      "daily" (default — the home reader's pill, unchanged) |
+  //              "all" (Search By: daily ∪ special ∪ letterpad ∪ anushthan) |
+  //              "special"|"letterpad"|"anushthan" (that section's own picker)
+  //   sectionOnly  true → ONLY dates that actually have a message are
+  //              selectable; they're painted purple and everything else is
+  //              disabled. The wheels are narrowed to real dates too, so
+  //              spinning can't land on a dead month. "Clear" then means
+  //              "clear the filter" and calls onSet(null).
+  //   emptyMsg   toast text when the scope has no dates at all.
   let _dpClose = null;
-  async function openDatePicker(currentIso, onSet) {
-    const data = await dpData();
-    if (!data.min) { toast("No wisdom available yet."); return; }
+  async function openDatePicker(currentIso, onSet, opts) {
+    const o = opts || {};
+    const only = !!o.sectionOnly;
+    const data = await dpData(o.scope);
+    if (!data.min) { toast(o.emptyMsg || "No wisdom available yet."); return; }
     const mn = dpParse(data.min), mx = dpParse(data.max);
-    const inRange = (s) => s >= data.min && s <= data.max;
+    // Section pickers accept only real message dates; the daily/union pickers
+    // keep the long-standing behaviour where any in-range date is selectable
+    // and an empty one explains itself (Option B).
+    const inRange = (s) => (only ? data.avail.has(s) : s >= data.min && s <= data.max);
     const clampIso = (s) => (s < data.min ? data.min : s > data.max ? data.max : s);
     let start = currentIso && inRange(currentIso) ? currentIso : null;
-    if (!start) { const t = new Date(), ti = dpIso(t.getFullYear(), t.getMonth(), t.getDate()); start = inRange(ti) ? ti : data.max; }
+    if (!start) {
+      if (only) start = data.max;   // newest message — today is usually not a message date
+      else { const ti = todayIso(); start = ti >= data.min && ti <= data.max ? ti : data.max; }
+    }
     let sel = dpParse(start);
 
-    const monthsFor = (y) => { const lo = y === mn.y ? mn.m : 0, hi = y === mx.y ? mx.m : 11, a = []; for (let m = lo; m <= hi; m++) a.push(m); return a; };
-    const daysFor = (y, m) => { const lo = (y === mn.y && m === mn.m) ? mn.d : 1, hi = (y === mx.y && m === mx.m) ? mx.d : dpDim(y, m), a = []; for (let d = lo; d <= hi; d++) a.push(d); return a; };
+    // In section mode every wheel is built from the dates that exist, so the
+    // day wheel of a month with three messages has exactly three rows.
+    const availIn = (pfx) => data.sorted.filter((s) => s.startsWith(pfx));
+    const monthsFor = (y) => {
+      if (only) return [...new Set(availIn(y + "-").map((s) => +s.slice(5, 7) - 1))].sort((a, b) => a - b);
+      const lo = y === mn.y ? mn.m : 0, hi = y === mx.y ? mx.m : 11, a = []; for (let m = lo; m <= hi; m++) a.push(m); return a;
+    };
+    const daysFor = (y, m) => {
+      if (only) return availIn(y + "-" + dpPad(m + 1) + "-").map((s) => +s.slice(8, 10)).sort((a, b) => a - b);
+      const lo = (y === mn.y && m === mn.m) ? mn.d : 1, hi = (y === mx.y && m === mx.m) ? mx.d : dpDim(y, m), a = []; for (let d = lo; d <= hi; d++) a.push(d); return a;
+    };
+    // Snap to the nearest legal value on every axis. In section mode a list can
+    // be empty for a year/month the selection just rolled onto, so fall back to
+    // that year's first real month/day rather than indexing into nothing.
     const clamp = () => {
       sel.y = Math.max(mn.y, Math.min(mx.y, sel.y));
-      const ms = monthsFor(sel.y); sel.m = Math.max(ms[0], Math.min(ms[ms.length - 1], sel.m));
-      const ds = daysFor(sel.y, sel.m); sel.d = Math.max(ds[0], Math.min(ds[ds.length - 1], sel.d));
+      if (only && !data.years.includes(sel.y)) sel.y = data.years.reduce((b, y) => Math.abs(y - sel.y) < Math.abs(b - sel.y) ? y : b, data.years[0]);
+      const ms = monthsFor(sel.y);
+      if (!ms.length) return;
+      sel.m = ms.includes(sel.m) ? sel.m : Math.max(ms[0], Math.min(ms[ms.length - 1], sel.m));
+      if (only && !ms.includes(sel.m)) sel.m = ms.reduce((b, m) => Math.abs(m - sel.m) < Math.abs(b - sel.m) ? m : b, ms[0]);
+      const ds = daysFor(sel.y, sel.m);
+      if (!ds.length) return;
+      sel.d = ds.includes(sel.d) ? sel.d : Math.max(ds[0], Math.min(ds[ds.length - 1], sel.d));
+      if (only && !ds.includes(sel.d)) sel.d = ds.reduce((b, d) => Math.abs(d - sel.d) < Math.abs(b - sel.d) ? d : b, ds[0]);
     };
     clamp();
 
-    const ov = el(`<div class="m-dp-scrim"><div class="m-dp" role="dialog" aria-label="Pick a date">
-      <div class="m-dp-head"><div class="m-dp-d"></div></div>
+    const ov = el(`<div class="m-dp-scrim"><div class="m-dp${only ? " m-dp-only" : ""}" role="dialog" aria-label="Pick a date">
+      <div class="m-dp-head"><div class="m-dp-d"></div>${o.title ? `<div class="m-dp-scope">${escapeHtml(o.title)}</div>` : ""}</div>
       <div class="m-dp-spin"><div class="m-dp-selrow" aria-hidden="true"></div>
         <div class="m-dp-wheel" data-w="d"></div><div class="m-dp-wheel" data-w="m"></div><div class="m-dp-wheel" data-w="y"></div></div>
       <div class="m-dp-nav"><button class="m-dp-arrow" data-nav="-1" aria-label="Previous month">‹</button>
         <div class="m-dp-mlabel"></div>
         <button class="m-dp-arrow" data-nav="1" aria-label="Next month">›</button></div>
       <div class="m-dp-wd"></div><div class="m-dp-grid"></div>
-      <div class="m-dp-btns"><button class="m-dp-btn" data-act="clear">Clear</button>
+      <div class="m-dp-btns"><button class="m-dp-btn" data-act="clear">${only ? "Show all" : "Clear"}</button>
         <button class="m-dp-btn" data-act="cancel">Cancel</button>
         <button class="m-dp-btn m-dp-set" data-act="set">Set</button></div>
     </div></div>`);
@@ -5512,8 +5643,25 @@ const MOBILE_UI = (() => {
       const L = dpLang(), dt = new Date(sel.y, sel.m, sel.d);
       q(".m-dp-d").textContent = DP_WD[L][dt.getDay()] + ", " + sel.d + " " + DP_MON[L][sel.m] + ", " + sel.y;
       q(".m-dp-mlabel").textContent = DP_MONF[L][sel.m] + " " + sel.y;
-      q('[data-nav="-1"]').disabled = (sel.y === mn.y && sel.m === mn.m);
-      q('[data-nav="1"]').disabled = (sel.y === mx.y && sel.m === mx.m);
+      q('[data-nav="-1"]').disabled = !stepMonth(-1);
+      q('[data-nav="1"]').disabled = !stepMonth(1);
+    }
+    // The month the ‹/› arrows would land on, or null at either end. In section
+    // mode they SKIP months with no messages — stepping one calendar month at a
+    // time through a section whose messages are years apart is not navigation.
+    function stepMonth(dir) {
+      if (only) {
+        const cur = sel.y + "-" + dpPad(sel.m + 1);
+        const months = [...new Set(data.sorted.map((s) => s.slice(0, 7)))].sort();
+        const i = months.indexOf(cur);
+        const nx = i < 0 ? null : months[i + dir];
+        return nx ? { y: +nx.slice(0, 4), m: +nx.slice(5, 7) - 1 } : null;
+      }
+      let m = sel.m + dir, y = sel.y;
+      if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+      if (y < mn.y || (y === mn.y && m < mn.m)) return null;
+      if (y > mx.y || (y === mx.y && m > mx.m)) return null;
+      return { y, m };
     }
     function renderGrid() {
       const L = dpLang();
@@ -5523,7 +5671,13 @@ const MOBILE_UI = (() => {
       for (let b = 0; b < first; b++) h += "<span></span>";
       for (let d = 1; d <= N; d++) {
         const s = dpIso(sel.y, sel.m, d), ok = inRange(s), selD = d === sel.d, dot = data.avail.has(s), anu = isAnushthan(s) && ok;
-        h += `<button class="m-dp-day${selD ? " sel" : ""}${anu ? " anu" : ""}" data-d="${d}"${ok ? "" : " disabled"}><span>${d}</span><i class="m-dp-dot" style="opacity:${dot ? 1 : 0}"></i></button>`;
+        // Section mode: a date that HAS a message wears the same filled circle
+        // the selected day gets (purple via .m-dp-only), so the month reads at a
+        // glance as "these are the days with messages". The dot would be
+        // redundant there — every enabled day has one — so it's dropped.
+        const has = only && dot;
+        h += `<button class="m-dp-day${selD ? " sel" : ""}${has ? " has" : ""}${anu ? " anu" : ""}" data-d="${d}"${ok ? "" : " disabled"}>` +
+          `<span>${d}</span><i class="m-dp-dot" style="opacity:${!only && dot ? 1 : 0}"></i></button>`;
       }
       q(".m-dp-grid").innerHTML = h;
     }
@@ -5536,9 +5690,9 @@ const MOBILE_UI = (() => {
 
     q(".m-dp-grid").addEventListener("click", (e) => { const b = e.target.closest(".m-dp-day"); if (!b || b.disabled) return; sel.d = +b.dataset.d; haptic(); render(); });
     ov.querySelectorAll("[data-nav]").forEach((b) => b.addEventListener("click", () => {
-      if (b.disabled) return; haptic(); let m = sel.m + (+b.dataset.nav), y = sel.y;
-      if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
-      sel.y = y; sel.m = m; clamp(); render();
+      if (b.disabled) return;
+      const nx = stepMonth(+b.dataset.nav); if (!nx) return;
+      haptic(); sel.y = nx.y; sel.m = nx.m; clamp(); render();
     }));
     // Drag rolls the strip with the finger; the calendar grid is rebuilt only on
     // RELEASE (not every step) — that's what makes the spin crisp. The value is
@@ -5577,7 +5731,12 @@ const MOBILE_UI = (() => {
     _dpClose = () => { close(); return true; };
     document.addEventListener("keydown", onKey);
     ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
-    q('[data-act="clear"]').addEventListener("click", () => { const t = new Date(); sel = dpParse(clampIso(dpIso(t.getFullYear(), t.getMonth(), t.getDate()))); clamp(); render(); });
+    // Section mode has nothing to "reset to today" (today is rarely a message
+    // date) — there the button drops the date filter and shows the whole list.
+    q('[data-act="clear"]').addEventListener("click", () => {
+      if (only) { haptic(); close(); onSet(null); return; }
+      sel = dpParse(clampIso(todayIso())); clamp(); render();
+    });
     q('[data-act="cancel"]').addEventListener("click", close);
     q('[data-act="set"]').addEventListener("click", () => { haptic(); const chosen = dpIso(sel.y, sel.m, sel.d); close(); onSet(chosen); });
   }
@@ -6570,22 +6729,68 @@ const MOBILE_UI = (() => {
   // ---- Search By — grouped results across Daily / Special / Letterpad / Anushthan
   // Word and Date searches show all four, always expanded; Date Range shows them
   // collapsed (tap a header to expand). Fixed order per the operator's brief.
-  // Anushthan has no message store yet (still a placeholder section elsewhere in
-  // the app) — wired in as an always-empty category so the slot/order is ready
-  // for when that content ships; it'll just read "(0 results)" until then.
+  // Anushthan draws from anushthanRows() — empty until the operator supplies
+  // that content, so the slot reads "(0 results)" for now and lights up with no
+  // code change once ANUSHTHAN_MESSAGES / ANUSHTHAN_FROM_LETTERPAD are filled.
+  // Full section definition, used by BOTH the Search By group and the
+  // #/m/anushthan index page. Deliberately NOT added to MSG_SECTIONS, and
+  // 'anushthan' stays out of CHAT_NS_RE: those two say "this section has a
+  // reader page and chat threads of its own", which is not true yet (see
+  // app/static/CLAUDE.md). Borrowed Letterpad rows therefore open the LETTERPAD
+  // reader — the message is genuinely the same one, shown in both sections.
   const ANUSHTHAN_SEARCH_SEC = {
-    key: "anushthan", icon: "🪔", listTitle: "Anushthan Msg",
-    cached: () => [],
-    norm: (m, lang) => ({ id: m.id, date: m.date || "", title: m.title || "", text: m.text || "" }),
+    key: "anushthan", icon: "🪔",
+    title: "Anushthan Message", listTitle: "Anushthan Msg", hindi: "अनुष्ठान संदेश",
+    emptyMsg: "No anushthan messages yet. They will appear here once added.",
+    cached: () => anushthanRows(),
+    // Borrowed Letterpad rows normalise exactly like Letterpad ones; literal
+    // ANUSHTHAN_MESSAGES entries may already be in the flat {date,title,text}
+    // shape, so accept both rather than forcing one on the operator.
+    norm: (m, lang) => (m.pages_hi || m.pages_en)
+      ? MSG_SECTIONS.letterpad.norm(m, lang)
+      : { id: String(m.id), date: m.date || "", title: m.title || "", text: m.text || "", pages: null },
+    idOf: (m) => String(m.id),
+    // No unread state of its own — nothing publishes into it yet, and inventing
+    // a badge store for an empty section would only need unpicking later.
+    isNew: () => false,
+    lastSeen: () => "",
+    markSeen: null, refresh: null, subscribe: null,
+    hrefOf: (v) => (v.pages ? "#/m/letterpad/" + encodeURIComponent(v.id) : ""),
   };
+  const ANUSHTHAN_INDEX_SEC = ANUSHTHAN_SEARCH_SEC;
   // Special/Letterpad/Anushthan are fully client-cached (see MSG_SECTIONS), so
   // filtering by word or date is a plain array scan — no network round trip.
   // `hrefOf(sec, v)` overrides where a row goes — the chat picker needs these
   // rows to open the discussion, not the message reader.
+  //
+  // matchFn gets (view, dates): `dates` is EVERY date the row can answer for,
+  // which for a Special message is both its Telegram post date and the date
+  // printed in its signature block (see specialDatesOf) — the guru re-posts old
+  // teachings, so one row legitimately belongs to two different years.
   function searchMsgSectionRows(sec, lang, matchFn, hrefOf) {
     return (sec.cached() || [])
-      .filter((r) => matchFn(sec.norm(r, lang)))
+      .filter((r) => matchFn(sec.norm(r, lang), secDatesOf(sec, r)))
       .map((r) => el(msgIndexRowHtml(sec, r, sec.lastSeen ? sec.lastSeen() : "", hrefOf)));
+  }
+  function secDatesOf(sec, r) {
+    if (sec.key === "special") return specialDatesOf(r);
+    const d = (r.date || "").slice(0, 10);
+    return isIsoDate(d) ? [d] : [];
+  }
+  // The four groups every Search By tab renders, in the operator's fixed order.
+  // matchFn is applied to the message sections; `dailyRows` is passed in because
+  // Daily comes from the archive API, not a client cache.
+  function searchGroupsFor(dailyRows, lang, matchFn, secHref) {
+    const g = (label, sec) => {
+      const rows = searchMsgSectionRows(sec, lang, matchFn, secHref);
+      return { label, count: rows.length, rows };
+    };
+    return [
+      { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
+      g("Special Telegram Msg", MSG_SECTIONS.special),
+      g("Guru's Letterpad Msg", MSG_SECTIONS.letterpad),
+      g("Anushthan Msg", ANUSHTHAN_SEARCH_SEC),
+    ];
   }
   // groups: [{ label, count, rows: HTMLElement[] }] in the fixed order above.
   // collapsible=false → always expanded (Word/Date tabs); true → collapsed by
@@ -6645,6 +6850,22 @@ const MOBILE_UI = (() => {
     pageFrame(forChat ? "Choose Guru's Msg" : "Search By", node, "m-page-scroll");
     const body = node.querySelector(".m-tabbody");
     const results = node.querySelector(".m-results");
+    // Every non-Daily group — and the union date picker behind the Date /
+    // Date Range tabs — reads the Special + Letterpad CLIENT caches. On a fresh
+    // install those are empty until something syncs them, which would silently
+    // narrow the picker back to the daily archive and hide the very messages
+    // this page exists to find. Warm them once per visit, then repaint whatever
+    // tab is showing so late-arriving rows aren't stranded behind a stale HTML
+    // snapshot. Fire-and-forget: an offline device just uses what it has.
+    Promise.allSettled([
+      MSG_SECTIONS.special.refresh(),
+      MSG_SECTIONS.letterpad.refresh(),
+    ]).then(() => { if (node.isConnected && _rerun) _rerun(); });
+    // Each tab publishes "re-run whatever I'm currently showing" here. Calling
+    // tabs[st.tab]() instead would rebuild the tab body from scratch — and the
+    // Date tab pops its calendar open on entry, so that would throw a picker in
+    // the user's face the moment a background sync landed.
+    let _rerun = null;
     // Section headers only toggle when collapsible (Date Range) — bound once
     // here, delegated, so it survives however many times a tab re-renders
     // `results` while this page stays mounted.
@@ -6698,13 +6919,7 @@ const MOBILE_UI = (() => {
               !forChat ? { ids: dailyIds, index: i } : null, { lang: displayLang, term }));
             const t = term.toLowerCase();
             const matchFn = (v) => (v.title || "").toLowerCase().includes(t) || (v.text || "").toLowerCase().includes(t);
-            const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, displayLang, matchFn, secHref); return { label, count: rows.length, rows }; };
-            renderSearchGroups(results, [
-              { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
-              secGroup("Special Telegram Msg", MSG_SECTIONS.special),
-              secGroup("Guru's Letterpad Msg", MSG_SECTIONS.letterpad),
-              secGroup("Anushthan Msg", ANUSHTHAN_SEARCH_SEC),
-            ], false);
+            renderSearchGroups(results, searchGroupsFor(dailyRows, displayLang, matchFn, secHref), false);
             st.wordResultsHtml = results.innerHTML;
           } catch (err) { if (mySeq === seq) { results.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`; st.wordResultsHtml = results.innerHTML; } }
         };
@@ -6774,6 +6989,7 @@ const MOBILE_UI = (() => {
         });
         paintMode();
         syncClr();   // st.word may have been restored non-empty
+        _rerun = () => { if (st.word) run(); };
         if (HindiType.mode() === "hi") HindiType.load();   // warm the vocab
         if (!st.word) q.focus();
       },
@@ -6795,24 +7011,24 @@ const MOBILE_UI = (() => {
           const dailyIds = dailyResults.map((r) => r.id);
           const dailyRows = dailyResults.map((r, i) => resultItem(r, hrefFor,
             !forChat ? { ids: dailyIds, index: i } : null, { lang: prefLang }));
-          const matchFn = (v) => v.date === iso;
-          const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, prefLang, matchFn, secHref); return { label, count: rows.length, rows }; };
-          renderSearchGroups(results, [
-            { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
-            secGroup("Special Telegram Msg", MSG_SECTIONS.special),
-            secGroup("Guru's Letterpad Msg", MSG_SECTIONS.letterpad),
-            secGroup("Anushthan Msg", ANUSHTHAN_SEARCH_SEC),
-          ], false);
+          const matchFn = (v, dates) => dates.includes(iso);
+          renderSearchGroups(results, searchGroupsFor(dailyRows, prefLang, matchFn, secHref), false);
           st.dateResultsHtml = results.innerHTML;
         };
+        // scope "all": the picker offers every date ANY section can answer for,
+        // not just the daily archive's. Without this the year wheel skipped
+        // 2017/2019/2020/2021 outright (the daily archive has no entries there)
+        // and hundreds of Special messages were unsearchable by date.
         const open = () => openDatePicker(st.dateIso || null, (iso) => {
+          if (!iso) return;
           if (!forChat) { runDateSearch(iso); return; }
           // Community picker needs a real msg id — empty dates can't be chatted on.
           api("/api/browse?date=" + encodeURIComponent(iso))
             .then((d) => { if (d.results && d.results.length) go(hrefFor(d.results[0].id)); else toast(DP_MSG.notfound); })
             .catch(() => toast("Couldn't open that date."));
-        });
+        }, { scope: "all" });
         body.querySelector("#m-datelink").addEventListener("click", (ev) => { ev.preventDefault(); open(); });
+        _rerun = () => { if (st.dateIso) runDateSearch(st.dateIso); };
         open();   // open the calendar immediately on entering the Date tab
       },
       range() {
@@ -6847,7 +7063,7 @@ const MOBILE_UI = (() => {
               // /CLAUDE.md) — it falls through to the group=month-periods branch
               // and returns {periods:[...]} instead. Fetch per matching date
               // instead so Daily Msg still works until that phone gets a new APK.
-              const { sorted } = await dpData();
+              const { sorted } = await dpData("daily");
               const dates = sorted.filter((d) => d >= st.rangeFrom && d <= st.rangeTo);
               const perDate = await Promise.all(dates.map((d) =>
                 api("/api/browse?date=" + encodeURIComponent(d)).catch(() => ({ results: [] }))));
@@ -6857,14 +7073,8 @@ const MOBILE_UI = (() => {
           const dailyIds = dailyResults.map((r) => r.id);
           const dailyRows = dailyResults.map((r, i) => resultItem(r, hrefFor,
             !forChat ? { ids: dailyIds, index: i } : null, { lang: prefLang }));
-          const matchFn = (v) => v.date >= st.rangeFrom && v.date <= st.rangeTo;
-          const secGroup = (label, sec) => { const rows = searchMsgSectionRows(sec, prefLang, matchFn, secHref); return { label, count: rows.length, rows }; };
-          renderSearchGroups(results, [
-            { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
-            secGroup("Special Telegram Msg", MSG_SECTIONS.special),
-            secGroup("Guru's Letterpad Msg", MSG_SECTIONS.letterpad),
-            secGroup("Anushthan Msg", ANUSHTHAN_SEARCH_SEC),
-          ], true);
+          const matchFn = (v, dates) => dates.some((d) => d >= st.rangeFrom && d <= st.rangeTo);
+          renderSearchGroups(results, searchGroupsFor(dailyRows, prefLang, matchFn, secHref), true);
           st.rangeResultsHtml = results.innerHTML;
         };
         const afterPick = () => {
@@ -6876,8 +7086,9 @@ const MOBILE_UI = (() => {
           if (st.rangeFrom && st.rangeTo) { hint.textContent = ""; runRangeSearch(); }
           else { hint.textContent = "Pick both dates to search."; results.innerHTML = ""; st.rangeResultsHtml = ""; }
         };
-        fromBtn.addEventListener("click", () => openDatePicker(st.rangeFrom || null, (iso) => { st.rangeFrom = iso; afterPick(); }));
-        toBtn.addEventListener("click", () => openDatePicker(st.rangeTo || null, (iso) => { st.rangeTo = iso; afterPick(); }));
+        fromBtn.addEventListener("click", () => openDatePicker(st.rangeFrom || null, (iso) => { if (iso) { st.rangeFrom = iso; afterPick(); } }, { scope: "all" }));
+        toBtn.addEventListener("click", () => openDatePicker(st.rangeTo || null, (iso) => { if (iso) { st.rangeTo = iso; afterPick(); } }, { scope: "all" }));
+        _rerun = () => { if (st.rangeFrom && st.rangeTo) runRangeSearch(); };
       },
     };
     node.querySelector(".m-tabs").addEventListener("click", (e) => {
@@ -7234,6 +7445,16 @@ const MOBILE_UI = (() => {
       lastSeen: () => SPECIAL.lastSeen(),
       isNew: (r, seen) => r.id > (seen || 0),
       subscribe: (fn) => (window.WA && WA.subscribeSpecial ? WA.subscribeSpecial({ onChange: fn }) : null),
+      // The guru re-posts old teachings, so a row's Telegram post date and the
+      // date printed in its signature often differ by years — and BOTH are
+      // searchable (see specialDatesOf). Naming the signature date is what makes
+      // a 2023 search returning a 2026-dated row read as correct instead of odd.
+      rowNote(r) {
+        const posted = (r.posted_at || r.created_at || "").slice(0, 10);
+        const sig = (r.msg_date || "").slice(0, 10);
+        return (sig && posted && sig !== posted && sig >= SPECIAL_MSGDATE_MIN && sig <= todayIso())
+          ? "· written " + fmtDate(sig) : "";
+      },
       // Text message → no image pages; the reader paginates `text` with CSS
       // columns. Falls back to Hindi when there is no translation (permanent,
       // normal state for pre-2020 history) — never a "pending" placeholder.
@@ -7307,11 +7528,22 @@ const MOBILE_UI = (() => {
       : `<div class="mx-thumb mx-thumb-txt"><span class="mx-ico">${sec.icon}</span>` +
         `<span class="mx-spark s1">✨</span><span class="mx-spark s2">✨</span><span class="mx-spark s3">⭐</span></div>`;
     const prev = (v.text || "").replace(/\s+/g, " ").slice(0, 140);
-    const href = hrefOf ? hrefOf(sec, v) : `#/m/${sec.key}/${encodeURIComponent(v.id)}`;
-    return `<a class="mx-row" href="${href}">
+    // `sec.hrefOf` is the section's own default target, for a section whose rows
+    // do NOT live at #/m/<key>/<id> — Anushthan borrows Letterpad's reader,
+    // because it has no reader of its own. An explicit `hrefOf` (the chat
+    // picker) still wins over both.
+    const href = hrefOf ? hrefOf(sec, v)
+      : sec.hrefOf ? sec.hrefOf(v)
+      : `#/m/${sec.key}/${encodeURIComponent(v.id)}`;
+    // A Special message can answer for two different dates (posted vs. signed),
+    // so a date search legitimately returns rows whose visible date is NOT the
+    // one searched — a re-posted teaching. Without saying so the row just looks
+    // like the wrong result. `sec.rowNote` is what says so.
+    const note = sec.rowNote ? sec.rowNote(r, v) : "";
+    return `<a class="mx-row${href ? "" : " mx-row-flat"}"${href ? ` href="${href}"` : ""}>
         ${thumb}
         <div class="mx-meta">
-          <div class="mx-top">${escapeHtml(v.date ? fmtDate(v.date) : "")}${np > 1 ? ` · ${np} pages` : ""}${fresh ? ` <span class="mx-new">NEW</span>` : ""}</div>
+          <div class="mx-top">${escapeHtml(v.date ? fmtDate(v.date) : "")}${np > 1 ? ` · ${np} pages` : ""}${note ? ` <span class="mx-note">${escapeHtml(note)}</span>` : ""}${fresh ? ` <span class="mx-new">NEW</span>` : ""}</div>
           <div class="mx-title">${escapeHtml(v.title || "—")}</div>
           <div class="mx-prev">${escapeHtml(prev)}</div>
         </div>
@@ -7342,24 +7574,62 @@ const MOBILE_UI = (() => {
     return { shown: () => shown };
   }
   function msgIndexPage(key) {
-    const sec = MSG_SECTIONS[key];
-    const node = el(`<div class="m-msgindex"></div>`);
+    const sec = MSG_SECTIONS[key] || (key === "anushthan" ? ANUSHTHAN_INDEX_SEC : null);
+    if (!sec) return placeholderPage("Message", "");
+    const node = el(`<div class="m-msgindex"><div class="mx-filter" hidden></div><div class="mx-rows"></div></div>`);
     // Natural full-page scroll (NOT the fixed-height m-page-scroll box, which
     // only scrolls a dedicated .m-results child and would clip these rows).
     pageFrame(sec.listTitle, node);
-    let painter = null;
+    const bar = node.querySelector(".mx-filter"), rowsBox = node.querySelector(".mx-rows");
+    let painter = null, all = [], filterDate = "";
+
+    // This section's OWN date picker: only dates this section actually has a
+    // message on are selectable (purple); everything else is disabled. Picking
+    // one filters the list; "Show all" clears it. setChrome() clears the top
+    // action on every route, so this must come AFTER pageFrame().
+    const openPicker = () => openDatePicker(filterDate || null, (iso) => {
+      filterDate = iso || "";
+      painter = null;
+      paint(all);
+    }, {
+      scope: sec.key, sectionOnly: true, title: sec.listTitle,
+      emptyMsg: "No dates to pick yet — " + sec.listTitle + " has no messages.",
+    });
+    setTopAction({ label: "📅", title: "Find by date", onClick: openPicker });
+    bar.addEventListener("click", (ev) => {
+      if (ev.target.closest("[data-act='clear']")) { filterDate = ""; painter = null; paint(all); return; }
+      if (ev.target.closest("[data-act='change']")) openPicker();
+    });
+
     const seen = sec.lastSeen();    // frozen for this visit — see paintMsgIndex
     const paint = (rows) => {
-      if (!rows.length) { node.innerHTML = msgHolderHtml(sec); return; }
-      painter = paintMsgIndex(node, sec, rows, painter ? painter.shown() : 0, seen);
-      sec.markSeen();
+      all = rows;
+      const shown = filterDate
+        ? rows.filter((r) => secDatesOf(sec, r).includes(filterDate))
+        : rows;
+      bar.hidden = !filterDate;
+      if (filterDate) {
+        bar.innerHTML = `<span class="mx-f-txt">${escapeHtml(fmtDate(filterDate))} · ` +
+          `${shown.length} message${shown.length === 1 ? "" : "s"}</span>` +
+          `<button type="button" class="mx-f-btn" data-act="change">Change</button>` +
+          `<button type="button" class="mx-f-btn" data-act="clear">Show all</button>`;
+      }
+      if (!shown.length) {
+        rowsBox.innerHTML = filterDate
+          ? `<div class="empty">No ${escapeHtml(sec.listTitle)} on this date.</div>`
+          : msgHolderHtml(sec);
+        return;
+      }
+      painter = paintMsgIndex(rowsBox, sec, shown, painter ? painter.shown() : 0, seen);
+      if (sec.markSeen) sec.markSeen();
     };
     paint(sec.cached());            // cache first — instant, works with no signal
-    _pageLangHook = () => paint(sec.cached());
+    _pageLangHook = () => paint(all);
     // On failure repaint from the cache rather than leaving whatever was there:
     // on a storage-wiped device the first paint saw an empty cache, and the
     // APK seed only lands part-way through refresh() (see SPECIAL.seed).
-    const refresh = () => sec.refresh().then(paint).catch(() => paint(sec.cached()));
+    const refresh = () => (sec.refresh ? sec.refresh() : Promise.resolve(sec.cached()))
+      .then(paint).catch(() => paint(sec.cached()));
     refresh();
     if (sec.subscribe) _specialStream = sec.subscribe(refresh);
   }
@@ -7680,12 +7950,18 @@ const MOBILE_UI = (() => {
       if (seg[0] === "favorites") return favoritesPage();
       if (seg[0] === "special") return msgIndexPage("special");   // desktop-style link → same page
       if (seg[0] === "letterpad") return msgIndexPage("letterpad");
+      if (seg[0] === "anushthan") return msgIndexPage("anushthan");
       if (seg[0] === "anubhuti") return anubhutiRoute(params);   // desktop-style link → same pages
       const p = seg[1];
       if (p === "search") return searchPage(params);
       if (p === "nomsg") return renderDateMessage(params.get("d"));
       if (p === "community") return communityPage(params);
-      if (p === "anushthan") return placeholderPage("Anushthan Message", "अनुष्ठान संदेश");
+      // Anushthan is a real index page now (list + its own date picker), but it
+      // still has NO reader of its own — its rows are Letterpad messages shown
+      // in a second section, so they open #/m/letterpad/<id> (see
+      // ANUSHTHAN_SEARCH_SEC.hrefOf). Until content is supplied the page shows
+      // the section holder, exactly as the placeholder did.
+      if (p === "anushthan") return msgIndexPage("anushthan");
       // ⚠ "anubhuti" and "anushthan" are one letter apart and mean different
       // things — Anubhuti Sharing is the members' own space, Anushthan Msg is a
       // Guru's-message section that has no content yet. Don't merge these.
