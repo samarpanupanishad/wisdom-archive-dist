@@ -107,6 +107,20 @@ function _accessMissing(error) {
     : null;
 }
 
+// Friendly text when the Anubhuti Sharing section hasn't been run yet. Matched
+// on the RPC name too, since a missing FUNCTION reports "Could not find the
+// function public.list_anubhuti_topics…" and never names the table.
+//
+// Unlike the Samuhik Satsang index, there is NO client-side fallback to fall
+// back to: a sharing's title exists nowhere but this table, so the UI has to
+// say so rather than quietly render an empty list.
+function _anubhutiMissing(error) {
+  const m = (error && error.message) || "";
+  return /anubhuti/i.test(m) && /does not exist|not find|schema cache/i.test(m)
+    ? "Anubhuti Sharing isn't set up yet. (Admin: run supabase/add_anubhuti.sql.)"
+    : null;
+}
+
 // Friendly text when the special_messages table hasn't been created yet.
 function _specialMissing(error) {
   return /special_messages.*(does not exist|not find|schema cache)/i.test(error.message || "")
@@ -632,6 +646,72 @@ const WA = {
       });
     }
     return { threads: [...byWid.values()].sort((a, b) => (a.last_at < b.last_at ? 1 : -1)) };
+  },
+
+  // ----- Anubhuti Sharing (2026-08-07) ------------------------------------
+  // An open sharing space with no Guru's message behind it. Topics live in
+  // `anubhuti_topics`; each one's conversation is an ordinary `messages` thread
+  // under wisdom_id = "anubhuti:<id>", so every chat method above already works
+  // on it unchanged. See supabase/add_anubhuti.sql.
+  //
+  // Shape: {topics:[{id, wid, title, body, author, created_at,
+  //                  count, last_at, last_user, last_text}]}
+  //
+  // ⚠ A sharing with ZERO replies is still a topic — the RPC starts from the
+  // topics table, not from messages, precisely so it appears the moment it is
+  // written. Don't "optimise" this into listSatsangThreads.
+  // Tagged .code = "SETUP" when the SQL hasn't been run, so the UI can show the
+  // admin notice without string-matching the message text.
+  async listAnubhutiTopics() {
+    try {
+      const d = await _rpc("list_anubhuti_topics");
+      return { topics: (d && d.topics) || [] };
+    } catch (e) {
+      const setup = _anubhutiMissing(e);
+      if (setup) throw Object.assign(new Error(setup), { code: "SETUP" });
+      throw e;
+    }
+  },
+
+  // ⚠ One sharing, with its FULL body. listAnubhutiTopics() returns `preview`
+  // (240 chars) so the index stays small over mobile data — the detail page has
+  // to come here, or every long sharing renders silently truncated.
+  //
+  // Returns {topic} with topic === null when the row is gone (RLS-filtered or
+  // removed). A network failure THROWS instead, so the caller can tell "deleted"
+  // from "offline" and fall back to its cached row only in the second case.
+  async getAnubhutiTopic(id) {
+    const { data, error } = await _sb.from("anubhuti_topics")
+      .select("*").eq("id", id).maybeSingle();
+    if (error) throw new Error(_anubhutiMissing(error) || error.message);
+    return { topic: data || null };
+  },
+
+  // Any approved member may start one; RLS enforces that (and blocks a muted
+  // member). Author identity comes from the before-insert trigger, never from
+  // here, so it cannot be spoofed.
+  async createAnubhutiTopic(title, body) {
+    const t = (title || "").trim();
+    const b = (body || "").trim();
+    if (!t) throw new Error("Please give your sharing a title.");
+    if (t.length > 140) throw new Error("Title is too long (max 140 characters).");
+    if (b.length > 4000) throw new Error("Sharing is too long (max 4000 characters).");
+    const { data, error } = await _sb.from("anubhuti_topics")
+      .insert({ title: t, body: b || null }).select("*").single();
+    if (error) throw new Error(_anubhutiMissing(error) || error.message);
+    // Announce it (send-push kind "anubhuti" verifies we're the author). Replies
+    // inside the sharing notify via the "chat" kind from postMessage(); this is
+    // the sharing itself, which has no message and would otherwise be silent.
+    _firePush({ kind: "anubhuti", id: data.id });
+    return { topic: data };
+  },
+
+  // Moderators + sutradhar (RLS: wa_is_mod). The after-delete trigger removes
+  // the thread's messages too — see the note in add_anubhuti.sql.
+  async deleteAnubhutiTopic(id) {
+    const { error } = await _sb.from("anubhuti_topics").delete().eq("id", id);
+    if (error) throw new Error(_anubhutiMissing(error) || error.message);
+    return { ok: true };
   },
 
   // ----- Push notifications (Phase 4) ------------------------------------

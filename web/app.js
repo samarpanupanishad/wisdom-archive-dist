@@ -298,6 +298,7 @@ const PATHS = {
   shield: '<path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/><path d="M9.2 12l2 2 3.6-3.8"/>',
   spark: '<path d="M11 4l1.7 4.8L17.5 10.5l-4.8 1.7L11 17l-1.7-4.8L4.5 10.5l4.8-1.7L11 4z"/><path d="M18.5 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9.9-2.3z"/>',
   letter: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/>',
+  lotus: '<path d="M12 20c-4.4 0-8-2.7-8-6 2 .4 3.4 1.2 4.4 2.1"/><path d="M12 20c4.4 0 8-2.7 8-6-2 .4-3.4 1.2-4.4 2.1"/><path d="M12 20c-2.8-2-4.2-4.4-4.2-7 0-2.8 1.5-5.3 4.2-7 2.7 1.7 4.2 4.2 4.2 7 0 2.6-1.4 5-4.2 7z"/>',
 };
 const icon = (n) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${PATHS[n] || ""}</svg>`;
 
@@ -309,6 +310,7 @@ const NAV = [
   { route: "random", label: "Your Lucky Msg for Today", hash: "#/random", icon: "shuffle" },
   { route: "special", label: "Special Telegram Messages", hash: "#/special", icon: "spark" },
   { route: "letterpad", label: "Guru's Letterpad Messages", hash: "#/letterpad", icon: "letter" },
+  { route: "anubhuti", label: "Anubhuti Sharing", hash: "#/anubhuti", icon: "lotus" },
   { divider: true },
   { route: "admin", label: "Add Guru's Msg", hash: "#/admin", icon: "upload" },
   { route: "moderator", label: "Moderator", hash: "#/moderator", icon: "shield", modOnly: true },
@@ -322,7 +324,8 @@ function buildNav() {
   NAV.forEach((it) => {
     if (it.divider) { nav.appendChild(el(`<div class="divider"></div>`)); return; }
     const badge = it.route === "special" ? `<span class="nav-badge" data-special-badge hidden></span>`
-      : it.route === "letterpad" ? `<span class="nav-badge" data-letterpad-badge hidden></span>` : "";
+      : it.route === "letterpad" ? `<span class="nav-badge" data-letterpad-badge hidden></span>`
+      : it.route === "anubhuti" ? `<span class="nav-badge" data-anubhuti-badge hidden></span>` : "";
     nav.appendChild(el(`<a href="${it.hash}" data-route="${it.route}"${it.modOnly ? ' class="mod-only"' : ""}><span class="ico">${icon(it.icon)}</span><span class="label">${it.label}</span>${badge}</a>`));
   });
 }
@@ -717,8 +720,28 @@ let _stageId = null;         // the wisdom currently shown on the home stage
 let _chatCtx = null;   // { wid, title, dateLabel, back } | null
 const CHAT_NS_RE = /^(special|letterpad):(.+)$/;
 const CHAT_NS_LABEL = { special: "Special Telegram Msg", letterpad: "Guru's Letterpad Msg" };
+
+// Anubhuti Sharing threads ("anubhuti:7"). Deliberately NOT part of CHAT_NS_RE:
+// that regex means "this chat has a reader page at #/m/<section>/<id>", and a
+// sharing has no such page — the topic IS the thread, so its reader is the chat
+// itself. Adding it there would send communityPage() looking for a
+// MSG_SECTIONS.anubhuti that does not exist.
+const ANUBHUTI_NS_RE = /^anubhuti:(.+)$/;
+const isAnubhutiWid = (wid) => ANUBHUTI_NS_RE.test(String(wid || ""));
+const anubhutiIdOf = (wid) => { const m = ANUBHUTI_NS_RE.exec(String(wid || "")); return m ? m[1] : ""; };
+const anubhutiWidOf = (id) => "anubhuti:" + id;
+
+// "This thread has been read up to `iso`" — routed to whichever badge owns it.
+// Both modules share one seen-map, but each keeps its own count, so marking has
+// to go through the right one or that count never drops.
+function markThreadSeen(wid, iso) {
+  if (isAnubhutiWid(wid)) ANUBHUTI.markSeen(wid, iso);
+  else SATSANG.markSeen(wid, iso);
+}
+
 // Human label for any wisdom_id, namespaced or plain-numeric archive id.
 function chatWidLabel(wid) {
+  if (isAnubhutiWid(wid)) return "Anubhuti Sharing";
   const m = CHAT_NS_RE.exec(String(wid || ""));
   return m ? CHAT_NS_LABEL[m[1]] : "Guru's msg #" + wid;
 }
@@ -1726,7 +1749,7 @@ function chatAppendLive(msgsEl, m, ctx) {
   const prev = chatLastRendered(msgsEl);
   if (!prev || chatDayKey(prev.ts) !== chatDayKey(m.ts)) msgsEl.appendChild(chatDaySepEl(m.ts));
   msgsEl.appendChild(buildChatMsgEl(m, ctx, prev));
-  SATSANG.markSeen(ctx.wid, m.ts);   // it arrived on an OPEN chat — not unread
+  markThreadSeen(ctx.wid, m.ts);   // it arrived on an OPEN chat — not unread
   if (isMe || nearBottom) {
     msgsEl.scrollTop = msgsEl.scrollHeight;
   } else {
@@ -1876,8 +1899,8 @@ async function renderWisdomChat(body, wid, label) {
     if (paths.length) await mediaUrls(paths);
   } catch { /* unsigned images just don't appear; the words still do */ }
   renderChatMessages(msgsEl, data.messages, ctx);
-  // Opening a discussion clears the Samuhik Satsang badge.
-  SATSANG.markSeen(wid, (data.messages || []).reduce((a, m) => (m.ts > a ? m.ts : a), ""));
+  // Opening a discussion clears its badge (Samuhik Satsang or Anubhuti Sharing).
+  markThreadSeen(wid, (data.messages || []).reduce((a, m) => (m.ts > a ? m.ts : a), ""));
   openChatStream(wid, msgsEl, ctx);   // live updates for everyone — even muted readers
   // Opening the thread IS the read receipt. Both are best-effort: a missing
   // thread_reads table costs a line of small print, never the conversation.
@@ -3263,6 +3286,7 @@ async function route() {
   // a second Realtime connection for it: every navigation is a chance to
   // recount, and SATSANG.refresh() throttles itself to one call per 30s.
   SATSANG.refresh().catch(() => {});
+  ANUBHUTI.refresh().catch(() => {});   // same contract, same 30s throttle
   // Mobile app shell (APK / ?waNativeTest=1): image-first pages take over
   // home / entry / #/m/* routes; every other route falls through to the
   // standard views below, framed by the mobile top bar.
@@ -3277,6 +3301,7 @@ async function route() {
   if (seg[0] === "random") { setActiveNav("random"); return renderRandom(); }
   if (seg[0] === "special") { setActiveNav("special"); return renderSpecial(); }
   if (seg[0] === "letterpad") { setActiveNav("letterpad"); return renderLetterpad(); }
+  if (seg[0] === "anubhuti") { setActiveNav("anubhuti"); return renderAnubhuti(params); }
   if (seg[0] === "admin") { setActiveNav("admin"); return renderAdmin(); }
   if (seg[0] === "moderator") { setActiveNav("moderator"); return renderModerator(); }
   if (seg[0] === "stats") { setActiveNav("stats"); return renderStats(); }
@@ -4040,7 +4065,8 @@ const SPECIAL = (() => {
 function refreshAnyMsgDot() {
   const n = (typeof SPECIAL !== "undefined" ? SPECIAL.unread() : 0) +
             (typeof LETTERPAD !== "undefined" ? LETTERPAD.unread() : 0) +
-            (typeof SATSANG !== "undefined" ? SATSANG.unread() : 0);
+            (typeof SATSANG !== "undefined" ? SATSANG.unread() : 0) +
+            (typeof ANUBHUTI !== "undefined" ? ANUBHUTI.unread() : 0);
   document.querySelectorAll("[data-anymsg-dot]").forEach((b) => { b.hidden = !n; });
 }
 
@@ -4080,6 +4106,10 @@ const SATSANG = (() => {
   // once) because it costs nothing and survives a half-applied upgrade.
   function legacyFloor() { try { return localStorage.getItem(LEGACY_KEY) || ""; } catch { return ""; } }
   function seenFor(wid) { return seenMap()[wid] || legacyFloor(); }
+  // Snapshot at STARTUP — see adoptBaseline() for why this must not be re-read.
+  const hadBaseline = (() => {
+    try { return !!localStorage.getItem(SEEN_KEY) || !!legacyFloor(); } catch { return false; }
+  })();
 
   function isUnread(t) {
     if (!t || !t.last_at) return false;
@@ -4121,16 +4151,29 @@ const SATSANG = (() => {
     let d;
     try { d = await WA.listSatsangThreads(); loadFailed = false; }
     catch { loadFailed = true; return threads; }
-    threads = d.threads || [];
-    // No baseline at all (first run, or freshly approved): adopt everything as
-    // read rather than badging the whole history the moment someone joins.
-    if (!localStorage.getItem(SEEN_KEY) && !legacyFloor()) {
-      const m = {};
-      threads.forEach((t) => { if (t.last_at) m[t.wid] = t.last_at; });
-      writeSeen(m);
-    }
+    // ⚠ list_satsang_threads() returns EVERY thread, Anubhuti Sharing included.
+    // Those belong to their own menu and their own badge, so they are dropped
+    // here at the source — one place, rather than at each of the index, the
+    // count and the row renderer.
+    threads = (d.threads || []).filter((t) => !isAnubhutiWid(t.wid));
+    adoptBaseline(threads);
     recount();
     return threads;
+  }
+
+  // No baseline at all (first run, or freshly approved): adopt what's on the
+  // server as already-read rather than badging the whole history the moment
+  // someone joins.
+  //
+  // ⚠ Additive, and gated on `hadBaseline` — a snapshot taken at STARTUP, not a
+  // re-read of the key. SATSANG and ANUBHUTI adopt separately against this one
+  // shared map: re-reading would let whichever refreshed first write the key and
+  // make the other skip adoption, lighting its badge up with all of history.
+  function adoptBaseline(list) {
+    if (hadBaseline) return;
+    const m = seenMap();
+    (list || []).forEach((t) => { if (t.last_at && t.last_at > (m[t.wid] || "")) m[t.wid] = t.last_at; });
+    writeSeen(m);
   }
 
   // A message arriving while the app is open on some other screen — reflect it
@@ -4139,6 +4182,9 @@ const SATSANG = (() => {
     if (!m || !isCommunityMember()) return;
     const me = (currentUser() || {}).username;
     if (m.user && m.user === me) return;
+    // An Anubhuti Sharing message belongs to ANUBHUTI's badge, not this one.
+    // Its noteIncoming() is called alongside this one by the same dispatcher.
+    if (isAnubhutiWid(m.wid)) return;
     const wid = m.wid ? String(m.wid) : "";
     const ts = m.ts || new Date().toISOString();
     if (wid) {
@@ -4154,7 +4200,95 @@ const SATSANG = (() => {
   }
 
   return { unread, known, markSeen, refreshBadges, refresh, noteIncoming, isUnread, seenFor,
-           lastError: () => loadFailed };
+           adoptBaseline, lastError: () => loadFailed };
+})();
+
+// ==========================================================================
+// ANUBHUTI SHARING — the open sharing space, and its unread state.
+//
+// Members write their own anubhuti as a TOPIC and everyone discusses it
+// underneath. Nothing here hangs off a Guru's message, which is the one thing
+// that makes it different from every Samuhik Satsang thread: there is no
+// anchor message to supply a title, a date or a thumbnail, so the topic row in
+// `anubhuti_topics` carries its own. See supabase/add_anubhuti.sql.
+//
+// The CONVERSATION is an ordinary `messages` thread under "anubhuti:<id>", so
+// the chat renderer, Realtime, reactions and moderation all work untouched.
+//
+// Mirrors the SPECIAL / LETTERPAD / SATSANG badge contract (unread / markSeen /
+// refreshBadges) so refreshAnyMsgDot() can treat all four alike.
+//
+// ⚠ Read state is NOT a second store — markSeen/isUnread delegate to SATSANG's
+// one `wa:satsang:seen` map. It is keyed by wid, and "anubhuti:7" cannot
+// collide with a satsang thread id, so a single map stays correct and a
+// discussion read in one place can never show unread in the other.
+// ==========================================================================
+const ANUBHUTI = (() => {
+  const COUNT_KEY = "wa:anubhuti:unread";   // cached badge count, so it paints offline
+  let count = 0;
+  try { count = parseInt(localStorage.getItem(COUNT_KEY) || "0", 10) || 0; } catch {}
+  let topics = [];         // [{id, wid, title, body, author, created_at, count, last_at, last_user, last_text}]
+  let lastRefresh = 0;
+  let loadFailed = false;
+  let notSetUp = false;    // add_anubhuti.sql hasn't been run on this project
+
+  function unread() { return count; }
+  function known() { return topics; }
+  function refreshBadges() {
+    const txt = count > 99 ? "99+" : String(count);
+    document.querySelectorAll("[data-anubhuti-badge]").forEach((b) => { b.hidden = !count; b.textContent = txt; });
+    refreshAnyMsgDot();
+  }
+  function setCount(n) {
+    count = Math.max(0, n | 0);
+    try { localStorage.setItem(COUNT_KEY, String(count)); } catch {}
+    refreshBadges();
+  }
+  const isUnread = (t) => SATSANG.isUnread(t);
+  function recount() { setCount(topics.filter(isUnread).length); }
+  function markSeen(wid, iso) { SATSANG.markSeen(wid, iso); recount(); }
+
+  // Never throws into a caller and never clears the badge on failure — a boot
+  // with no signal must not wipe what's already on screen.
+  async function refresh(force) {
+    if (!isCommunityMember()) { topics = []; setCount(0); return topics; }
+    if (!force && Date.now() - lastRefresh < 30000) return topics;
+    lastRefresh = Date.now();
+    let d;
+    try { d = await WA.listAnubhutiTopics(); loadFailed = false; notSetUp = false; }
+    catch (e) { loadFailed = true; notSetUp = e.code === "SETUP"; return topics; }
+    topics = d.topics || [];
+    SATSANG.adoptBaseline(topics);
+    recount();
+    return topics;
+  }
+
+  // A message arriving while the app is on some other screen. Own messages
+  // never count. Anything that isn't a sharing belongs to SATSANG.
+  function noteIncoming(m) {
+    if (!m || !isCommunityMember()) return;
+    if (!isAnubhutiWid(m.wid)) return;
+    const me = (currentUser() || {}).username;
+    if (m.user && m.user === me) return;
+    const wid = String(m.wid);
+    const ts = m.ts || new Date().toISOString();
+    const t = topics.find((x) => x.wid === wid);
+    if (t) {
+      t.count++; t.last_at = ts;
+      t.last_user = m.user || t.last_user;
+      t.last_text = m.text || t.last_text;
+    } else {
+      // A sharing this device has never loaded. Stub it so the badge is honest
+      // now, and force the next refresh to fetch its real title.
+      topics.unshift({ id: anubhutiIdOf(wid), wid, title: "", preview: "", author: "",
+                       count: 1, last_at: ts, last_user: m.user || "", last_text: m.text || "" });
+      lastRefresh = 0;
+    }
+    recount();
+  }
+
+  return { unread, known, markSeen, refreshBadges, refresh, noteIncoming, isUnread,
+           lastError: () => loadFailed, notSetUp: () => notSetUp };
 })();
 
 // ---- the Samuhik Satsang index: every running discussion, grouped ----------
@@ -4166,7 +4300,14 @@ const SATSANG = (() => {
 // A SEPARATE regex from CHAT_NS_RE on purpose: that one drives navigation into
 // `#/m/<section>/<id>` readers, and adding 'anushthan' there would route into a
 // section that doesn't exist yet.
-const SATSANG_NS_RE = /^(special|letterpad|anushthan):(.+)$/;
+//
+// ⚠ `anubhuti` is listed here but is deliberately NOT a SATSANG_SECTION below.
+// It has to be in the regex, because the fallback of satsangSectionOf() is
+// "daily" — leave it out and every Anubhuti Sharing shows up in the Samuhik
+// Satsang index as a Daily row, firing /api/entry/anubhuti:7 as it goes. Being
+// absent from SATSANG_SECTIONS is then what keeps it out of the list, since
+// satsangGroups() only emits the sections named there. It has its own menu.
+const SATSANG_NS_RE = /^(special|letterpad|anushthan|anubhuti):(.+)$/;
 const SATSANG_SECTIONS = [
   { key: "daily", label: "Daily Samuhik Satsang", icon: "🌺" },
   { key: "special", label: "Special Telegram Satsang", icon: "✨" },
@@ -4264,6 +4405,109 @@ function satsangLastLine(v) {
 }
 function satsangCountLabel(v) {
   return v.count === 1 ? "1 message" : v.count + " messages";
+}
+
+// ---- Anubhuti Sharing: bits both surfaces share ---------------------------
+// Mobile and desktop draw their own rows (a full-width tile list vs. a narrow
+// column), but the LABELS and the compose dialog are one implementation — the
+// same split the Samuhik Satsang index uses.
+
+// ⚠ Zero replies is a normal, expected state here, unlike a satsang thread
+// which cannot exist without messages. The sharing's own text is the content.
+const anubhutiCountLabel = (t) =>
+  !t.count ? "No replies yet" : (t.count === 1 ? "1 reply" : t.count + " replies");
+
+// Who spoke last, or — while nobody has yet — the opening words of the share.
+// ⚠ Reads `preview` (the RPC's 240-char cut), never `body`: index rows only
+// ever carry the short form. See loadAnubhutiTopic() for the full text.
+function anubhutiPreview(t) {
+  const last = (t.last_text || "").replace(/\s+/g, " ").trim();
+  if (t.count && last) return [t.last_user, last].filter(Boolean).join(": ");
+  const preview = (t.preview || "").replace(/\s+/g, " ").trim();
+  return preview || "Be the first to respond.";
+}
+
+// One sharing with its FULL body, for a detail page.
+//
+// ⚠ Must not be served from ANUBHUTI.known(): those rows carry `preview` only,
+// so rendering them as the sharing would cut every long one off at 240 chars.
+// The cached row is the OFFLINE fallback and is marked `partial` so the page can
+// say so. A row that is simply gone returns null (no fallback) — otherwise a
+// deleted sharing would keep rendering from cache.
+async function loadAnubhutiTopic(id) {
+  try {
+    const { topic } = await WA.getAnubhutiTopic(id);
+    return topic;                       // null = removed, or hidden by RLS
+  } catch (_) {
+    const cached = (ANUBHUTI.known() || []).find((t) => String(t.id) === String(id));
+    return cached ? Object.assign({}, cached, { body: cached.preview || "", partial: true }) : null;
+  }
+}
+
+// One URL shape per surface. Both routes resolve to the same pages — MOBILE_UI
+// claims "anubhuti" in handles() — but keeping each surface on its own prefix
+// stops the mobile drawer and the desktop sidebar producing mixed history.
+function anubhutiHref(id) {
+  const base = (typeof MOBILE_UI !== "undefined" && MOBILE_UI.active) ? "#/m/anubhuti" : "#/anubhuti";
+  return id ? base + "?t=" + encodeURIComponent(id) : base;
+}
+
+// Set while the compose dialog is open, so Android BACK / Escape closes the
+// dialog instead of navigating away and silently discarding what was typed.
+let _axSheetClose = null;
+
+// The compose dialog behind the "+". Built in JS, not index.html: OTA updates
+// ship app.js/styles.css only, so markup added to the shell would never reach
+// an installed APK (the same reason AUTH_GATE builds its own DOM).
+function openAnubhutiCompose() {
+  if (_axSheetClose) return;   // already open — the "+" is reachable from both surfaces
+  const sheet = el(`<div class="an-sheet" id="an-sheet" role="dialog" aria-modal="true" aria-label="Share your Anubhuti">
+    <div class="an-sheet-card">
+      <div class="an-sheet-h">Share your Anubhuti</div>
+      <div class="an-sheet-sub">Everyone in the Samuhik Satsang can read and respond.</div>
+      <input class="an-in" id="an-title" type="text" maxlength="140" placeholder="Title — what is this about?">
+      <textarea class="an-ta" id="an-body" rows="7" maxlength="4000" placeholder="Write your anubhuti… (optional)"></textarea>
+      <div class="an-err" id="an-err" hidden></div>
+      <div class="an-sheet-btns">
+        <button class="btn" id="an-cancel" type="button">Cancel</button>
+        <button class="btn primary" id="an-share" type="button">Share</button>
+      </div>
+    </div>
+  </div>`);
+  document.body.appendChild(sheet);
+  const q = (id) => sheet.querySelector("#" + id);
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  function close() {
+    if (!sheet.parentNode) return;
+    sheet.remove();
+    document.removeEventListener("keydown", onKey);
+    _axSheetClose = null;
+  }
+  _axSheetClose = () => { close(); return true; };
+  document.addEventListener("keydown", onKey);
+  q("an-cancel").addEventListener("click", close);
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+  q("an-title").focus();
+
+  q("an-share").addEventListener("click", async () => {
+    const btn = q("an-share"), err = q("an-err");
+    err.hidden = true;
+    btn.disabled = true;
+    try {
+      const { topic } = await WA.createAnubhutiTopic(q("an-title").value, q("an-body").value);
+      close();
+      // It's ours and we're about to look straight at it, so it must not land
+      // pre-badged as unread on this device.
+      ANUBHUTI.markSeen(anubhutiWidOf(topic.id), new Date().toISOString());
+      await ANUBHUTI.refresh(true).catch(() => {});
+      toast("Your Anubhuti has been shared 🪷");
+      go(anubhutiHref(topic.id));
+    } catch (e) {
+      err.textContent = e.message || "Could not share this right now.";
+      err.hidden = false;
+      btn.disabled = false;
+    }
+  });
 }
 
 // One special-message card. mode = "dual" (desktop: Hindi LEFT · English
@@ -4582,6 +4826,119 @@ async function renderLetterpad() {
 }
 
 // --------------------------------------------------------------------------
+// Anubhuti Sharing — desktop
+//
+// A full page in $view, like Special / Letterpad, NOT the fab panel: the fab
+// panel exists to discuss the message already on screen behind it, and a
+// sharing has no such message. Same two views as mobile, one narrower column:
+//   #/anubhuti         the list of sharings
+//   #/anubhuti?t=<id>  one sharing — its text, then its discussion
+// --------------------------------------------------------------------------
+function anubhutiGateHtml(headline, sub) {
+  return `<div class="wc-satsang-gate">
+    <div class="wc-sg-ico">🪷</div>
+    <div class="wc-sg-h">${escapeHtml(headline)}</div>
+    <div class="wc-sg-sub">${escapeHtml(sub)}</div>
+  </div>`;
+}
+
+async function renderAnubhuti(params) {
+  const pick = params && params.get("t");
+  return pick ? renderAnubhutiTopic(pick) : renderAnubhutiIndex();
+}
+
+async function renderAnubhutiIndex() {
+  const nav = _nav;
+  $view.innerHTML = `<div class="an-page">
+    <div class="an-page-head">
+      <h2 class="an-headline">🪷 Anubhuti Sharing</h2>
+      <button class="btn primary an-new" id="an-new" type="button">+ Share your Anubhuti</button>
+    </div>
+    <div class="an-list"><div class="loading">Loading…</div></div>
+  </div>`;
+  if (!current(nav)) return;
+  const list = $view.querySelector(".an-list");
+
+  if (!isCommunityMember()) {
+    $view.querySelector("#an-new").remove();   // nothing to post with yet
+    list.innerHTML = anubhutiGateHtml("Anubhuti Sharing",
+      "Anubhuti Sharing is for approved members. Ask to join below — a moderator will welcome you in.");
+    list.appendChild(accessBox());
+    return;
+  }
+  $view.querySelector("#an-new").addEventListener("click", openAnubhutiCompose);
+
+  const topics = await ANUBHUTI.refresh(true).catch(() => []);
+  if (!current(nav)) return;
+  if (!topics.length) {
+    list.innerHTML = ANUBHUTI.notSetUp()
+      ? `<div class="empty">Anubhuti Sharing isn't set up on the server yet. (Admin: run supabase/add_anubhuti.sql.)</div>`
+      : ANUBHUTI.lastError()
+        ? `<div class="empty">Couldn't load Anubhuti Sharing. Check your connection and try again.</div>`
+        : `<div class="empty">No sharings yet. Be the first to share your anubhuti.</div>`;
+    return;
+  }
+  list.replaceChildren(...topics.map((t) => {
+    const when = String(t.last_at || t.created_at || "").slice(0, 10);
+    const meta = [when ? fmtDate(when) : "", anubhutiCountLabel(t)].filter(Boolean).join(" · ");
+    return el(`<a class="an-card" href="${anubhutiHref(t.id)}">
+      <div class="an-card-top">${escapeHtml(meta)}${ANUBHUTI.isUnread(t) ? ` <span class="mx-new">NEW</span>` : ""}</div>
+      <div class="an-card-title">${escapeHtml(t.title || "—")}</div>
+      <div class="an-card-prev">${escapeHtml(anubhutiPreview(t))}</div>
+      <div class="an-by">${escapeHtml(t.author || "")}</div>
+    </a>`);
+  }));
+}
+
+async function renderAnubhutiTopic(id) {
+  const nav = _nav;
+  $view.innerHTML = `<div class="an-page"><div class="loading">Loading…</div></div>`;
+  if (!isCommunityMember()) {
+    $view.querySelector(".an-page").innerHTML = anubhutiGateHtml("Anubhuti Sharing",
+      "Anubhuti Sharing is for approved members. Ask to join below — a moderator will welcome you in.");
+    $view.querySelector(".an-page").appendChild(accessBox());
+    return;
+  }
+
+  const topic = await loadAnubhutiTopic(id);
+  if (!current(nav)) return;
+  if (!topic) {
+    $view.querySelector(".an-page").innerHTML = `<div class="empty">This sharing is no longer available.</div>`;
+    return;
+  }
+
+  const when = String(topic.created_at || "").slice(0, 10);
+  const page = el(`<div class="an-page an-topic">
+    <a class="an-back" href="#/anubhuti">‹ All sharings</a>
+    <div class="an-head">
+      <div class="an-head-title">${escapeHtml(topic.title || "—")}</div>
+      <div class="an-head-by">${escapeHtml(topic.author || "")}${when ? " · " + escapeHtml(fmtDate(when)) : ""}</div>
+      ${topic.body ? `<div class="an-head-body">${renderMarkdown(topic.body)}</div>` : ""}
+      ${topic.partial ? `<div class="an-partial">Showing a shortened offline copy — reconnect to read the whole sharing.</div>` : ""}
+    </div>
+    <div class="an-chat"></div>
+  </div>`);
+  // Moderators + sutradhar may remove a whole sharing; the server takes its
+  // messages with it (see add_anubhuti.sql).
+  if (isModerator()) {
+    const del = el(`<button class="an-del" type="button">Remove sharing</button>`);
+    del.addEventListener("click", async () => {
+      if (!confirm("Remove this sharing and its whole conversation? This cannot be undone.")) return;
+      del.disabled = true;
+      try {
+        await WA.deleteAnubhutiTopic(id);
+        await ANUBHUTI.refresh(true).catch(() => {});
+        toast("Sharing removed.");
+        go("#/anubhuti");
+      } catch (e) { toast(e.message || "Could not remove this sharing."); del.disabled = false; }
+    });
+    page.querySelector(".an-head").appendChild(del);
+  }
+  $view.replaceChildren(page);
+  await renderWisdomChat(page.querySelector(".an-chat"), anubhutiWidOf(id), topic.title || "Anubhuti Sharing");
+}
+
+// --------------------------------------------------------------------------
 // Init
 // --------------------------------------------------------------------------
 buildNav();
@@ -4655,6 +5012,7 @@ const MOBILE_UI = (() => {
       <nav class="m-menu">
         <a href="#/m/search"><span class="mi">🔍</span> Search By</a>
         <a href="#/m/community"><span class="mi">💬</span> Samuhik Satsang <span class="m-badge" data-satsang-badge hidden></span></a>
+        <a href="#/m/anubhuti"><span class="mi">🪷</span> Anubhuti Sharing <span class="m-badge" data-anubhuti-badge hidden></span></a>
         <a href="#/m/special"><span class="mi">✨</span> Special Telegram Msg <span class="m-badge" data-special-badge hidden></span></a>
         <a href="#/m/letterpad"><span class="mi">✍️</span> Guru's Letterpad Msg <span class="m-badge" data-letterpad-badge hidden></span></a>
         <a href="#/m/anushthan"><span class="mi">🪔</span> Anushthan Msg</a>
@@ -4772,6 +5130,7 @@ const MOBILE_UI = (() => {
   });
   function onHardwareBack() {
     if (_dpClose && _dpClose()) return;
+    if (_axSheetClose && _axSheetClose()) return;
     if (hideExitSheet()) return;
     if (exitZoom()) return;
     if (closeDrawer()) return;
@@ -4859,6 +5218,7 @@ const MOBILE_UI = (() => {
       // Messages may have arrived while we were backgrounded, so the badge is
       // recounted on every wake (cheap, one query) regardless of the sync throttle.
       SATSANG.refresh(true).catch(() => {});
+      ANUBHUTI.refresh(true).catch(() => {});
       if (!syncIsSafeToStart()) return;
       if (Date.now() - _lastContentSync < SYNC_ON_WAKE_MS) return;
       contentSync().then((r) => {
@@ -4942,7 +5302,15 @@ const MOBILE_UI = (() => {
         const d = (n && n.data) || {};
         // send-push puts the thread id in data.wid; without it we can only say
         // "something arrived" (see SATSANG.noteIncoming).
-        if (d.kind === "chat") SATSANG.noteIncoming({ wid: d.wid || "", ts: new Date().toISOString() });
+        // Both are called: each ignores wids that aren't its own, so the count
+        // lands on the right badge without the caller having to know which.
+        // "anubhuti" (a brand-new sharing) carries the same data.wid shape, so
+        // it badges through exactly the same path as a reply.
+        if (d.kind === "chat" || d.kind === "anubhuti") {
+          const m = { wid: d.wid || "", ts: new Date().toISOString() };
+          SATSANG.noteIncoming(m);
+          ANUBHUTI.noteIncoming(m);
+        }
       });
       // Routes by the notification's own data payload (send-push sets
       // data.route per kind) instead of a single hardcoded destination, now
@@ -6630,6 +6998,13 @@ const MOBILE_UI = (() => {
     // No explicit thread → the index. Callers that mean "this message's chat"
     // (the bottom-bar button, notification taps) always pass ?wid=.
     if (!pick) return satsangIndexPage();
+    // ⚠ send-push addresses EVERY chat notification to this route, Anubhuti
+    // Sharing included, and those payloads are already on people's phones — the
+    // route cannot be changed retroactively. Hand them over here rather than
+    // letting one fall through to the daily branch below, which would 404 on
+    // /api/entry and, worse, write "anubhuti:7" into wa:lastViewed and break the
+    // daily reader's resume on next launch.
+    if (isAnubhutiWid(pick)) return anubhutiChatPage(anubhutiIdOf(pick));
     const wid = pick;
     const node = el(`<div class="m-community"></div>`);
     pageFrame("Samuhik Satsang", node);
@@ -6674,6 +7049,128 @@ const MOBILE_UI = (() => {
       }).catch(() => { head.querySelector(".m-ch-date").textContent = "Guru's msg #" + wid; });
     }
     await renderWisdomChat(body, wid, label);
+    // WhatsApp reading order: open at the latest message (bottom).
+    const msgs = body.querySelector("#wc-msgs");
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  // ---- Anubhuti Sharing (open sharing space, no Guru's msg behind it) ------
+  // Deliberately its OWN pages rather than a fifth Samuhik Satsang section: a
+  // sharing has no anchor message, so it has no reader to open, no thumbnail
+  // and no "Change ▾" — and its "+" creates content instead of picking some.
+  //
+  // The rows reuse the satsang row's CSS (.mx-row/.sx-row) so the two lists read
+  // as one family, but a sharing row has a SINGLE tap target: the topic is the
+  // thread, so there is no second destination to split the row between.
+
+  function anubhutiRowEl(t) {
+    const when = String(t.last_at || t.created_at || "").slice(0, 10);
+    const top = [when ? fmtDate(when) : "", anubhutiCountLabel(t)].filter(Boolean).join(" · ");
+    // Same tile treatment as a Special Telegram post: there is no image to show,
+    // so the opening words stand in for one rather than a bare glyph, which
+    // reads as a broken thumbnail instead of something to tap.
+    const words = (t.preview || t.title || "").replace(/\s+/g, " ").trim().slice(0, 60);
+    const tile = words
+      ? `<div class="mx-thumb sx-thumb-text"><span>${escapeHtml(words)}</span></div>`
+      : `<div class="mx-thumb mx-thumb-txt"><span class="mx-ico">🪷</span></div>`;
+    return el(`<div class="mx-row sx-row an-row">
+        <a class="an-row-main" href="${anubhutiHref(t.id)}">
+          <div class="an-tile" aria-hidden="true">${tile}</div>
+          <div class="mx-meta">
+            <div class="mx-top">${escapeHtml(top)}${ANUBHUTI.isUnread(t) ? ` <span class="mx-new">NEW</span>` : ""}</div>
+            <div class="mx-title">${escapeHtml(t.title || "—")}</div>
+            <div class="mx-prev">${escapeHtml(anubhutiPreview(t))}</div>
+            <div class="an-by">${escapeHtml(t.author || "")}</div>
+          </div>
+        </a>
+      </div>`);
+  }
+
+  // #/m/anubhuti        → the index of every sharing
+  // #/m/anubhuti?t=<id> → that sharing's own page (its text + its chat)
+  function anubhutiRoute(params) {
+    const t = params && params.get("t");
+    return t ? anubhutiChatPage(t) : anubhutiIndexPage();
+  }
+
+  async function anubhutiIndexPage() {
+    const node = el(`<div class="m-searchwrap">
+      <div class="m-results"><div class="loading">Loading…</div></div>
+    </div>`);
+    pageFrame("Anubhuti Sharing", node, "m-page-scroll");
+    const box = node.querySelector(".m-results");
+
+    // Same welcome + request box the chat gate shows — an empty list would just
+    // look broken, and there is nothing here to offer until a moderator lets
+    // them in. No "+" either: they cannot post yet.
+    if (!isCommunityMember()) {
+      box.innerHTML = `<div class="wc-satsang-gate">
+        <div class="wc-sg-ico">🪷</div>
+        <div class="wc-sg-h">Anubhuti Sharing</div>
+        <div class="wc-sg-sub">Anubhuti Sharing is for approved members. Ask to join below — a moderator will welcome you in.</div>
+      </div>`;
+      box.appendChild(accessBox());
+      return;
+    }
+
+    // "+" = write a new sharing. AFTER pageFrame, which clears the slot.
+    setTopAction({ label: "+", title: "Share your Anubhuti", onClick: openAnubhutiCompose });
+
+    const topics = await ANUBHUTI.refresh(true).catch(() => []);
+    if (!topics.length) {
+      box.innerHTML = ANUBHUTI.notSetUp()
+        ? `<div class="empty">Anubhuti Sharing isn't set up on the server yet. (Admin: run supabase/add_anubhuti.sql.)</div>`
+        : ANUBHUTI.lastError()
+          ? `<div class="empty">Couldn't load Anubhuti Sharing. Check your connection and open this page again.</div>`
+          : `<div class="empty">No sharings yet. Tap + above to share the first one.</div>`;
+      return;
+    }
+    box.replaceChildren(...topics.map(anubhutiRowEl));
+  }
+
+  async function anubhutiChatPage(id) {
+    const node = el(`<div class="m-community m-anubhuti"></div>`);
+    pageFrame("Anubhuti Sharing", node);
+    setTopAction({ label: "+", title: "Share your Anubhuti", onClick: openAnubhutiCompose });
+
+    // ⚠ No store.setLastViewed() and no _stageId. "anubhuti:7" is not an archive
+    // id: wa:lastViewed drives resuming the daily reader on next launch, and a
+    // namespaced value there breaks it (same rule as special:/letterpad:).
+    const wid = anubhutiWidOf(id);
+    const topic = await loadAnubhutiTopic(id);
+    if (!topic) {
+      node.innerHTML = `<div class="empty">This sharing is no longer available.</div>`;
+      return;
+    }
+
+    const when = String(topic.created_at || "").slice(0, 10);
+    const head = el(`<div class="an-head">
+        <div class="an-head-title">${escapeHtml(topic.title || "—")}</div>
+        <div class="an-head-by">${escapeHtml(topic.author || "")}${when ? " · " + escapeHtml(fmtDate(when)) : ""}</div>
+        ${topic.body ? `<div class="an-head-body">${renderMarkdown(topic.body)}</div>` : ""}
+        ${topic.partial ? `<div class="an-partial">Showing a shortened offline copy — reconnect to read the whole sharing.</div>` : ""}
+      </div>`);
+    // Moderators + sutradhar may remove a whole sharing (operator's call). The
+    // server takes its messages with it — see add_anubhuti.sql.
+    if (isModerator()) {
+      const del = el(`<button class="an-del" type="button" title="Remove this sharing">Remove sharing</button>`);
+      del.addEventListener("click", async () => {
+        if (!confirm("Remove this sharing and its whole conversation? This cannot be undone.")) return;
+        del.disabled = true;
+        try {
+          await WA.deleteAnubhutiTopic(id);
+          await ANUBHUTI.refresh(true).catch(() => {});
+          toast("Sharing removed.");
+          go("#/m/anubhuti");
+        } catch (e) { toast(e.message || "Could not remove this sharing."); del.disabled = false; }
+      });
+      head.appendChild(del);
+    }
+
+    const body = el(`<div class="m-chatbody"></div>`);
+    node.appendChild(head);
+    node.appendChild(body);
+    await renderWisdomChat(body, wid, topic.title || "Anubhuti Sharing");
     // WhatsApp reading order: open at the latest message (bottom).
     const msgs = body.querySelector("#wc-msgs");
     if (msgs) msgs.scrollTop = msgs.scrollHeight;
@@ -7167,7 +7664,7 @@ const MOBILE_UI = (() => {
 
   return {
     active,
-    handles(seg) { return !seg.length || seg[0] === "entry" || seg[0] === "m" || seg[0] === "favorites" || seg[0] === "special" || seg[0] === "letterpad"; },
+    handles(seg) { return !seg.length || seg[0] === "entry" || seg[0] === "m" || seg[0] === "favorites" || seg[0] === "special" || seg[0] === "letterpad" || seg[0] === "anubhuti"; },
     async route(seg, params) {
       closeDrawer();
       exitZoom();
@@ -7183,11 +7680,16 @@ const MOBILE_UI = (() => {
       if (seg[0] === "favorites") return favoritesPage();
       if (seg[0] === "special") return msgIndexPage("special");   // desktop-style link → same page
       if (seg[0] === "letterpad") return msgIndexPage("letterpad");
+      if (seg[0] === "anubhuti") return anubhutiRoute(params);   // desktop-style link → same pages
       const p = seg[1];
       if (p === "search") return searchPage(params);
       if (p === "nomsg") return renderDateMessage(params.get("d"));
       if (p === "community") return communityPage(params);
       if (p === "anushthan") return placeholderPage("Anushthan Message", "अनुष्ठान संदेश");
+      // ⚠ "anubhuti" and "anushthan" are one letter apart and mean different
+      // things — Anubhuti Sharing is the members' own space, Anushthan Msg is a
+      // Guru's-message section that has no content yet. Don't merge these.
+      if (p === "anubhuti") return anubhutiRoute(params);
       // #/m/<section>        → the index
       // #/m/<section>/<id>   → the full-screen reader, opened on that message
       //                        (also where a push-notification tap can land)
@@ -7213,16 +7715,23 @@ const MOBILE_UI = (() => {
       if (!prose || document.getElementById("m-display-box")) return;
 
       // ---- Notifications ---------------------------------------------------
-      // Samuhik Satsang pushes are the only ones with a switch: daily / Special
-      // / Letterpad are announcements from Baba Swami, while a busy discussion
-      // is the one thing a sadhak may genuinely want quiet. The preference lives
+      // DISCUSSION pushes are the only ones with a switch: daily / Special /
+      // Letterpad are announcements from Baba Swami, while a busy discussion is
+      // the one thing a sadhak may genuinely want quiet. The preference lives
       // on the ACCOUNT (profiles.notify_satsang), so it follows the person to
       // every device and survives a reinstall — hence the switch shows the
       // server's value, not a local guess. Default ON.
+      //
+      // ⚠ One switch covers BOTH Samuhik Satsang and Anubhuti Sharing: the
+      // `members` audience in send-push filters on this single column, so a
+      // label naming only Satsang would quietly silence Anubhuti too. If the
+      // two ever need to be independent, that is a new `notify_anubhuti`
+      // column + its own audience branch — not a relabel.
       const nbox = el(`<div class="sync-box" id="m-notif-box">
         <h3 style="margin-top:0">Notifications</h3>
-        <label class="m-switchrow">Samuhik Satsang messages
+        <label class="m-switchrow">Discussion messages
           <span class="m-switch"><input type="checkbox" id="m-notif-satsang"><i></i></span></label>
+        <div class="m-hint" id="m-notif-subhint">Samuhik Satsang and Anubhuti Sharing.</div>
         <div class="m-hint" id="m-notif-hint"></div>
       </div>`);
       prose.appendChild(nbox);
@@ -7244,8 +7753,8 @@ const MOBILE_UI = (() => {
           : !isCommunityMember()
             ? "You'll start receiving these once a moderator approves your Samuhik Satsang access."
             : nsw.checked
-              ? "New messages in the Samuhik Satsang notify you. Guru's daily, Special and Letterpad messages always notify."
-              : "Samuhik Satsang messages stay quiet. Guru's daily, Special and Letterpad messages always notify.";
+              ? "New messages in the Samuhik Satsang and Anubhuti Sharing notify you. Guru's daily, Special and Letterpad messages always notify."
+              : "Samuhik Satsang and Anubhuti Sharing stay quiet. Guru's daily, Special and Letterpad messages always notify.";
       };
       paintHint();
       nsw.addEventListener("change", async () => {
@@ -7257,7 +7766,7 @@ const MOBILE_UI = (() => {
             const u = currentUser();
             if (u) { u.notify_satsang = want; localStorage.setItem("wa:user", JSON.stringify(u)); }
           } catch (_) {}
-          toast(want ? "Samuhik Satsang notifications on" : "Samuhik Satsang notifications off");
+          toast(want ? "Discussion notifications on" : "Discussion notifications off");
         } catch (e) {
           nsw.checked = !want;         // never leave the switch claiming something untrue
           toast(e.message);
@@ -7649,4 +8158,7 @@ AUTH_GATE.boot(function startApp() {
   // recount. Skipped for non-members by SATSANG.refresh() itself.
   SATSANG.refreshBadges();
   SATSANG.refresh(true).catch(() => {});
+  // Anubhuti Sharing: same contract again. Its refresh no-ops for non-members.
+  ANUBHUTI.refreshBadges();
+  ANUBHUTI.refresh(true).catch(() => {});
 });

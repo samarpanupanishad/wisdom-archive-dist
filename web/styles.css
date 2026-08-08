@@ -2356,3 +2356,105 @@ body.gated { overflow: hidden; }
 /* Inside the avatar popover, keep it narrow and flush with the menu padding. */
 #avatar-pop .ax-box { margin: 10px 0; }
 #avatar-pop .ax-box .ax-ask { padding: 11px; }
+
+/* ==== Anubhuti Sharing ====================================================
+   The open sharing space. Namespaced `an-` — `ax-` above already belongs to
+   accessBox() and the two would have collided on .ax-err.
+
+   Rows deliberately reuse the Samuhik Satsang row CSS (.mx-row/.sx-row) so the
+   two lists read as one family. The one structural difference: a sharing row
+   has a SINGLE tap target, because the topic IS the thread — there is no
+   separate "open the message" destination to split the row between. */
+.an-row { align-items: stretch; }
+.an-row-main {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;
+  text-decoration: none; color: inherit;
+}
+.an-row-main:active { opacity: .6; }
+.an-tile { flex: none; display: flex; align-items: center; }
+.an-by { margin-top: 3px; font: 500 11.5px var(--sans); color: var(--accent-2); }
+.an-row .mx-thumb-txt .mx-ico { animation: none; }   /* no Lucky-msg sparkle in a list */
+
+/* ---- one sharing: its own text, pinned above the discussion --------------
+   Not a .m-chat-head: that is a button that opens the message behind a chat,
+   and here there is no message behind it. This card IS the content, so it
+   scrolls internally rather than pushing the conversation off screen. */
+.an-head {
+  flex: 0 0 auto; max-height: 38vh; overflow-y: auto;
+  padding: 14px 16px; margin-bottom: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+}
+.an-head-title { font: 700 17px var(--serif); color: var(--accent); }
+.an-head-by { margin-top: 2px; font: 500 12.5px var(--sans); color: var(--muted); }
+.an-head-body {
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-soft);
+  font-size: 15px; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
+}
+/* The cached row carries only the 240-char preview, so say so rather than
+   passing a truncated sharing off as the whole thing. */
+.an-partial { margin-top: 10px; font: 500 12px var(--sans); color: var(--muted); font-style: italic; }
+.an-del {
+  margin-top: 12px; padding: 6px 12px; cursor: pointer;
+  background: var(--surface); color: #c0392b;
+  border: 1px solid #e6b7b0; border-radius: 8px;
+  font: 600 12.5px var(--sans);
+}
+.an-del:disabled { opacity: .5; cursor: default; }
+
+/* ---- compose dialog (shared by both surfaces) ----------------------------
+   Built in JS, so it is always present-or-absent rather than [hidden] — a
+   plain `display: flex` is safe here (unlike .m-exit, which lives in the
+   shell and must not out-rank its `hidden` attribute). */
+.an-sheet {
+  position: fixed; inset: 0; z-index: 900;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 14, 30, .45); padding: 20px;
+}
+.an-sheet-card {
+  width: 100%; max-width: 460px; max-height: 88vh; overflow-y: auto;
+  background: var(--surface); border-radius: 20px; padding: 22px 20px 18px;
+  box-shadow: 0 18px 48px rgba(40, 30, 60, .35); animation: mpopin .18s ease;
+}
+.an-sheet-h { font: 700 19px var(--serif); color: var(--accent); }
+.an-sheet-sub { margin-top: 3px; font-size: 13px; color: var(--muted); }
+.an-in, .an-ta {
+  width: 100%; margin-top: 12px; padding: 11px 13px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 12px;
+  font: 400 15px var(--sans); line-height: 1.55;
+}
+.an-ta { resize: vertical; min-height: 120px; }
+.an-in:focus, .an-ta:focus { outline: none; border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--accent-soft); }
+.an-err { margin-top: 10px; color: #c0392b; font-size: 13px; line-height: 1.45; }
+.an-sheet-btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
+/* ---- desktop page -------------------------------------------------------
+   A full page like Letterpad, NOT the Samuhik Satsang fab panel: that panel
+   exists to discuss the message on screen behind it, and a sharing has none. */
+.an-page { max-width: 780px; margin: 0 auto; padding: 18px 22px 60px; }
+.an-page-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 4px 0 18px; }
+.an-headline { font-family: var(--serif); margin: 0; flex: 1 1 auto; }
+.an-new { flex: none; cursor: pointer; }
+.an-card {
+  display: block; text-decoration: none; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 14px 16px; margin-bottom: 12px;
+  transition: border-color .12s, transform .12s;
+}
+.an-card:hover { border-color: var(--accent-2); transform: translateY(-1px); }
+.an-card-top { color: var(--muted); font: 500 12px var(--sans); }
+.an-card-title { font: 700 17px var(--serif); color: var(--accent); margin: 3px 0 4px; }
+.an-card-prev {
+  color: var(--muted); font-size: 13.5px; line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.an-back { display: inline-block; margin-bottom: 12px; color: var(--accent); text-decoration: none; font: 600 13.5px var(--sans); }
+.an-back:hover { text-decoration: underline; }
+/* On desktop the sharing card is content, not a fixed header — let it grow. */
+.an-topic .an-head { max-height: none; overflow: visible; margin-bottom: 14px; }
+.an-chat {
+  height: min(62vh, 620px);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
