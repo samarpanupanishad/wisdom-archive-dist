@@ -16,8 +16,34 @@ const WA_SUPABASE_URL = "https://psdfwpsddjmoqrrhwlns.supabase.co";
 const WA_SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBzZGZ3cHNkZGptb3Fycmh3bG5zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2NzAzNjgsImV4cCI6MjA5OTI0NjM2OH0.8lwLmyk5LofnHrtWgCldWVi9wn7XPAKIC14L9iB6lS0";
 
+// ---- Admin device binding (Phase 4 — ADMIN_DEVICE_BINDING_PLAN.md) --------
+// Proof that this request comes from an enrolled admin device: "<device_id>.<token>",
+// obtained from the device-auth Edge Function and read by wa_device_ok() in Postgres.
+//
+// ⚠ IN MEMORY ONLY, never localStorage. It is a 12h bearer token, and the whole
+// point of the feature is that the credential cannot be lifted off the machine.
+// Persisting it would put a copy at rest next to a key that deliberately isn't.
+// The cost is one challenge/sign round trip per app launch — and on Android the
+// phone was just unlocked to open the app, so the Keystore's 60s auth window is
+// already satisfied and the user sees no prompt.
+let _deviceHeader = null;
+
+// supabase-js fixes `global.headers` at createClient time, and the header has to
+// be able to appear (and change) later. A custom fetch is the supported way to
+// do that, and it covers PostgREST, RPC, Storage and Functions in one place.
+//
+// ⚠ It does NOT cover Realtime, which is a WebSocket and carries no headers.
+// See the Realtime note on WA.deviceSignIn().
+function _waFetch(input, init) {
+  init = init || {};
+  const h = new Headers(init.headers || {});
+  if (_deviceHeader) h.set("x-wa-device", _deviceHeader);
+  return fetch(input, { ...init, headers: h });
+}
+
 const _sb = supabase.createClient(WA_SUPABASE_URL, WA_SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, storageKey: "wa:sb-session" },
+  global: { fetch: _waFetch },
 });
 
 const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/;
@@ -139,6 +165,222 @@ async function _rpc(name, args) {
   const { data, error } = await _sb.rpc(name, args || {});
   if (error) throw new Error(error.message);
   return data;
+}
+
+// ---- Device key: one abstraction, two backends ----------------------------
+// Android  → the WaDeviceKey Capacitor plugin (Android Keystore).
+// Windows  → POST /api/device/* on the local FastAPI app (DPAPI).
+// Everything above this line is platform-blind, the same way wa-native.js
+// answers /api/* on-device without the rest of the app knowing.
+//
+// ⚠ NATIVE CODE NEVER SHIPS OTA. publish_update.py sends only app.js/styles.css/
+// wa-supabase.js/vendor, so an already-installed APK has NO WaDeviceKey plugin
+// and will not get one until a new APK. This file therefore has to treat a
+// missing plugin as a normal state and say "update the app", not throw.
+function _devicePlugin() {
+  const c = window.Capacitor;
+  return (c && c.Plugins && c.Plugins.WaDeviceKey) || null;
+}
+function _isNative() {
+  const c = window.Capacitor;
+  return !!(c && typeof c.isNativePlatform === "function" && c.isNativePlatform());
+}
+
+// Friendly text when this shell simply cannot hold a key.
+function _noSignerMessage() {
+  return _isNative()
+    ? "This version of the app can't register a device yet. Please update the app from the Play Store."
+    : "Device registration isn't available here. On a computer, open the app from the Samarpan Upanishad desktop program (Windows only).";
+}
+
+async function _localDevice(path, body) {
+  const r = await fetch("/api/device/" + path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => null);
+  if (!r.ok) throw new Error((j && j.detail) || "The desktop app could not reach its device key.");
+  return j;
+}
+
+// {supported, hasKey, platform, label} — what the enrol screen needs to decide
+// what to show. Never throws: "can't" is an answer, not an error.
+async function _deviceCapabilities() {
+  const p = _devicePlugin();
+  if (p) {
+    try {
+      const a = await p.isAvailable();
+      const k = await p.hasKey();
+      return {
+        supported: true, platform: "android",
+        hasKey: !!k.hasKey, strongBox: !!a.strongBox,
+        // A Keystore key that requires user authentication cannot even be
+        // CREATED without a screen lock, so the UI must say so up front rather
+        // than let the user meet a bare failure.
+        secureLockScreen: !!a.secureLockScreen, label: null,
+      };
+    } catch (e) {
+      return { supported: false, hasKey: false, reason: (e && e.message) || String(e) };
+    }
+  }
+  if (_isNative()) return { supported: false, hasKey: false, reason: _noSignerMessage() };
+  try {
+    const s = await _localDevice("status");
+    return {
+      supported: !!s.supported, platform: "windows",
+      hasKey: !!s.hasKey, label: s.label || null,
+      secureLockScreen: true, strongBox: false,
+      reason: s.reason || null,
+    };
+  } catch (_) {
+    return { supported: false, hasKey: false, reason: _noSignerMessage() };
+  }
+}
+
+// Create the keypair if absent; return its public half. Idempotent on both
+// platforms — neither backend ever replaces a key the Sutradhar already approved.
+async function _deviceEnsureKey() {
+  const p = _devicePlugin();
+  if (p) {
+    const r = await p.generateKey({});
+    return { publicKey: r.publicKey, platform: "android", label: null };
+  }
+  if (_isNative()) throw new Error(_noSignerMessage());
+  const r = await _localDevice("enroll", {});
+  return { publicKey: r.publicKey, platform: "windows", label: r.label || null };
+}
+
+async function _deviceSign(payload) {
+  const p = _devicePlugin();
+  if (p) {
+    const r = await p.sign({ payload });
+    return r.signature;
+  }
+  if (_isNative()) throw new Error(_noSignerMessage());
+  const r = await _localDevice("sign", { payload });
+  return r.signature;
+}
+
+// ---- Admin chat polling fallback ------------------------------------------
+// WHY THIS EXISTS: Phase 6 shipped as "Option B" — moderators and the Sutradhar
+// need an approved device to READ the community, not just to write to it. The
+// device proof is an HTTP header, and Supabase Realtime is a WebSocket, which
+// carries no headers. So `request.headers` is unset when Postgres evaluates RLS
+// for a postgres_changes subscription and every gated row is filtered out.
+//
+// The effect on an admin, once enforcement is on: messages, reactions and pin
+// changes never arrive live. Typing and presence still do (they ride
+// `broadcast`/`presence`, which RLS never sees), so the thread would show
+// "X is typing…" and then nothing — reading as broken rather than as slow.
+//
+// This poller closes that hole by re-fetching over PostgREST, which DOES carry
+// the header. It runs alongside Realtime rather than replacing it: double
+// delivery is already harmless because the UI dedupes on `data-mid`, and
+// keeping both means the thread behaves identically whether enforcement is on
+// or off, with no flag day.
+//
+// ⚠ Deliberately a SNAPSHOT DIFF, not a "created_at > since" query. Deleting a
+// message is an UPDATE that stamps `deleted_at` (there is no `updated_at`
+// column), so a since-query would deliver new messages but never tombstones.
+// Diffing the recent window catches both with one fetch.
+const CHAT_POLL_MS = 6000;
+const CHAT_POLL_WINDOW = 60;
+
+function _startChatPoll(wid, h) {
+  let stopped = false, busy = false, primed = false;
+  const msgs = new Map();     // id  -> deleted_at (null when live)
+  const reacts = new Map();   // key -> {mid, user, emoji}
+  let pin;                    // undefined = not yet known, null = nothing pinned
+
+  async function tick() {
+    // `primed` is what stops the first pass replaying the whole thread as if it
+    // had just arrived: pass one records what is already on screen and fires
+    // nothing.
+    if (stopped || busy) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    busy = true;
+    try {
+      // Selects `*` for the same reason communityRecent() does — naming
+      // deleted_at errors on a project where that migration hasn't run.
+      const { data: rows } = await _sb.from("messages").select("*")
+        .eq("wisdom_id", wid).order("created_at", { ascending: false })
+        .limit(CHAT_POLL_WINDOW);
+      if (rows) {
+        // Oldest first, so a burst lands in the order it was sent and message
+        // grouping resolves the same way a reload would.
+        rows.slice().reverse().forEach((r) => {
+          const now = r.deleted_at || null;
+          if (!msgs.has(r.id)) {
+            msgs.set(r.id, now);
+            if (primed && h.onMessage) h.onMessage(_mapMsg(r));
+          } else if (msgs.get(r.id) !== now) {
+            msgs.set(r.id, now);
+            if (h.onUpdate) h.onUpdate(_mapMsg(r));
+          }
+        });
+      }
+
+      const { data: rx } = await _sb.from("message_reactions")
+        .select("message_id,username,emoji").eq("wisdom_id", wid);
+      if (rx) {
+        const seen = new Set();
+        rx.forEach((r) => {
+          const k = `${r.message_id}|${r.username}|${r.emoji}`;
+          seen.add(k);
+          if (!reacts.has(k)) {
+            const ev = { mid: r.message_id, user: r.username, emoji: r.emoji };
+            reacts.set(k, ev);
+            if (primed && h.onReact) h.onReact(ev);
+          }
+        });
+        // Stored as objects, not parsed back out of the key: message_id is a
+        // uuid today but splitting a composite key to rebuild an event is the
+        // kind of thing that breaks silently if that ever changes.
+        Array.from(reacts.keys()).forEach((k) => {
+          if (seen.has(k)) return;
+          const ev = reacts.get(k);
+          reacts.delete(k);
+          if (primed && h.onUnreact) h.onUnreact(ev);
+        });
+      }
+
+      const { data: pr } = await _sb.from("thread_pins")
+        .select("message_id").eq("wisdom_id", wid).maybeSingle();
+      const cur = (pr && pr.message_id) || null;
+      if (pin !== undefined && cur !== pin && h.onPin) h.onPin(cur);
+      pin = cur;
+
+      primed = true;
+    } catch (_) {
+      // Offline or a transient failure — say nothing and try again next tick.
+      // Never surface this: the thread is still perfectly readable.
+    }
+    busy = false;
+  }
+
+  // Coming back from the background should feel instant, not wait out the
+  // interval — a phone resumed after an hour is exactly when there is most to
+  // catch up on.
+  const onVis = () => { if (document.visibilityState === "visible") tick(); };
+  if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVis);
+
+  tick();
+  const timer = setInterval(tick, CHAT_POLL_MS);
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVis);
+  };
+}
+
+// Friendly text when add_admin_devices.sql hasn't been run on this project yet.
+function _devicesMissing(error) {
+  const m = (error && error.message) || "";
+  return /admin_device|enroll_device|device_request/i.test(m) &&
+    /does not exist|not find|schema cache/i.test(m)
+    ? "Device registration isn't set up yet. (Admin: run supabase/add_admin_devices.sql.)"
+    : null;
 }
 
 // Fire-and-forget notification fan-out through the send-push Edge Function
@@ -270,7 +512,13 @@ const WA = {
     return { token: data.session.access_token, user: await _loadProfile(data.user.id) };
   },
 
-  async logout() { try { await _sb.auth.signOut(); } catch (_) {} },
+  // Dropping the device proof here (not only in signOutToGate) means every
+  // sign-out path clears it, including ones added later — the next person on
+  // this machine starts from nothing even though the KEY is still installed.
+  async logout() {
+    _deviceHeader = null;
+    try { await _sb.auth.signOut(); } catch (_) {}
+  },
 
   // Sync, no network: is a session stored on this device? The startup gate's
   // offline-grace check — see _hasStoredSession().
@@ -553,7 +801,9 @@ const WA = {
   // Concurrent Realtime connections are the scarcest free-tier resource, so a
   // thread must never cost more than the one connection it already opens.
   // `broadcast: {self: false}` keeps your own typing off your own screen.
-  subscribeChat(wid, { me, onMessage, onUpdate, onDelete, onReact, onUnreact, onTyping, onPresence, onPin }) {
+  // `poll` turns on the admin polling fallback — see _startChatPoll(). Callers
+  // pass isModerator(); everyone else rides Realtime alone as before.
+  subscribeChat(wid, { me, poll, onMessage, onUpdate, onDelete, onReact, onUnreact, onTyping, onPresence, onPin }) {
     const filter = "wisdom_id=eq." + String(wid);
     const ch = _sb.channel("wa-chat-" + wid, { config: { broadcast: { self: false } } })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter },
@@ -588,8 +838,15 @@ const WA = {
         // the member silently never appears as present.
         if (status === "SUBSCRIBED" && me) { try { ch.track({ user: me }); } catch (_) {} }
       });
+    const stopPoll = poll
+      ? _startChatPoll(wid, { onMessage, onUpdate, onReact, onUnreact, onPin })
+      : null;
+
     return {
-      close() { try { _sb.removeChannel(ch); } catch (_) {} },
+      close() {
+        if (stopPoll) stopPoll();
+        try { _sb.removeChannel(ch); } catch (_) {}
+      },
       // Fire-and-forget: a dropped typing ping is not worth a retry or an error.
       sendTyping(user) {
         try { ch.send({ type: "broadcast", event: "typing", payload: { user: user } }); } catch (_) {}
@@ -967,6 +1224,129 @@ const WA = {
   toggleMute(id) { return _rpc("toggle_mute", { uid: id }); },
   transferLeadership(id) { return _rpc("transfer_leadership", { uid: id }); },
   setSignup(enabled) { return _rpc("set_signup", { enabled }); },
+
+  // ----- Admin device binding (ADMIN_DEVICE_BINDING_PLAN.md) --------------
+  // Moderator/sutradhar powers only work from a device the Sutradhar approved.
+  // NOTHING here is a security check — every decision is made by Postgres
+  // (wa_device_ok()), because the anon key ships in this file and anyone can
+  // call PostgREST directly without loading the SPA. These methods only decide
+  // what to OFFER; the server decides what to allow.
+  //
+  // ⚠ Ordinary members never touch any of this. Only 'moderator' and
+  // 'sutradhar' need a device, so gate the UI on role before calling.
+
+  deviceCapabilities() { return _deviceCapabilities(); },
+  deviceIsSignedIn() { return !!_deviceHeader; },
+
+  // Create the key (if needed) and queue this device for the Sutradhar.
+  // Returns {id, status, enroll_code} — the code is read aloud so the Sutradhar
+  // knows WHICH request they are approving. It is not a secret.
+  async enrollDevice(label) {
+    label = (label || "").trim();
+    if (!label) throw new Error("Please give this device a name.");
+    const key = await _deviceEnsureKey();
+    let d;
+    try {
+      d = await _rpc("enroll_device", {
+        p_label: label, p_platform: key.platform,
+        p_pubkey: key.publicKey, p_machine_note: key.label || null,
+      });
+    } catch (e) {
+      throw new Error(_devicesMissing(e) || e.message);
+    }
+    // Tell the Sutradhar at once — an enrolment they did not expect is the
+    // early-warning signal the whole threat model leans on. Only for a NEW
+    // request: `already` means we just handed back an existing row, and
+    // re-notifying on every retry would train them to ignore it.
+    if (d && !d.already) _firePush({ kind: "device_request", device_id: d.id });
+    return d;
+  },
+
+  // Prove possession of the key and obtain the 12h session header.
+  //
+  // Call it after the auth gate clears and before any moderator UI. Returns
+  // false rather than throwing when this device simply isn't enrolled — that is
+  // the ordinary state for a moderator on a new machine, not an error.
+  //
+  // ⚠ REALTIME IS NOT COVERED. The header rides a custom fetch, but Realtime is
+  // a WebSocket and carries no headers, so `request.headers` is unset when
+  // Postgres evaluates RLS for a postgres_changes subscription. Once Phase 6
+  // puts wa_member_ok() on messages_select, an admin would keep full access
+  // through PostgREST (send, reload, moderate) but stop receiving LIVE updates.
+  // Unresolved — see the Phase 6 note in the plan. It does not bite in audit
+  // mode, and it does not affect ordinary members at all.
+  async deviceSignIn() {
+    if (_deviceHeader) return true;
+    let caps;
+    try { caps = await _deviceCapabilities(); } catch (_) { return false; }
+    if (!caps.supported || !caps.hasKey) return false;
+
+    // Which of this account's active devices is THIS one? We don't ask — we try
+    // each in turn and let the signature settle it. list_my_devices() doesn't
+    // return public keys (deliberately: no reason to hand them out), and a
+    // device id cached in localStorage would be a guess that outlives the key
+    // it names. Trying is cheap and self-verifying: signing a challenge issued
+    // for another device produces a signature that fails against that device's
+    // stored key, which is exactly the right answer. wa_device_cap() bounds the
+    // loop at 3.
+    let mine;
+    try { mine = await _rpc("list_my_devices"); } catch (_) { return false; }
+    const rows = (mine && mine.devices) || [];
+    const active = rows.filter((d) => d.status === "active");
+    if (!active.length) return false;
+
+    for (const d of active) {
+      try {
+        const ch = await _sb.functions.invoke("device-auth", {
+          body: { action: "challenge", device_id: d.id },
+        });
+        if (ch.error || !ch.data || !ch.data.ok) continue;
+        // Sign what the function handed back, never a locally rebuilt string —
+        // the format must match byte for byte or verification silently fails.
+        const signature = await _deviceSign(ch.data.sign_this);
+        const vr = await _sb.functions.invoke("device-auth", {
+          body: { action: "verify", device_id: d.id, nonce: ch.data.nonce, signature },
+        });
+        if (vr.error || !vr.data || !vr.data.ok) continue;
+        _deviceHeader = vr.data.header;
+        return true;
+      } catch (e) {
+        // AUTH_REQUIRED (phone not unlocked recently enough) and KEY_INVALIDATED
+        // are the two the caller must be able to act on; everything else is just
+        // "this device didn't work".
+        const code = (e && (e.code || e.message)) || "";
+        if (/AUTH_REQUIRED|unlock your phone/i.test(code)) {
+          throw new Error("Please unlock your phone, then try again.");
+        }
+        if (/KEY_INVALIDATED|no longer valid/i.test(code)) {
+          throw new Error("This device's key is no longer valid. Please register it again.");
+        }
+      }
+    }
+    return false;
+  },
+
+  // Drop the session proof without touching the key — used by sign-out, so the
+  // next person on this machine starts from nothing.
+  deviceSignOut() { _deviceHeader = null; },
+
+  myDevices() { return _rpc("list_my_devices"); },
+  revokeDevice(id) { return _rpc("revoke_device", { p_id: id }); },
+
+  // ----- Sutradhar only ---------------------------------------------------
+  listDeviceRequests() { return _rpc("list_device_requests"); },
+  listAdminDevices() { return _rpc("list_admin_devices"); },
+  approveDevice(id) { return _rpc("approve_device", { p_id: id }); },
+  denyDevice(id) { return _rpc("deny_device", { p_id: id }); },
+  reinstateDevice(id) { return _rpc("reinstate_device", { p_id: id }); },
+
+  // Returns the 8 plaintext codes ONCE. The caller must show them and warn, in
+  // Hindi, against screenshotting: a screenshot puts the codes and the device
+  // in the same pocket and defeats the whole feature.
+  generateRecoveryCodes() { return _rpc("generate_recovery_codes"); },
+  approveWithRecovery(id, code) {
+    return _rpc("approve_device_with_recovery", { p_id: id, p_code: code });
+  },
 };
 
 window.WA = WA;

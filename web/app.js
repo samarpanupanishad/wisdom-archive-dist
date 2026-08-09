@@ -224,6 +224,138 @@ async function signOutToGate() {
 // Used by the chat gate, the mobile Account page and the avatar popover — call
 // accessBox(), don't hand-write another copy of these states.
 // --------------------------------------------------------------------------
+// --------------------------------------------------------------------------
+// Admin device box — the ONE builder for "this device isn't registered yet".
+// ADMIN_DEVICE_BINDING_PLAN.md, Phase 5. Mirrors accessBox(): one element, all
+// states, called from anywhere that needs it. Don't hand-write another copy.
+//
+// ⚠ This is NOT a security control. It only decides what to OFFER. Postgres
+// (wa_device_ok()) decides what to allow, because the anon key ships in
+// wa-supabase.js and anyone can call PostgREST without loading this app.
+//
+// ⚠ Ordinary members never see it. Only 'moderator' and 'sutradhar' hold
+// devices, so every caller must gate on isModerator() first.
+//
+// CSS is namespaced `dv-` — `ax-` belongs to accessBox() and the two would
+// collide on .ax-err, exactly as Anubhuti's `an-` had to.
+// --------------------------------------------------------------------------
+function deviceBox() {
+  const box = el(`<div class="dv-box"><div class="dv-note">Checking this device…</div></div>`);
+  paintDeviceBox(box);
+  return box;
+}
+
+async function paintDeviceBox(box) {
+  const set = (html) => { box.innerHTML = html; };
+  const caps = await WA.deviceCapabilities();
+
+  if (!caps.supported) {
+    set(`<div class="dv-h">This device can't be registered</div>
+         <div class="dv-note">${escapeHtml(caps.reason || "Not supported here.")}</div>`);
+    return;
+  }
+
+  let mine = { devices: [] };
+  try { mine = await WA.myDevices(); } catch (e) {
+    set(`<div class="dv-h">Device registration</div>
+         <div class="dv-err">${escapeHtml(e.message)}</div>`);
+    return;
+  }
+  const pending = (mine.devices || []).filter((d) => d.status === "pending");
+  const active = (mine.devices || []).filter((d) => d.status === "active");
+
+  // Already working: say so quietly and stop. Nothing to do.
+  if (active.length && WA.deviceIsSignedIn()) {
+    set(`<div class="dv-ok">✓ This device is registered.</div>`);
+    return;
+  }
+
+  if (pending.length) {
+    const p = pending[0];
+    const amSutradhar = isSutradhar();
+    set(`<div class="dv-h">Waiting for the Sutradhar</div>
+      <div class="dv-note">Ask the Sutradhar to approve this device. Read them this code so they
+        know it is you:</div>
+      <div class="dv-code">${escapeHtml(p.enroll_code || "—")}</div>
+      ${amSutradhar ? `
+        <div class="dv-note dv-sep">You are the Sutradhar, so nobody can approve this for you.
+          Use one of your printed recovery codes.</div>
+        <input class="dv-input dv-rc" placeholder="XXXX-XXXX-XXXX" autocapitalize="characters" />
+        <button class="btn primary dv-go dv-rc-go">Use recovery code</button>` : ""}
+      <div class="dv-err"></div>`);
+
+    if (amSutradhar) {
+      const input = box.querySelector(".dv-rc");
+      const go = box.querySelector(".dv-rc-go");
+      const err = box.querySelector(".dv-err");
+      go.addEventListener("click", async () => {
+        err.textContent = "";
+        go.disabled = true; go.textContent = "Checking…";
+        try {
+          await WA.approveWithRecovery(p.id, input.value);
+          toast("This device is now registered");
+          await WA.deviceSignIn().catch(() => {});
+          paintDeviceBox(box);
+        } catch (e) {
+          err.textContent = e.message;
+          go.disabled = false; go.textContent = "Use recovery code";
+        }
+      });
+    }
+    return;
+  }
+
+  if (active.length) {
+    // Approved, but we hold no session proof — usually a launch where signing
+    // failed because the phone hasn't been unlocked inside the Keystore window.
+    set(`<div class="dv-h">Unlock to continue</div>
+      <div class="dv-note">This device is registered, but it needs to confirm it's really you.</div>
+      <button class="btn primary dv-go dv-retry">Try again</button>
+      <div class="dv-err"></div>`);
+    const err = box.querySelector(".dv-err");
+    box.querySelector(".dv-retry").addEventListener("click", async () => {
+      err.textContent = "";
+      try {
+        if (await WA.deviceSignIn()) { toast("Device confirmed"); paintDeviceBox(box); }
+        else err.textContent = "Still couldn't confirm this device.";
+      } catch (e) { err.textContent = e.message; }
+    });
+    return;
+  }
+
+  // Nothing registered yet — the first-run state.
+  if (caps.secureLockScreen === false) {
+    set(`<div class="dv-h">Set a screen lock first</div>
+      <div class="dv-note">This phone has no PIN, pattern or fingerprint. The device key is
+        protected by your screen lock, so one has to be set before this phone can be registered.</div>`);
+    return;
+  }
+
+  set(`<div class="dv-h">Register this device</div>
+    <div class="dv-note">Moderator tools work only on devices the Sutradhar has approved. Give this
+      one a name they will recognise.</div>
+    <input class="dv-input dv-label" maxlength="60" placeholder="${escapeHtml(caps.label || "My phone")}" />
+    <button class="btn primary dv-go dv-enroll">Register</button>
+    <div class="dv-err"></div>`);
+  const err = box.querySelector(".dv-err");
+  const btn = box.querySelector(".dv-enroll");
+  btn.addEventListener("click", async () => {
+    err.textContent = "";
+    const name = (box.querySelector(".dv-label").value || caps.label || "").trim();
+    if (!name) { err.textContent = "Please give this device a name."; return; }
+    btn.disabled = true; btn.textContent = "Registering…";
+    try {
+      // WA.enrollDevice() notifies the Sutradhar itself, the same way
+      // postMessage() and createAnubhutiTopic() own their own pushes.
+      await WA.enrollDevice(name);
+      paintDeviceBox(box);
+    } catch (e) {
+      err.textContent = e.message;
+      btn.disabled = false; btn.textContent = "Register";
+    }
+  });
+}
+
 function accessBox() {
   const box = el(`<div class="ax-box"><div class="ax-note">Checking your access…</div></div>`);
   paintAccessBox(box);
@@ -1794,6 +1926,11 @@ function openChatStream(wid, msgsEl, ctx) {
   // for rows removed before the migration, and for a true purge.
   _chatStream = WA.subscribeChat(wid, {
     me: ctx.me,
+    // Admins need the polling fallback: their Realtime feed goes silent once
+    // device binding is enforced, because a WebSocket cannot carry the device
+    // header (see _startChatPoll in wa-supabase.js). Ordinary members are
+    // unaffected and stay on Realtime alone.
+    poll: isModerator(),
     onMessage: (m) => {
       chatAppendLive(msgsEl, m, ctx);
       // Someone just spoke, so they've plainly stopped typing.
@@ -3106,6 +3243,20 @@ async function renderModerator() {
   });
   wrap.appendChild(signup);
 
+  // This device — shown to any moderator whose machine isn't registered yet.
+  // It sits at the very top: if the device isn't approved, nothing else on this
+  // page will work once enforcement is on, and explaining that first saves a
+  // confusing round of "why did Approve fail?".
+  const devSelf = el(`<div class="mod-card mod-dev-self"></div>`);
+  devSelf.appendChild(deviceBox());
+  wrap.appendChild(devSelf);
+
+  // Device approvals — SUTRADHAR ONLY, and deliberately so: a moderator
+  // approving another moderator's device (or their own) would undo the point of
+  // the whole feature. Postgres enforces it; this only hides a button the
+  // server would refuse anyway.
+  if (isSutradhar()) wrap.appendChild(modDeviceCards());
+
   // Community access requests — people asking to join. This is the queue that
   // matters day to day, so it sits ABOVE the full account list.
   const reqCard = el(`<div class="mod-card mod-access-reqs">
@@ -3167,6 +3318,141 @@ async function renderModerator() {
   wrap.appendChild(out);
 
   $view.replaceChildren(wrap);
+}
+
+// --------------------------------------------------------------------------
+// Sutradhar-only device administration: the approval queue, the registered
+// list, and recovery codes. Returns one fragment so renderModerator stays flat.
+// --------------------------------------------------------------------------
+function modDeviceCards() {
+  const frag = document.createDocumentFragment();
+
+  const reqCard = el(`<div class="mod-card mod-dev-reqs">
+    <div class="mod-card-h">Device approvals</div>
+    <div class="mod-card-sub">Only approve a device if you know who asked and the code matches what
+      they read out. Approving is what lets that machine use moderator tools.</div>
+    <div class="mod-dev-list"><div class="mod-req-empty">Loading…</div></div>
+  </div>`);
+  frag.appendChild(reqCard);
+
+  const allCard = el(`<div class="mod-card mod-dev-all">
+    <div class="mod-card-h">Registered devices</div>
+    <div class="mod-card-sub">Every device that can currently use moderator tools. Remove one the
+      moment it is lost or sold.</div>
+    <div class="mod-dev-all-list"><div class="mod-req-empty">Loading…</div></div>
+  </div>`);
+  frag.appendChild(allCard);
+
+  const rcCard = el(`<div class="mod-card mod-dev-codes">
+    <div class="mod-card-h">Your recovery codes</div>
+    <div class="mod-card-sub">Nobody can approve your own new phone — you are the Sutradhar. These
+      printed codes are the only way back in, so make them before you need them.</div>
+    <div class="mod-rc-state">Loading…</div>
+    <button class="btn mod-rc-gen">Generate new codes</button>
+    <div class="mod-rc-out"></div>
+  </div>`);
+  frag.appendChild(rcCard);
+
+  (async () => {
+    const list = reqCard.querySelector(".mod-dev-list");
+    const empty = (m) => { list.innerHTML = `<div class="mod-req-empty">${escapeHtml(m)}</div>`; };
+    let d;
+    try { d = await WA.listDeviceRequests(); } catch (e) { empty(e.message); return; }
+    if (!d.requests || !d.requests.length) { empty("No devices are waiting."); return; }
+    list.innerHTML = "";
+    d.requests.forEach((r) => {
+      const row = el(`<div class="mod-req-row">
+        <div class="mod-req-info">
+          <strong>${escapeHtml(r.username)}</strong>
+          <span class="mu-email">${escapeHtml(roleLabel(r.role))} · ${escapeHtml(timeAgo(r.requested_at))}</span>
+          <div class="mod-req-note">${escapeHtml(r.label)} · ${escapeHtml(r.platform)}${
+            r.machine_note ? " · " + escapeHtml(r.machine_note) : ""}</div>
+          <div class="mod-dev-code">Code ${escapeHtml(r.enroll_code || "—")}</div>
+        </div>
+        <div class="mod-req-actions">
+          <button class="btn primary mod-dev-ok">Approve</button>
+          <button class="btn danger mod-dev-no">Deny</button>
+        </div>
+      </div>`);
+      const settle = (m) => {
+        toast(m); row.remove();
+        if (!list.querySelector(".mod-req-row")) empty("No devices are waiting.");
+      };
+      row.querySelector(".mod-dev-ok").addEventListener("click", async () => {
+        try { await WA.approveDevice(r.id); settle("Device approved"); }
+        catch (e) { toast(e.message); }
+      });
+      row.querySelector(".mod-dev-no").addEventListener("click", async () => {
+        try { await WA.denyDevice(r.id); settle("Device denied"); }
+        catch (e) { toast(e.message); }
+      });
+      list.appendChild(row);
+    });
+  })();
+
+  (async () => {
+    const list = allCard.querySelector(".mod-dev-all-list");
+    const empty = (m) => { list.innerHTML = `<div class="mod-req-empty">${escapeHtml(m)}</div>`; };
+    let d;
+    try { d = await WA.listAdminDevices(); } catch (e) { empty(e.message); return; }
+    const rows = (d.devices || []).filter((x) => x.status === "active");
+    if (!rows.length) { empty("No devices are registered yet."); return; }
+    list.innerHTML = "";
+    rows.forEach((x) => {
+      const row = el(`<div class="mod-req-row">
+        <div class="mod-req-info">
+          <strong>${escapeHtml(x.username)}</strong>
+          <span class="mu-email">${escapeHtml(x.label)} · ${escapeHtml(x.platform)}</span>
+          <div class="mod-req-note">${x.last_seen ? "Last used " + escapeHtml(timeAgo(x.last_seen))
+            : "Never used"}${x.approved_via === "recovery" ? " · approved by recovery code" : ""}</div>
+        </div>
+        <div class="mod-req-actions"><button class="btn danger mod-dev-rm">Remove</button></div>
+      </div>`);
+      row.querySelector(".mod-dev-rm").addEventListener("click", async () => {
+        if (!confirm(`Remove "${x.label}" from ${x.username}? They will need approving again.`)) return;
+        try {
+          await WA.revokeDevice(x.id);
+          toast("Device removed"); row.remove();
+          if (!list.querySelector(".mod-req-row")) empty("No devices are registered yet.");
+        } catch (e) { toast(e.message); }
+      });
+      list.appendChild(row);
+    });
+  })();
+
+  (async () => {
+    const state = rcCard.querySelector(".mod-rc-state");
+    const gen = rcCard.querySelector(".mod-rc-gen");
+    const out = rcCard.querySelector(".mod-rc-out");
+    try {
+      const d = await WA.myDevices();
+      const left = d.codes_left || 0;
+      state.textContent = left
+        ? `${left} of 8 codes remaining.`
+        : "No recovery codes yet — generate them now, before you need them.";
+    } catch (e) { state.textContent = e.message; }
+
+    gen.addEventListener("click", async () => {
+      if (!confirm("Generating new codes cancels any codes you printed before. Continue?")) return;
+      gen.disabled = true;
+      try {
+        const d = await WA.generateRecoveryCodes();
+        state.textContent = "8 of 8 codes remaining.";
+        // Shown ONCE — the server keeps only hashes. The Hindi warning is
+        // deliberate and load-bearing: a screenshot puts the codes and the
+        // device in the same pocket, which defeats the entire feature.
+        out.innerHTML = `<div class="mod-rc-warn">⚠ इन कोड का स्क्रीनशॉट न लें।
+            इन्हें कागज़ पर लिखकर सुरक्षित स्थान पर रखें।<br>
+            <span class="mod-rc-warn-en">Do not screenshot these. Write them on paper and keep them
+            somewhere safe — not on this device. They are shown only once.</span></div>
+          <div class="mod-rc-codes">${(d.codes || []).map((c) =>
+            `<code>${escapeHtml(c)}</code>`).join("")}</div>`;
+      } catch (e) { toast(e.message); }
+      gen.disabled = false;
+    });
+  })();
+
+  return frag;
 }
 
 function modUserRow(u, me) {
@@ -8525,6 +8811,17 @@ window.addEventListener("hashchange", () => { if (!AUTH_GATE.isOpen()) safeRoute
 
 AUTH_GATE.boot(function startApp() {
   safeRoute();
+
+  // Admin device proof. Only moderators/sutradhar hold devices, so this is a
+  // no-op for everyone else — and it must never block startup: the app is fully
+  // usable without it, just without moderator tools.
+  //
+  // ⚠ Failures are swallowed on purpose. deviceSignIn() returns false for the
+  // ordinary "this machine isn't registered" case, and can throw AUTH_REQUIRED
+  // when the phone hasn't been unlocked inside the Keystore window. Neither is
+  // a startup error — deviceBox() on the Moderator page is where the user is
+  // told what to do about it.
+  if (isModerator()) WA.deviceSignIn().catch(() => {});
 
   // Special Messages: paint the unread badges from the offline cache right away
   // (chrome for both shells exists by now), then freshen in the background so a

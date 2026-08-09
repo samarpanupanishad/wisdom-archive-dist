@@ -2562,3 +2562,44 @@ body.gated { overflow: hidden; }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); overflow: hidden;
 }
+
+/* --- Admin device binding (ADMIN_DEVICE_BINDING_PLAN.md, Phase 5) ---------
+   `dv-` namespace: `ax-` belongs to accessBox() and the two collide on .ax-err,
+   exactly as Anubhuti's `an-` had to be kept separate. */
+.dv-box { text-align: left; }
+.dv-box .dv-h { font-weight: 700; font-size: 14.5px; margin-bottom: 3px; }
+.dv-box .dv-note { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.dv-box .dv-note.dv-sep { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.dv-box .dv-ok { font-size: 13.5px; color: var(--muted); }
+/* The enrol code is read aloud over the phone, so it has to be unmistakable at
+   a glance — wide tracking and a tabular face stop 6/8 and 0/O being misheard. */
+.dv-box .dv-code {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums;
+  font-size: 26px; font-weight: 700; letter-spacing: .22em; margin: 10px 0 2px;
+}
+.dv-box .dv-input {
+  display: block; width: 100%; max-width: 320px; margin: 10px 0 8px; padding: 9px 11px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+  color: inherit; font-size: 14px; font-family: ui-monospace, Menlo, Consolas, monospace;
+  text-transform: uppercase;
+}
+.dv-box .dv-input:focus { outline: none; border-color: var(--accent-2); box-shadow: var(--ring); }
+.dv-box .dv-go { justify-content: center; }
+.dv-box .dv-err:empty { display: none; }
+.dv-box .dv-err { font-size: 13px; color: #a23b3b; margin-top: 8px; }
+
+.mod-dev-code {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums;
+  font-size: 15px; font-weight: 700; letter-spacing: .14em; margin-top: 4px;
+}
+.mod-rc-state { font-size: 13.5px; color: var(--muted); margin: 8px 0 10px; }
+.mod-rc-warn {
+  font-size: 13.5px; line-height: 1.6; margin: 14px 0 10px; padding: 11px 13px;
+  border: 1px solid #d9a441; border-radius: 10px; background: rgba(217, 164, 65, .10);
+}
+.mod-rc-warn-en { color: var(--muted); font-size: 12.5px; }
+.mod-rc-codes { display: flex; flex-wrap: wrap; gap: 8px; }
+.mod-rc-codes code {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; letter-spacing: .08em;
+  padding: 7px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+}
