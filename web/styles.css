@@ -1009,7 +1009,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 /* Soft faded edge: no hard border against watercolour. The mask fades the photo
    into the background instead of cutting it out, so the red does not sit on the
    lavender as a pasted-on rectangle. */
-.pl-charan { display: block; margin: 0 auto .55em; width: 99px; height: 64px;
+.pl-charan { display: block; margin: 0 auto .8em; width: 132px; height: 85px;
   object-fit: cover; border-radius: 50%;
   -webkit-mask-image: radial-gradient(ellipse at 50% 50%, #000 58%, transparent 78%);
           mask-image: radial-gradient(ellipse at 50% 50%, #000 58%, transparent 78%); }
@@ -1018,7 +1018,8 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .pl-tag { margin-top: .3em; font-family: var(--serif, Georgia, serif); font-style: italic;
   font-size: 14px; line-height: 1.3; }
 .pl-tag-a { color: #e79bb0; }                                  /* light pink */
-.pl-tag-b { color: #a8385c; font-weight: 700; font-style: normal; letter-spacing: .09em; }  /* dark pink */
+.pl-tag-b { display: block; margin-top: .15em; color: #a8385c; font-weight: 700;
+  font-style: normal; letter-spacing: .09em; }                 /* dark pink, own centred line */
 
 .pl-text { color: var(--accent); font-weight: 600; font-size: 16px; margin-top: 8px; min-height: 22px; }
 @media (prefers-reduced-motion: reduce) {
@@ -1036,7 +1037,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    by 40px at full size), which is why this keys off height, not width. */
 @media (max-height: 560px) {
   .pl-brand { top: 2%; }
-  .pl-charan { width: 68px; height: 44px; margin-bottom: .35em; }
+  .pl-charan { width: 84px; height: 54px; margin-bottom: .45em; }
   .pl-name { font-size: 16px; }
   .pl-tag { font-size: 11px; }
   /* The lockup alone is not enough: the chakra column is ~314px on its own, so on a
@@ -1047,7 +1048,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 /* Landscape phone (~375px tall). The app is NOT portrait-locked, so a rotation during
    launch lands here. Everything shrinks again; measured to clear at 812x375. */
 @media (max-height: 460px) {
-  .pl-charan { width: 54px; height: 35px; margin-bottom: .3em; }
+  .pl-charan { width: 66px; height: 43px; margin-bottom: .35em; }
   .pl-name { font-size: 14px; letter-spacing: .04em; }
   .pl-tag { font-size: 10px; }
   .chakra { width: 16px; height: 16px; }
