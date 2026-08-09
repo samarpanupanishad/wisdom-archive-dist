@@ -1484,14 +1484,29 @@ async function paintAttachments(msgEl, atts) {
   });
 }
 
-// Full-screen view of one shared image. Deliberately its own overlay rather
-// than the reader's zoom mode (MOBILE_UI m-zoomwrap) — that one is wired to the
-// archive's pages and its gestures, and borrowing it would tangle the two.
-async function openMediaViewer(att) {
+// Full-screen view of a shared image. On mobile this opens the SAME zoom
+// shell as the daily msg (MOBILE_UI.openChatZoom): pinch/pan, the edge rocker,
+// and — when the message carries more than one image — a vertically
+// scrolling gallery across the message's other attachments, starting on the
+// one tapped. Desktop has no double-tap gesture to exit a full zoom mode, so
+// it keeps the plain click-to-close lightbox.
+async function openMediaViewer(atts, index) {
+  const att = atts[index];
   let url;
   try { url = (await mediaUrls([att.path]))[att.path]; } catch { url = null; }
   if (!url) { toast("Couldn't open that file."); return; }
   if (!isImageAtt(att)) { window.open(url, "_blank", "noopener"); return; }
+
+  if (typeof MOBILE_UI !== "undefined" && MOBILE_UI.active) {
+    const imgAtts = atts.filter(isImageAtt);
+    const startIndex = imgAtts.indexOf(att);
+    let urls;
+    try { urls = await mediaUrls(imgAtts.map((a) => a.path)); } catch { urls = { [att.path]: url }; }
+    const srcs = imgAtts.map((a) => urls[a.path]).filter(Boolean);
+    MOBILE_UI.openChatZoom(srcs, startIndex);
+    return;
+  }
+
   const box = el(`<div class="wc-lightbox"><img alt=""><button class="wc-lb-x" aria-label="Close">✕</button></div>`);
   box.querySelector("img").src = url;
   const close = () => box.remove();
@@ -1678,7 +1693,7 @@ function buildChatMsgEl(m, ctx, prev) {
     msgEl.querySelectorAll("[data-att]").forEach((b) => {
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        openMediaViewer(atts[parseInt(b.dataset.att, 10)]);
+        openMediaViewer(atts, parseInt(b.dataset.att, 10));
       });
     });
     paintAttachments(msgEl, atts);
@@ -5960,6 +5975,95 @@ const MOBILE_UI = (() => {
     z.showBar();   // visible on entry, then auto-hides
   }
 
+  // Chat attachment zoom - a message shared with more than one image opens
+  // into the SAME shell as enterZoom, but the view is a vertically scrolling
+  // stack of slides (scroll-snap, one image per screen) so a swipe moves to
+  // the next/previous attachment. Each slide keeps its own independent
+  // pinch/pan state. The tricky bit is not fighting native scroll: while a
+  // slide is at 1x, one-finger touches are left alone (touch-action: pan-y
+  // lets the browser page between slides); only once the CURRENT slide is
+  // zoomed in does touch-action flip to "none" and one-finger drags pan the
+  // image instead of scrolling past it.
+  function enterZoomGallery(imgSrcs, startIndex) {
+    const slides = imgSrcs.map((src) =>
+      `<div class="m-zoom-slide"><img src="${escapeHtml(src)}" alt="" draggable="false"></div>`).join("");
+    const z = buildZoomShell(slides, 50, () => applyCur());
+    const view = z.view;
+    view.classList.add("m-zg-view");
+    const slideEls = Array.from(view.querySelectorAll(".m-zoom-slide"));
+    let cur = Math.max(0, Math.min(slideEls.length - 1, startIndex || 0));
+    const st = slideEls.map(() => ({ tx: 0, ty: 0 }));
+
+    function applySlide(i) {
+      const img = slideEls[i].querySelector("img");
+      const s = zScale(z.value());
+      const mx = Math.max(0, (img.clientWidth * s - view.clientWidth) / 2);
+      const my = Math.max(0, (img.clientHeight * s - view.clientHeight) / 2);
+      st[i].tx = Math.min(mx, Math.max(-mx, st[i].tx));
+      st[i].ty = Math.min(my, Math.max(-my, st[i].ty));
+      img.style.transform = `translate(${st[i].tx}px, ${st[i].ty}px) scale(${s})`;
+      view.style.touchAction = s > 1.01 ? "none" : "pan-y";
+    }
+    function applyCur() { applySlide(cur); }
+    slideEls.forEach((slide, i) => {
+      slide.querySelector("img").addEventListener("load", () => applySlide(i));
+    });
+    z.apply();
+    // Reading clientHeight forces a synchronous layout, so this jumps to the
+    // tapped slide immediately — no need to wait a frame (and waiting one
+    // isn't safe here: rAF can go unfired while the view isn't compositing).
+    view.scrollTop = cur * view.clientHeight;
+
+    // Track which slide is on screen so the rocker always zooms what's
+    // visible, and each slide resets to 1x as it comes into view (matching
+    // how a fresh single-image zoom always opens at 50%/1x).
+    let scrollTimer = null;
+    view.addEventListener("scroll", () => {
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
+        const i = Math.round(view.scrollTop / view.clientHeight);
+        if (i >= 0 && i < slideEls.length && i !== cur) { cur = i; z.setValue(50); }
+      }, 80);
+    }, { passive: true });
+
+    // --- one-finger pan (only while the current slide is zoomed in),
+    // two-finger pinch (always zooms the current slide)
+    let p0 = null, pinch0 = null;
+    view.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 1) {
+        p0 = zScale(z.value()) > 1.01 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+        pinch0 = null;
+      } else if (e.touches.length === 2) {
+        pinch0 = { d: tDist(e.touches), v: z.value() }; p0 = null;
+      }
+    }, { passive: true });
+    view.addEventListener("touchmove", (e) => {
+      if (e.touches.length === 1 && p0) {
+        e.preventDefault();
+        st[cur].tx += e.touches[0].clientX - p0.x; st[cur].ty += e.touches[0].clientY - p0.y;
+        p0 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        applySlide(cur);
+      } else if (e.touches.length === 2 && pinch0) {
+        e.preventDefault();
+        z.setValue(zValue(zScale(pinch0.v) * tDist(e.touches) / pinch0.d));
+        z.showBar();
+      }
+    }, { passive: false });
+    view.addEventListener("touchend", (e) => { if (!e.touches.length) { p0 = null; pinch0 = null; } }, { passive: true });
+
+    // Double-tap exits zoom (back to the chat); a single tap toggles the bar.
+    wireDoubleTap(view, exitZoom, z.toggleBar);
+    z.showBar();
+  }
+
+  // Single entry point for chat attachments: one image behaves exactly like
+  // the daily-msg zoom, more than one adds the scrolling gallery above.
+  function openChatZoom(imgSrcs, startIndex) {
+    if (!imgSrcs || !imgSrcs.length) return;
+    if (imgSrcs.length === 1) enterZoom(imgSrcs[0]);
+    else enterZoomGallery(imgSrcs, startIndex || 0);
+  }
+
   // Text zoom - Special Telegram messages. Same shell, same rocker, same exit;
   // the rocker drives FONT SIZE and the whole message scrolls vertically as one
   // column (no pages in here - at large sizes paging would fragment it badly).
@@ -7934,6 +8038,7 @@ const MOBILE_UI = (() => {
 
   return {
     active,
+    openChatZoom,
     handles(seg) { return !seg.length || seg[0] === "entry" || seg[0] === "m" || seg[0] === "favorites" || seg[0] === "special" || seg[0] === "letterpad" || seg[0] === "anubhuti"; },
     async route(seg, params) {
       closeDrawer();

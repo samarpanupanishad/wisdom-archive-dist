@@ -1830,6 +1830,19 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
   font-size: 1.15em; line-height: 1.35; margin-bottom: 14px;
 }
 .m-zt-body { white-space: pre-wrap; line-height: 1.75; }
+/* Chat attachment gallery zoom — a message with more than one image scrolls
+   vertically between them (scroll-snap, one image per "page"); each image
+   keeps its own pinch/pan like the single-image zoom. Native scroll handles
+   the page-to-page swipe so it can't fight the JS pan, which only takes over
+   once a slide is actually zoomed in (see enterZoomGallery). */
+.m-zoomview.m-zg-view {
+  display: block; overflow-y: auto; overflow-x: hidden; touch-action: pan-y;
+  scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch;
+}
+.m-zoom-slide {
+  height: 100%; scroll-snap-align: start; scroll-snap-stop: always;
+  display: flex; align-items: center; justify-content: center;
+}
 /* Compact volume-rocker capsule: short pill on the right edge, low (near
    thumb reach), fill rises from the bottom, tick at the 50 = normal mark,
    fades out when idle (.m-hidden). */
