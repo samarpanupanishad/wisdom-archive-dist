@@ -1307,6 +1307,24 @@ body.m-mode.m-notop .m-top { display: none; }
   -webkit-text-fill-color: transparent; color: transparent;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* Left-hand date pill (the message sections — see setTopDate in app.js). The
+   bar is only 52px of phone width and already carries a back chevron and the
+   action slot, so a bar WITH a date shrinks its title to a small bold label —
+   that is the only way both fit without either one truncating. */
+.m-top .m-topdate {
+  flex: none; max-width: 40vw; border: 1px solid #d9c7ef; background: #f3ecfb;
+  color: #6a1b9a; font: 700 12.5px var(--sans); letter-spacing: .01em;
+  padding: 5px 10px; border-radius: 999px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.m-top .m-topdate[hidden] { display: none; }
+.m-top .m-topdate::after { content: " ▾"; font-size: 10px; opacity: .7; }
+.m-top .m-topdate:active { background: #e7dbf7; }
+.m-top.has-date .m-title { font-size: 12.5px; letter-spacing: .02em; }
+/* The action slot normally holds its 42px even when empty, to keep the centred
+   title from jumping between pages. A bar with a date pill isn't centred
+   anyway, so an UNUSED slot there gives its width back to the title instead. */
+.m-top.has-date .m-topact:not(.on) { display: none; }
 
 /* ---- viewer panel (home/entry screens only) — date/day left, fav/share/
    download right. A real bar sitting ABOVE the image (not an overlay on
@@ -1584,17 +1602,20 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
 .m-dp-wd { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); text-align: center; color: var(--muted); font-size: 11px; font-weight: 500; padding: 2px 12px 0; }
 /* Fixed 6 rows → identical height for every month (no jump between Feb/Jan).
    minmax(0,1fr) columns so the 7 days always fit the width (no horizontal scroll). */
-.m-dp-grid { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); grid-template-rows: repeat(6, 34px); gap: 1px; padding: 2px 12px 2px; }
+/* touch-action: pan-y — the grid takes horizontal swipes itself (previous /
+   next month, see wireMonthSwipe); vertical still scrolls the picker. */
+.m-dp-grid { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); grid-template-rows: repeat(6, 34px); gap: 1px; padding: 2px 12px 2px; touch-action: pan-y; }
 .m-dp-day { position: relative; height: 34px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border: none; background: transparent; color: var(--text); font: 400 14px var(--sans); cursor: pointer; border-radius: 10px; }
 .m-dp-day > span { width: 32px; height: 32px; line-height: 32px; text-align: center; border-radius: 50%; }
 .m-dp-day.anu { background: var(--dp-pink); }
-.m-dp-day.sel > span { background: var(--dp-dark); color: #fff; font-weight: 500; }
 .m-dp-day:disabled { opacity: .26; cursor: default; }
-/* Section picker: every day that HAS a message wears the filled circle, so the
-   month reads at a glance as "these are the days with messages". The currently
-   selected one is still distinguishable by the ring. */
-.m-dp-day.has > span { background: var(--dp-dark); color: #fff; font-weight: 500; }
-.m-dp-day.has.sel > span { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--dp-dark); }
+/* Section picker: a day that HAS a message is simply WRITTEN in purple — no
+   circle, no fill. A grid full of filled circles read as a month of selections
+   rather than "here is where the messages are" (operator, 2026-08-10). The one
+   day actually selected keeps the filled circle below, so the choice is still
+   unmistakable; .sel is declared AFTER this so it wins on a day that is both. */
+.m-dp-day.has > span { color: var(--dp-dark); font-weight: 700; background: none; }
+.m-dp-day.sel > span { background: var(--dp-dark); color: #fff; font-weight: 500; }
 .m-dp-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--dp-dark); margin-top: -2px; }
 .m-dp-day.sel .m-dp-dot { background: #fff; }
 .m-dp-btns { display: flex; justify-content: space-between; gap: 8px; padding: 6px 14px 10px; border-top: 1px solid var(--border-soft); }

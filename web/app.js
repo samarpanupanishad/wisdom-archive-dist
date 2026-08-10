@@ -3619,6 +3619,17 @@ function showRouteError(err) {
 }
 function safeRoute() { return route().catch(showRouteError); }
 function go(hash) { if (location.hash === hash) safeRoute(); else location.hash = hash; }
+// Navigate WITHOUT growing the history stack. The message sections (Special /
+// Letterpad) move between their list and their reader with this, so the whole
+// section occupies exactly ONE history entry: back from a message lands on its
+// list (filter and all), and back from the list leaves the section — however
+// many messages were opened on the way in. replaceState fires no hashchange,
+// so the route has to be kicked off by hand.
+function goReplace(hash) {
+  if (location.hash === hash) return safeRoute();
+  try { history.replaceState(null, "", hash); } catch { location.hash = hash; return; }
+  safeRoute();
+}
 
 // --------------------------------------------------------------------------
 // Sidebar collapse + year dropdown + search wiring
@@ -5279,6 +5290,7 @@ const MOBILE_UI = (() => {
   document.body.insertAdjacentHTML("beforeend", `
     <header class="m-top" id="m-top">
       <button class="m-back" id="m-back" aria-label="Back">‹</button>
+      <button class="m-topdate" id="m-topdate" type="button" hidden></button>
       <div class="m-title" id="m-title">Samarpan Upanishad</div>
       <button class="m-topact" id="m-topact" type="button"></button>
     </header>
@@ -5397,8 +5409,9 @@ const MOBILE_UI = (() => {
   $("m-home-btn").addEventListener("click", () => go("#/?latest=1"));
   $("m-scrim").addEventListener("click", closeDrawer);
   $("m-drawer").addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
-  $("m-back").addEventListener("click", () => history.back());
-  $("m-panel-back").addEventListener("click", () => history.back());
+  const goBack = () => { if (_pageBackHook && _pageBackHook()) return; history.back(); };
+  $("m-back").addEventListener("click", goBack);
+  $("m-panel-back").addEventListener("click", goBack);
 
   // ---- top-bar right-hand action ------------------------------------------
   // One reusable slot (currently the Samuhik Satsang "+"). setChrome() clears it
@@ -5406,6 +5419,27 @@ const MOBILE_UI = (() => {
   // its pageFrame() — otherwise the button would leak onto Settings, Favorites
   // and everything else. It keeps its 42px even when inactive so the centred
   // title doesn't jump between pages that have one and pages that don't.
+  // ---- top-bar LEFT date pill ---------------------------------------------
+  // The message sections (Special Telegram / Letterpad) show which date their
+  // list is standing on, immediately after the back chevron, and tapping it
+  // opens that section's calendar. Cleared by setChrome() on every route, same
+  // contract as setTopAction — a page wanting one sets it after pageFrame().
+  // .has-date on the bar shrinks the title to a small bold label to make room
+  // (see styles.css); without a date the bar is untouched.
+  let _topDateFn = null;
+  $("m-topdate").addEventListener("click", () => { if (_topDateFn) _topDateFn(); });
+  function setTopDate(spec) {
+    const b = $("m-topdate");
+    if (!b) return;
+    _topDateFn = (spec && spec.onClick) || null;
+    b.hidden = !spec;
+    b.textContent = (spec && spec.label) || "";
+    const t = (spec && spec.title) || "";
+    if (t) { b.title = t; b.setAttribute("aria-label", t); }
+    else { b.removeAttribute("title"); b.removeAttribute("aria-label"); }
+    $("m-top").classList.toggle("has-date", !!spec);
+  }
+
   let _topActFn = null;
   $("m-topact").addEventListener("click", () => { if (_topActFn) _topActFn(); });
   function setTopAction(spec) {
@@ -5435,6 +5469,7 @@ const MOBILE_UI = (() => {
     if (hideExitSheet()) return;
     if (exitZoom()) return;
     if (closeDrawer()) return;
+    if (_pageBackHook && _pageBackHook()) return;   // e.g. reader → its own list
     const atHome = !location.hash || /^#\/?(\?.*)?$/.test(location.hash);
     if (atHome) { showExitSheet(); return; }
     const before = location.hash;
@@ -5655,6 +5690,7 @@ const MOBILE_UI = (() => {
     $("m-back").style.visibility = mode === "home" ? "hidden" : "visible";
     $("m-title").textContent = title || "Samarpan Upanishad";
     setTopAction(null);   // pages that want one re-set it after pageFrame()
+    setTopDate(null);     // …same for the left-hand date pill
   }
 
   // ==========================================================================
@@ -5723,6 +5759,14 @@ const MOBILE_UI = (() => {
     const L = dpLang(), dt = new Date(t.y, t.m, t.d);
     return DP_WD[L][dt.getDay()] + ", " + t.d + " " + DP_MON[L][t.m] + " " + t.y;
   }
+  // Numeric dd/mm/yyyy — the message sections (Special / Letterpad) label their
+  // date with this rather than dpPillText's "Mon, 5 Aug 2026", because their
+  // pill shares the top bar with the section title and has far less room. The
+  // daily reader's pill keeps the spelled-out form.
+  function dpSlashText(s) {
+    const t = dpParse(s); if (!t.y) return "Select date";
+    return dpPad(t.d) + "/" + dpPad(t.m + 1) + "/" + t.y;
+  }
 
   // ---- availability -------------------------------------------------------
   // ⚠ The picker used to know about the DAILY archive only, and that was the
@@ -5749,11 +5793,21 @@ const MOBILE_UI = (() => {
   const todayIso = () => { const t = new Date(); return dpIso(t.getFullYear(), t.getMonth(), t.getDate()); };
   function specialDatesOf(r) {
     const out = [];
-    const posted = (r.posted_at || r.created_at || "").slice(0, 10);
-    if (isIsoDate(posted)) out.push(posted);
+    const posted = specialPostedDate(r);
+    if (posted) out.push(posted);
     const sig = (r.msg_date || "").slice(0, 10);
     if (isIsoDate(sig) && sig >= SPECIAL_MSGDATE_MIN && sig <= todayIso() && !out.includes(sig)) out.push(sig);
     return out;
+  }
+  // ⚠ The SECTION's own screens (its date pill, its calendar, its list filter)
+  // are POSTED-DATE ONLY — operator's call: the date the message reached
+  // Telegram is the one the calendar colours and the pill shows, so what the
+  // grid marks and what the list then contains can never disagree. The two-date
+  // rule above stays exactly as it was for Search By, where a re-posted 2019
+  // teaching must still be findable under 2019.
+  function specialPostedDate(r) {
+    const p = (r.posted_at || r.created_at || "").slice(0, 10);
+    return isIsoDate(p) ? p : "";
   }
 
   // Every date each source can answer for. Returned as a Set of "YYYY-MM-DD".
@@ -5770,11 +5824,14 @@ const MOBILE_UI = (() => {
     if (s.size) _dpDaily = s;
     return s;
   }
-  async function dpDatesForScope(scope) {
+  // `union` = this set feeds Search By's combined picker, where a Special
+  // message answers for BOTH its dates. Without it (a section's own picker) it
+  // answers for its posted date alone — see specialPostedDate.
+  async function dpDatesForScope(scope, union) {
     if (scope === "daily") return dpDailyDates();
     if (scope === "special") {
       const rows = (typeof SPECIAL !== "undefined" ? SPECIAL.cached() : []) || [];
-      return new Set(rows.flatMap(specialDatesOf));
+      return new Set(union ? rows.flatMap(specialDatesOf) : rows.map(specialPostedDate).filter(Boolean));
     }
     if (scope === "letterpad") {
       const rows = (typeof LETTERPAD !== "undefined" ? LETTERPAD.items() : []) || [];
@@ -5793,7 +5850,7 @@ const MOBILE_UI = (() => {
   async function dpData(scope) {
     const sc = scope || "daily";
     const sets = sc === "all"
-      ? await Promise.all(DP_SCOPES.map(dpDatesForScope))
+      ? await Promise.all(DP_SCOPES.map((s) => dpDatesForScope(s, true)))
       : [await dpDatesForScope(sc)];
     const sorted = [...new Set(sets.flatMap((s) => [...s]))].sort();
     return {
@@ -5911,7 +5968,7 @@ const MOBILE_UI = (() => {
         <div class="m-dp-mlabel"></div>
         <button class="m-dp-arrow" data-nav="1" aria-label="Next month">›</button></div>
       <div class="m-dp-wd"></div><div class="m-dp-grid"></div>
-      <div class="m-dp-btns"><button class="m-dp-btn" data-act="clear">${only ? "Show all" : "Clear"}</button>
+      <div class="m-dp-btns"><button class="m-dp-btn" data-act="clear">Clear</button>
         <button class="m-dp-btn" data-act="cancel">Cancel</button>
         <button class="m-dp-btn m-dp-set" data-act="set">Set</button></div>
     </div></div>`);
@@ -5972,10 +6029,11 @@ const MOBILE_UI = (() => {
       for (let b = 0; b < first; b++) h += "<span></span>";
       for (let d = 1; d <= N; d++) {
         const s = dpIso(sel.y, sel.m, d), ok = inRange(s), selD = d === sel.d, dot = data.avail.has(s), anu = isAnushthan(s) && ok;
-        // Section mode: a date that HAS a message wears the same filled circle
-        // the selected day gets (purple via .m-dp-only), so the month reads at a
-        // glance as "these are the days with messages". The dot would be
-        // redundant there — every enabled day has one — so it's dropped.
+        // Section mode: a date that HAS a message is written in purple, with no
+        // background at all (operator's call — the filled circles read as a
+        // month full of selections). Only the day you actually picked wears the
+        // circle. The dot would be redundant here — every enabled day has one —
+        // so it's dropped.
         const has = only && dot;
         h += `<button class="m-dp-day${selD ? " sel" : ""}${has ? " has" : ""}${anu ? " anu" : ""}" data-d="${d}"${ok ? "" : " disabled"}>` +
           `<span>${d}</span><i class="m-dp-dot" style="opacity:${!only && dot ? 1 : 0}"></i></button>`;
@@ -5990,11 +6048,39 @@ const MOBILE_UI = (() => {
     const haptic = hapticTick;
 
     q(".m-dp-grid").addEventListener("click", (e) => { const b = e.target.closest(".m-dp-day"); if (!b || b.disabled) return; sel.d = +b.dataset.d; haptic(); render(); });
+    const goMonth = (dir) => {
+      const nx = stepMonth(dir); if (!nx) return false;
+      haptic(); sel.y = nx.y; sel.m = nx.m; clamp(); render(); return true;
+    };
     ov.querySelectorAll("[data-nav]").forEach((b) => b.addEventListener("click", () => {
       if (b.disabled) return;
-      const nx = stepMonth(+b.dataset.nav); if (!nx) return;
-      haptic(); sel.y = nx.y; sel.m = nx.m; clamp(); render();
+      goMonth(+b.dataset.nav);
     }));
+    // Swipe the grid left/right to change month — the thumb lands on the grid,
+    // not on the two small arrows above it. Left = next month, matching every
+    // other horizontal pager in the app (and the reader's page swipe).
+    // ⚠ Only a clearly horizontal, clearly long drag counts: the picker itself
+    // scrolls vertically on a short screen, so a diagonal flick must stay a
+    // scroll. In section mode this skips empty months exactly as the arrows do
+    // (stepMonth), so a swipe can never land on a month with no messages.
+    (function wireMonthSwipe() {
+      const grid = q(".m-dp-grid");
+      let x0 = null, y0 = null, done = false;
+      grid.addEventListener("touchstart", (e) => {
+        if (e.touches.length !== 1) { x0 = null; return; }
+        x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; done = false;
+      }, { passive: true });
+      grid.addEventListener("touchmove", (e) => {
+        if (x0 == null || done) return;
+        const t = e.touches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+        if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+        done = true;                       // one month per swipe, fired mid-gesture
+        goMonth(dx < 0 ? 1 : -1);
+      }, { passive: true });
+      const endSwipe = () => { x0 = null; };
+      grid.addEventListener("touchend", endSwipe, { passive: true });
+      grid.addEventListener("touchcancel", endSwipe, { passive: true });
+    })();
     // Drag rolls the strip with the finger; the calendar grid is rebuilt only on
     // RELEASE (not every step) — that's what makes the spin crisp. The value is
     // committed live (so the header tracks the roll) but the other wheels + grid
@@ -6033,7 +6119,9 @@ const MOBILE_UI = (() => {
     document.addEventListener("keydown", onKey);
     ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
     // Section mode has nothing to "reset to today" (today is rarely a message
-    // date) — there the button drops the date filter and shows the whole list.
+    // date) — there Clear drops the current selection: the caller gets null and
+    // goes back to showing everything. (It used to be labelled "Show all";
+    // every picker says "Clear" now, whatever it clears.)
     q('[data-act="clear"]').addEventListener("click", () => {
       if (only) { haptic(); close(); onSet(null); return; }
       sel = dpParse(clampIso(todayIso())); clamp(); render();
@@ -6395,6 +6483,11 @@ const MOBILE_UI = (() => {
   // Non-feed pages that also render per-language (Special Messages) register
   // here to repaint when the bottom-bar toggle flips; cleared on every route.
   let _pageLangHook = null;
+  // Page-supplied BACK behaviour, honoured by both the Android back button and
+  // the panel's own chevron; return true to say "handled, don't walk history".
+  // The message reader uses it to send back to its list first (see
+  // msgReaderPage). Cleared on every route, like _pageLangHook.
+  let _pageBackHook = null;
   // Set right before navigating from a curated list (Favorites, Word search)
   // into one of its items: confines the vertical feed to that list instead of
   // the whole chronological archive. Self-correcting — buildFeed() only
@@ -7167,6 +7260,14 @@ const MOBILE_UI = (() => {
     const d = (r.date || "").slice(0, 10);
     return isIsoDate(d) ? [d] : [];
   }
+  // The ONE date a section's own screens file a row under — its date pill, its
+  // calendar and its list filter. Special uses the Telegram post date only (see
+  // specialPostedDate); Search By still matches on both via secDatesOf.
+  function secPickDate(sec, r) {
+    if (sec.key === "special") return specialPostedDate(r);
+    const d = (r.date || "").slice(0, 10);
+    return isIsoDate(d) ? d : "";
+  }
   // The four groups every Search By tab renders, in the operator's fixed order.
   // matchFn is applied to the message sections; `dailyRows` is passed in because
   // Daily comes from the archive API, not a client cache.
@@ -7827,6 +7928,10 @@ const MOBILE_UI = (() => {
     special: {
       key: "special", icon: "✨",
       title: "Special Telegram Message", listTitle: "Special Telegram Messages", hindi: "विशेष संदेश",
+      // Short form for the top BAR, which also carries the date pill — the same
+      // wording the drawer uses. The long listTitle still labels the page's own
+      // empty-state holder, where there is room for it.
+      barTitle: "Special Telegram Msg",
       emptyMsg: SPECIAL_EMPTY_MSG,
       idOf: (r) => String(r.id),
       cached: () => SPECIAL.cached(),
@@ -7870,6 +7975,7 @@ const MOBILE_UI = (() => {
     letterpad: {
       key: "letterpad", icon: "✍️",
       title: "Letterpad Message", listTitle: "Guru's Letterpad Messages", hindi: "गुरुजी का पत्र संदेश",
+      barTitle: "Guru's Letterpad Msg",   // see MSG_SECTIONS.special.barTitle
       emptyMsg: "No letterpad messages yet. Guru's handwritten messages will appear here.",
       idOf: (m) => m.id,
       cached: () => LETTERPAD.items(),
@@ -7907,7 +8013,7 @@ const MOBILE_UI = (() => {
     </div>`;
 
   // ---- the INDEX (#/m/special · #/m/letterpad) ------------------------------
-  function msgIndexRowHtml(sec, r, seenMark, hrefOf) {
+  function msgIndexRowHtml(sec, r, seenMark, hrefOf, suffix) {
     const v = sec.norm(r, prefLang);
     const fresh = sec.isNew(r, seenMark);
     const np = v.pages ? v.pages.length : 0;
@@ -7922,9 +8028,13 @@ const MOBILE_UI = (() => {
     // do NOT live at #/m/<key>/<id> — Anushthan borrows Letterpad's reader,
     // because it has no reader of its own. An explicit `hrefOf` (the chat
     // picker) still wins over both.
+    // `suffix` carries the list's active date filter into the reader (?d=…), so
+    // back out of a message returns to the filtered list and not the whole
+    // section. Only the section's own reader gets it — a borrowed or chat-picker
+    // target belongs to a different list.
     const href = hrefOf ? hrefOf(sec, v)
       : sec.hrefOf ? sec.hrefOf(v)
-      : `#/m/${sec.key}/${encodeURIComponent(v.id)}`;
+      : `#/m/${sec.key}/${encodeURIComponent(v.id)}${suffix || ""}`;
     // A Special message can answer for two different dates (posted vs. signed),
     // so a date search legitimately returns rows whose visible date is NOT the
     // one searched — a re-posted teaching. Without saying so the row just looks
@@ -7944,9 +8054,9 @@ const MOBILE_UI = (() => {
   // `seen` is the marker as it stood when the page was OPENED — passed in, not
   // re-read, because the first paint marks everything seen and a repaint (sync
   // lands, language flips) would otherwise erase every NEW chip on screen.
-  function paintMsgIndex(box, sec, rows, keepShown, seen) {
+  function paintMsgIndex(box, sec, rows, keepShown, seen, suffix) {
     const CHUNK = 30;
-    const html = (r) => msgIndexRowHtml(sec, r, seen);
+    const html = (r) => msgIndexRowHtml(sec, r, seen, null, suffix);
     let shown = Math.min(rows.length, Math.max(CHUNK, keepShown || 0));
     box.innerHTML = rows.slice(0, shown).map(html).join("");
     if (shown < rows.length) {
@@ -7963,46 +8073,80 @@ const MOBILE_UI = (() => {
     }
     return { shown: () => shown };
   }
-  function msgIndexPage(key) {
+  function msgIndexPage(key, params) {
     const sec = MSG_SECTIONS[key] || (key === "anushthan" ? ANUSHTHAN_INDEX_SEC : null);
     if (!sec) return placeholderPage("Message", "");
     const node = el(`<div class="m-msgindex"><div class="mx-filter" hidden></div><div class="mx-rows"></div></div>`);
     // Natural full-page scroll (NOT the fixed-height m-page-scroll box, which
     // only scrolls a dedicated .m-results child and would clip these rows).
-    pageFrame(sec.listTitle, node);
+    pageFrame(sec.barTitle || sec.listTitle, node);
     const bar = node.querySelector(".mx-filter"), rowsBox = node.querySelector(".mx-rows");
-    let painter = null, all = [], filterDate = "";
+    // The date filter lives in the URL (#/m/<key>?d=YYYY-MM-DD), not just in
+    // this closure: that is what lets a message opened from a filtered list
+    // come BACK to the same filtered list (see msgReaderPage's back hook).
+    const fromUrl = (params && params.get("d")) || "";
+    let painter = null, all = [], filterDate = isIsoDate(fromUrl) ? fromUrl : "";
+    const listHref = () => "#/m/" + sec.key + (filterDate ? "?d=" + filterDate : "");
+    // Keep the address bar in step WITHOUT re-routing (a full re-render would
+    // throw away the painted rows and the scroll position for a filter change
+    // this page is already applying itself).
+    const syncUrl = () => { try { history.replaceState(null, "", listHref()); } catch {} };
 
     // This section's OWN date picker: only dates this section actually has a
-    // message on are selectable (purple); everything else is disabled. Picking
-    // one filters the list; "Show all" clears it. setChrome() clears the top
-    // action on every route, so this must come AFTER pageFrame().
-    const openPicker = () => openDatePicker(filterDate || null, (iso) => {
+    // message on are selectable (written in purple); everything else is
+    // disabled. Picking one filters the list, Clear drops the filter.
+    // setChrome() clears the top bar's date + action on every route, so this
+    // must come AFTER pageFrame().
+    const setFilter = (iso) => {
       filterDate = iso || "";
       painter = null;
+      syncUrl();
       paint(all);
-    }, {
+    };
+    const openPicker = () => openDatePicker(filterDate || null, setFilter, {
       scope: sec.key, sectionOnly: true, title: sec.listTitle,
       emptyMsg: "No dates to pick yet — " + sec.listTitle + " has no messages.",
     });
-    setTopAction({ label: "📅", title: "Find by date", onClick: openPicker });
     bar.addEventListener("click", (ev) => {
-      if (ev.target.closest("[data-act='clear']")) { filterDate = ""; painter = null; paint(all); return; }
+      if (ev.target.closest("[data-act='clear']")) { setFilter(""); return; }
       if (ev.target.closest("[data-act='change']")) openPicker();
     });
+    // Opening a message REPLACES this list in history instead of stacking on
+    // top of it, so the section stays one entry deep no matter how many
+    // messages get opened; the reader's own back hook brings the list back.
+    rowsBox.addEventListener("click", (ev) => {
+      const a = ev.target.closest("a.mx-row");
+      if (!a || !a.getAttribute("href") || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+      ev.preventDefault();
+      goReplace(a.getAttribute("href"));
+    });
+
+    // Top bar, left of the title: the date this list is standing on. With no
+    // filter that's the newest message the section has (per the operator: "the
+    // last msg we received"), so the bar always answers "how current is this?".
+    const paintTopDate = (rows) => {
+      const newest = (rows || []).map((r) => secPickDate(sec, r)).filter(Boolean).sort().pop();
+      const shownDate = filterDate || newest || "";
+      setTopDate({
+        label: shownDate ? dpSlashText(shownDate) : "Date",
+        title: "Find by date",
+        onClick: openPicker,
+      });
+    };
 
     const seen = sec.lastSeen();    // frozen for this visit — see paintMsgIndex
     const paint = (rows) => {
       all = rows;
       const shown = filterDate
-        ? rows.filter((r) => secDatesOf(sec, r).includes(filterDate))
+        ? rows.filter((r) => secPickDate(sec, r) === filterDate)
         : rows;
+      paintTopDate(rows);
       bar.hidden = !filterDate;
       if (filterDate) {
-        bar.innerHTML = `<span class="mx-f-txt">${escapeHtml(fmtDate(filterDate))} · ` +
+        bar.innerHTML = `<span class="mx-f-txt">${escapeHtml(dpSlashText(filterDate))} · ` +
           `${shown.length} message${shown.length === 1 ? "" : "s"}</span>` +
           `<button type="button" class="mx-f-btn" data-act="change">Change</button>` +
-          `<button type="button" class="mx-f-btn" data-act="clear">Show all</button>`;
+          `<button type="button" class="mx-f-btn" data-act="clear">Clear</button>`;
       }
       if (!shown.length) {
         rowsBox.innerHTML = filterDate
@@ -8010,7 +8154,8 @@ const MOBILE_UI = (() => {
           : msgHolderHtml(sec);
         return;
       }
-      painter = paintMsgIndex(rowsBox, sec, shown, painter ? painter.shown() : 0, seen);
+      painter = paintMsgIndex(rowsBox, sec, shown, painter ? painter.shown() : 0, seen,
+        filterDate ? "?d=" + filterDate : "");
       if (sec.markSeen) sec.markSeen();
     };
     paint(sec.cached());            // cache first — instant, works with no signal
@@ -8025,12 +8170,23 @@ const MOBILE_UI = (() => {
   }
 
   // ---- the READER (#/m/<key>/<id>) -----------------------------------------
-  function msgReaderPage(key, focusId) {
+  function msgReaderPage(key, focusId, params) {
     const sec = MSG_SECTIONS[key];
     const nav = _nav;
     setChrome("reader", sec.title, null);
     const box = el(`<div class="m-reader"><div class="loading">Loading…</div></div>`);
     $view.replaceChildren(box);
+
+    // The list this reader belongs to, filter included (?d= travels in from the
+    // row that was tapped). BACK always goes here first — one press to the list,
+    // a second press out of the section — however many messages were opened or
+    // scrolled past on the way in. Replacing rather than pushing is what keeps
+    // that true: the section never occupies more than one history entry.
+    const fromUrl = (params && params.get("d")) || "";
+    let filterDate = isIsoDate(fromUrl) ? fromUrl : "";
+    const qSuffix = () => (filterDate ? "?d=" + filterDate : "");
+    const listHref = () => "#/m/" + sec.key + qSuffix();
+    _pageBackHook = () => { goReplace(listHref()); return true; };
 
     const WIN = 3;                  // messages added per extension
     let rows = [], lo = 0, hi = 0, curArt = null, rafC = 0, _sig = "";
@@ -8100,9 +8256,15 @@ const MOBILE_UI = (() => {
       const fileName = () => `${sec.key === "letterpad" ? "LP" : "SM"}_${v.date ? fmtDateFile(v.date) : v.id}` +
         `${v.pages && v.pages.length > 1 ? "_p" + pageNo() : ""}.jpg`;
 
+      // The pill shows THIS message's date as dd/mm/yyyy and opens the section's
+      // own calendar (not the daily one) — the way back to the list is the back
+      // chevron beside it, which is also what the Android back button does.
       const dEl = $("m-panel-date");
-      dEl.textContent = v.date ? dpPillText(v.date) : sec.title;
-      dEl.onclick = () => go("#/m/" + sec.key);        // the pill jumps back to the index
+      dEl.textContent = v.date ? dpSlashText(v.date) : sec.title;
+      dEl.onclick = () => openDatePicker(v.date || null, onDatePicked, {
+        scope: sec.key, sectionOnly: true, title: sec.listTitle,
+        emptyMsg: "No dates to pick yet — " + sec.listTitle + " has no messages.",
+      });
       setEnglishAvailable(!!v.hasEn);                  // Hindi-only post → English toggle off
       // Bind the Community button to this message (see _chatCtx). Re-published
       // on every scroll, so the discussion always follows what's on screen.
@@ -8152,7 +8314,9 @@ const MOBILE_UI = (() => {
       }
       if (!pick || pick === curArt) return;
       curArt = pick;
-      history.replaceState(null, "", "#/m/" + sec.key + "/" + encodeURIComponent(pick.dataset.id));
+      // ?d= rides along so a reload — or the back hook reading the URL — still
+      // knows which filtered list this reader was opened from.
+      history.replaceState(null, "", "#/m/" + sec.key + "/" + encodeURIComponent(pick.dataset.id) + qSuffix());
       wirePanel(pick);
     }
 
@@ -8191,7 +8355,11 @@ const MOBILE_UI = (() => {
     ["touchstart", "wheel", "keydown"].forEach((ev) =>
       box.addEventListener(ev, () => { userTook = true; }, { passive: true, once: true }));
 
-    function mount(list, focus) {
+    // `pin` = this mount was ASKED for (a date was picked), so anchor on the
+    // chosen message even though the reader is already in the user's hands.
+    // Time-boxed rather than clearing userTook: late image decodes must stop
+    // re-anchoring once the user starts scrolling again after the jump.
+    function mount(list, focus, pin) {
       if (!current(nav)) return;
       rows = list || [];
       curArt = null;
@@ -8203,8 +8371,11 @@ const MOBILE_UI = (() => {
       box.innerHTML = "";
       insert(lo, hi, null);
       const focusEl = box.querySelectorAll(".mr-msg")[idx - lo];
+      const pinUntil = pin ? Date.now() + 2000 : 0;
       if (focusEl) {
-        const anchor = () => { if (!userTook && focusEl.isConnected) box.scrollTop = focusEl.offsetTop; };
+        const anchor = () => {
+          if ((!userTook || Date.now() < pinUntil) && focusEl.isConnected) box.scrollTop = focusEl.offsetTop;
+        };
         anchor();
         box.querySelectorAll(".pc-page img").forEach((im) => {
           if (!im.complete) im.addEventListener("load", anchor, { once: true });
@@ -8220,6 +8391,22 @@ const MOBILE_UI = (() => {
     }, { passive: true });
 
     const focusNow = () => (curArt ? curArt.dataset.id : focusId);
+    // A date chosen from the pill's calendar. One message on that date → open it
+    // right here, no navigation; several → hand over to the list filtered to
+    // that date, so the reader isn't guessing which one was meant. Either way
+    // the date becomes this reader's back target (operator: back should land on
+    // "the list of that particular date").
+    function onDatePicked(iso) {
+      if (!iso) { filterDate = ""; goReplace("#/m/" + sec.key); return; }   // Clear → the whole list
+      const hits = rows.filter((r) => secPickDate(sec, r) === iso);
+      filterDate = iso;
+      if (!hits.length) { toast("No " + sec.listTitle + " on this date."); return; }
+      if (hits.length > 1) { goReplace(listHref()); return; }
+      const id = sec.idOf(hits[0]);
+      // Already on it: re-stamp the URL so the new ?d= (the back target) sticks.
+      if (id === focusNow()) { curArt = null; syncCurrent(); return; }
+      mount(rows, id, true);
+    }
     // Re-mounting tears down and rebuilds the window, so only do it when the
     // data actually moved. A no-op refresh (the common case — the index or the
     // delta sync returning nothing new) must never yank the reader around.
@@ -8331,6 +8518,7 @@ const MOBILE_UI = (() => {
       exitZoom();
       closeChatStream();
       _pageLangHook = null;
+      _pageBackHook = null;        // …the page we land on re-arms it if it wants one
       setEnglishAvailable(true);   // any per-message gating belongs to the page we're leaving
       // Leaving the Search By flow for anywhere except a result's detail page
       // (or staying within search itself) clears the remembered query/results.
@@ -8339,9 +8527,9 @@ const MOBILE_UI = (() => {
       if (!seg.length) return viewer(null, params, true);
       if (seg[0] === "entry") return viewer(seg[1], params, false);
       if (seg[0] === "favorites") return favoritesPage();
-      if (seg[0] === "special") return msgIndexPage("special");   // desktop-style link → same page
-      if (seg[0] === "letterpad") return msgIndexPage("letterpad");
-      if (seg[0] === "anushthan") return msgIndexPage("anushthan");
+      if (seg[0] === "special") return msgIndexPage("special", params);   // desktop-style link → same page
+      if (seg[0] === "letterpad") return msgIndexPage("letterpad", params);
+      if (seg[0] === "anushthan") return msgIndexPage("anushthan", params);
       if (seg[0] === "anubhuti") return anubhutiRoute(params);   // desktop-style link → same pages
       const p = seg[1];
       if (p === "search") return searchPage(params);
@@ -8352,7 +8540,7 @@ const MOBILE_UI = (() => {
       // in a second section, so they open #/m/letterpad/<id> (see
       // ANUSHTHAN_SEARCH_SEC.hrefOf). Until content is supplied the page shows
       // the section holder, exactly as the placeholder did.
-      if (p === "anushthan") return msgIndexPage("anushthan");
+      if (p === "anushthan") return msgIndexPage("anushthan", params);
       // ⚠ "anubhuti" and "anushthan" are one letter apart and mean different
       // things — Anubhuti Sharing is the members' own space, Anushthan Msg is a
       // Guru's-message section that has no content yet. Don't merge these.
@@ -8361,7 +8549,7 @@ const MOBILE_UI = (() => {
       // #/m/<section>/<id>   → the full-screen reader, opened on that message
       //                        (also where a push-notification tap can land)
       if (p === "special" || p === "letterpad") {
-        return seg[2] ? msgReaderPage(p, decodeURIComponent(seg[2])) : msgIndexPage(p);
+        return seg[2] ? msgReaderPage(p, decodeURIComponent(seg[2]), params) : msgIndexPage(p, params);
       }
       if (p === "contact") return contactPage();
       if (p === "account") return accountPage();
