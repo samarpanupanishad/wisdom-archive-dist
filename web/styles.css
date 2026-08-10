@@ -943,7 +943,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 }
 /* Centred composition; baked-in title sits above it in the artwork. */
 .pl-center { position: relative; z-index: 2; display: flex; flex-direction: column;
-  align-items: center; text-align: center; padding: 20px; transform: translateY(2vh); }
+  align-items: center; text-align: center; padding: 20px; transform: translateY(5vh); }
 
 .pl-chakras { position: relative; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px 0 20px; }
 /* Visible by default (with a resting glow); the awaken animation is a pure
@@ -1017,7 +1017,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   font-size: 22px; letter-spacing: .055em; line-height: 1.15; color: var(--accent); }
 .pl-tag { margin-top: .3em; font-family: var(--serif, Georgia, serif); font-style: italic;
   font-size: 14px; line-height: 1.3; }
-.pl-tag-a { color: #e79bb0; }                                  /* light pink */
+.pl-tag-a { color: #a8385c; font-size: .78em; }                /* dark pink, smaller than GURU */
 .pl-tag-b { display: block; margin-top: .15em; color: #a8385c; font-weight: 700;
   font-style: normal; letter-spacing: .09em; }                 /* dark pink, own centred line */
 
@@ -1028,7 +1028,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   .pl-nadi-a, .pl-nadi-b { stroke-dashoffset: 0; opacity: .4; }
 }
 @media (max-width: 640px) {
-  .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; } .pl-center { transform: translateY(1vh); }
+  .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; } .pl-center { transform: translateY(3.5vh); }
 }
 /* Short viewports — landscape phones, small desktop windows. The chakra column is
    centred and the brand lockup is pinned near the top, so they compete for the same
