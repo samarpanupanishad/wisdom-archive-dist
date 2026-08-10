@@ -5738,24 +5738,20 @@ const MOBILE_UI = (() => {
   const isAnushthan = (s) => ANUSHTHAN_RANGES.some((r) => s >= r.from && s <= r.to);
 
   // ---- OTA-EDITABLE: Anushthan MESSAGES ------------------------------------
-  // ⚠ Deliberately EMPTY — Anushthan has no message store of its own yet, and
-  // the operator will supply the content later (2026-08-08). Everything that
-  // consumes it (Search By's Anushthan group, the section's own date picker,
-  // the union picker behind Search By → Date) is already wired through here, so
-  // the day content arrives this is the ONLY place that changes.
-  //
   // Two ways to fill it, both OTA-shippable:
   //   1. Literal rows in ANUSHTHAN_MESSAGES below.
   //   2. Date ranges in ANUSHTHAN_FROM_LETTERPAD — Letterpad messages whose
   //      date falls inside a range are ALSO surfaced as Anushthan messages.
   //      Per the operator: they appear in BOTH sections, they are not moved out
-  //      of Letterpad. e.g. { from: "2026-01-01", to: "2026-02-15" }.
-  //      (That exact window was checked on 2026-08-08 and holds no letterpad
-  //      messages at all — the earliest of all time is 2026-02-20 — which is
-  //      why it is not seeded here.)
+  //      of Letterpad.
+  // Seeded 2026-08-10 with the Gahan Dhyan Anushthan window's two letterpad
+  // messages (2026-02-01 "2026" and 2026-02-12 "The Problem of Dispassion in
+  // Sadhaks") — both already live in letterpad_source/, this range just also
+  // surfaces them here.
   const ANUSHTHAN_MESSAGES = [
   ];
   const ANUSHTHAN_FROM_LETTERPAD = [
+    { from: "2026-01-01", to: "2026-02-15" },
   ];
   // Rows in the shape the Letterpad section already normalises (`norm` below
   // reuses MSG_SECTIONS.letterpad's), so borrowed rows need no conversion.
