@@ -42,6 +42,31 @@ function el(html) { const t = document.createElement("template"); t.innerHTML = 
 function thumbImg(e) { return e && e.thumb_url ? `<img class="thumb" src="${e.thumb_url}" alt="" loading="lazy" decoding="async">` : `<div class="thumb"></div>`; }
 
 // --------------------------------------------------------------------------
+// Preloader "guru reveal" photo — server-picked once daily so every device
+// shows the SAME photo (WA.dailyRevealPhoto() in wa-supabase.js, backed by
+// reveal-pick + daily_reveal, supabase/add_daily_reveal.sql). Runs immediately
+// at load, well before the preloader's guru-reveal fires (2980ms, index.html)
+// and BEFORE the auth gate — this is not gated on being signed in, it's just
+// a splash image everyone gets. Fires fire-and-forget; if it's slow, offline,
+// or the migration hasn't been run yet, the bundled guru-reveal.jpg baked
+// into styles.css just keeps showing — .pl-reveal's background-image is only
+// ever touched here on success.
+(function revealPhotoOfTheDay() {
+  const target = document.querySelector(".pl-reveal");
+  if (!target || !window.WA || !WA.dailyRevealPhoto) return;
+  WA.dailyRevealPhoto().then(async (url) => {
+    if (!url) return;
+    const wn = window.WA_NATIVE;
+    let shown = url;
+    if (wn && wn.isNative && wn.cacheMedia) {
+      try { const cached = await wn.cacheMedia(url); if (cached) shown = cached; }
+      catch { /* still viewable straight from the host */ }
+    }
+    target.style.backgroundImage = `url("${shown}")`;
+  }).catch(() => { /* offline / table not set up yet: keep the bundled photo */ });
+})();
+
+// --------------------------------------------------------------------------
 // Local storage
 // --------------------------------------------------------------------------
 const store = {

@@ -536,6 +536,19 @@ const WA = {
     return { signup_enabled: !data || data.value === "1" };
   },
 
+  // Today's preloader "guru reveal" photo — picked once daily, server-side,
+  // by the reveal-pick Edge Function (supabase/add_daily_reveal.sql), so every
+  // device shows the same one. Called pre-auth, before sign-in even resolves —
+  // this is a splash image, not community content. Returns the public Storage
+  // URL, or null if the table's empty/missing (fresh project, migration not
+  // run yet) so the caller can silently keep the bundled fallback photo.
+  async dailyRevealPhoto() {
+    const { data, error } = await _sb.from("daily_reveal")
+      .select("filename").order("reveal_date", { ascending: false }).limit(1).maybeSingle();
+    if (error || !data) return null;
+    return `${WA_SUPABASE_URL}/storage/v1/object/public/reveal-photos/${encodeURIComponent(data.filename)}`;
+  },
+
   // ----- Conclusions ----------------------------------------------------
   getConclusion(wid) { return _rpc("get_conclusion", { wid: String(wid) }); },
   saveConclusion(wid, text, visibility) {
