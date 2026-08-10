@@ -331,12 +331,41 @@ async function paintDeviceBox(box) {
   }
 
   if (active.length) {
-    // Approved, but we hold no session proof — usually a launch where signing
-    // failed because the phone hasn't been unlocked inside the Keystore window.
-    set(`<div class="dv-h">Unlock to continue</div>
-      <div class="dv-note">This device is registered, but it needs to confirm it's really you.</div>
+    // Approved, but no session proof YET — and "yet" is the important word.
+    //
+    // ⚠ DO NOT go straight to the error card here. startApp() fires
+    // WA.deviceSignIn() WITHOUT awaiting it, so on any reasonably quick
+    // navigation to this page the handshake (four round trips: capabilities,
+    // list_my_devices, challenge, verify) is simply still running. Painting
+    // "Unlock to continue" on that was the bug where an already-working device
+    // demanded confirmation on every single launch — and why tapping "Try
+    // again" always appeared to fix it: by then the first handshake had quietly
+    // finished.
+    //
+    // Awaiting is safe and nearly free: WA.deviceSignIn() is single-flight, so
+    // this JOINS the boot attempt rather than starting a competing one. Two
+    // concurrent handshakes would delete each other's nonce server-side — see
+    // device-auth's one-challenge-per-device housekeeping.
+    set(`<div class="dv-note">Confirming this device…</div>`);
+    let confirmed = false, why = "";
+    try { confirmed = await WA.deviceSignIn(); }
+    catch (e) { why = (e && e.message) || ""; }
+    if (confirmed) { set(`<div class="dv-ok">✓ This device is registered.</div>`); return; }
+
+    // Genuinely stuck. Overwhelmingly the old-key case: a key generated before
+    // requireAuth:false still refuses to sign unless the phone was unlocked in
+    // the last 60 seconds, and no amount of retrying re-parameterises it. So
+    // offer the way out (a fresh key) alongside the retry, rather than looping
+    // the user through a button that cannot succeed.
+    set(`<div class="dv-h">Confirm this device</div>
+      <div class="dv-note">This device is registered, but it couldn't confirm itself just now.</div>
+      ${why ? `<div class="dv-err">${escapeHtml(why)}</div>` : ""}
       <button class="btn primary dv-go dv-retry">Try again</button>
-      <div class="dv-err"></div>`);
+      <div class="dv-note dv-sep">Still asking every time you open the app? This device's key was
+        created by an older version and has to be replaced. Registering again needs the Sutradhar
+        to approve this device once more.</div>
+      <button class="btn dv-go dv-reset">Register this device again</button>
+      <div class="dv-err dv-reset-err"></div>`);
     const err = box.querySelector(".dv-err");
     box.querySelector(".dv-retry").addEventListener("click", async () => {
       err.textContent = "";
@@ -344,6 +373,29 @@ async function paintDeviceBox(box) {
         if (await WA.deviceSignIn()) { toast("Device confirmed"); paintDeviceBox(box); }
         else err.textContent = "Still couldn't confirm this device.";
       } catch (e) { err.textContent = e.message; }
+    });
+
+    const rErr = box.querySelector(".dv-reset-err");
+    const rBtn = box.querySelector(".dv-reset");
+    rBtn.addEventListener("click", async () => {
+      // Destroying a key the Sutradhar approved is not something to do on a
+      // stray tap — and for the Sutradhar's OWN device it costs a printed
+      // recovery code, since nobody else can approve them.
+      const warn = isSutradhar()
+        ? "This will remove this device's key. You are the Sutradhar, so you will need one of "
+          + "your printed recovery codes to register it again. Continue?"
+        : "This will remove this device's key. The Sutradhar will have to approve this device "
+          + "again before moderator tools work here. Continue?";
+      if (!confirm(warn)) return;
+      rErr.textContent = "";
+      rBtn.disabled = true; rBtn.textContent = "Removing…";
+      try {
+        await WA.resetDeviceKey();
+        paintDeviceBox(box);   // repaints into the first-run "Register this device" state
+      } catch (e) {
+        rErr.textContent = e.message;
+        rBtn.disabled = false; rBtn.textContent = "Register this device again";
+      }
     });
     return;
   }

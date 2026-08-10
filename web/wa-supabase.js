@@ -23,10 +23,21 @@ const WA_SUPABASE_ANON_KEY =
 // ⚠ IN MEMORY ONLY, never localStorage. It is a 12h bearer token, and the whole
 // point of the feature is that the credential cannot be lifted off the machine.
 // Persisting it would put a copy at rest next to a key that deliberately isn't.
-// The cost is one challenge/sign round trip per app launch — and on Android the
-// phone was just unlocked to open the app, so the Keystore's 60s auth window is
-// already satisfied and the user sees no prompt.
+// The cost is one challenge/sign round trip per app launch, which the user must
+// never see or act on — see _deviceEnsureKey() for why the key is no longer
+// bound to a recent screen unlock.
 let _deviceHeader = null;
+
+// Single-flight guard for deviceSignIn(). NOT an optimisation — a correctness
+// requirement. device-auth keeps ONE outstanding challenge per device and
+// DELETEs any earlier one when issuing a new nonce, so two overlapping
+// handshakes clobber each other: the first's verify finds no row and fails with
+// "Challenge not found", which reads to the user as a broken device.
+//
+// Overlap is the normal case, not a rare one: startApp() fires deviceSignIn()
+// without awaiting it, and the Moderator page calls it again the moment it
+// paints. Both callers now share one in-flight promise.
+let _deviceSignInFlight = null;
 
 // supabase-js fixes `global.headers` at createClient time, and the header has to
 // be able to appear (and change) later. A custom fetch is the supported way to
@@ -240,15 +251,123 @@ async function _deviceCapabilities() {
 
 // Create the keypair if absent; return its public half. Idempotent on both
 // platforms — neither backend ever replaces a key the Sutradhar already approved.
+//
+// ⚠ requireAuth:false IS DELIBERATE, and it is the fix for "the app asks me to
+// confirm this device on every single launch".
+//
+// The plugin's default is requireAuth:true with a 60-SECOND validity window
+// (WaDeviceKeyPlugin.DEFAULT_AUTH_VALIDITY_SECONDS). That window is measured
+// from the phone's last UNLOCK, not from app launch, so it is expired by the
+// time anyone who unlocked their phone and then did something else opens this
+// app. Signing then throws UserNotAuthenticated → AUTH_REQUIRED, the silent
+// boot handshake fails, and the Moderator page falls back to its "Unlock to
+// continue / Try again" card. Every launch. The card's own retry only works
+// because tapping it happens to land inside a fresh window.
+//
+// What we give up: the key is no longer tied to a RECENT unlock. What we keep
+// is the thing the whole design rests on — the private key is generated inside
+// the Android Keystore, is unexportable, and is scoped to this app's UID, so it
+// cannot be copied to another phone no matter what. That, not the unlock timer,
+// is what makes a device a device.
+//
+// What we give up is also close to nothing in practice: reaching this app at all
+// already requires getting past the phone's lock screen AND a stored Supabase
+// session, so an attacker who could use the key without the timer could equally
+// have used it within the 60s window they just created by unlocking.
+//
+// The "admin phones must have a screen lock" POLICY is kept — it just moves to
+// the JS side, where paintDeviceBox() refuses to offer enrolment when
+// caps.secureLockScreen is false. Do not remove that check thinking this line
+// replaced it; the native guard it used to ride on only runs when requireAuth
+// is true.
+//
+// ⚠ This only affects keys created from here on. A key already on a phone has
+// its 60s window baked in at generation time and cannot be re-parameterised —
+// that device must delete its key and enrol again (WA.deleteDeviceKey()).
 async function _deviceEnsureKey() {
   const p = _devicePlugin();
   if (p) {
-    const r = await p.generateKey({});
+    const r = await p.generateKey({ requireAuth: false });
     return { publicKey: r.publicKey, platform: "android", label: null };
   }
   if (_isNative()) throw new Error(_noSignerMessage());
   const r = await _localDevice("enroll", {});
   return { publicKey: r.publicKey, platform: "windows", label: r.label || null };
+}
+
+// Destroy this machine's key. The ONLY way back from a key that can no longer
+// be used — a 60s-window key from before the fix above, or one Android
+// invalidated when the screen lock changed (KEY_INVALIDATED).
+//
+// ⚠ IRREVERSIBLE, and it costs a Sutradhar approval to undo: the new key has a
+// new public half, so the server no longer recognises this device and it must
+// go through enrolment again. Callers must revoke the stale admin_devices row
+// first — wa_device_cap() bounds an account at 3 devices, and abandoned rows
+// count towards it.
+async function _deviceDeleteKey() {
+  const p = _devicePlugin();
+  if (p) { await p.deleteKey(); return; }
+  if (_isNative()) throw new Error(_noSignerMessage());
+  await _localDevice("delete", {});
+}
+
+// The actual handshake behind WA.deviceSignIn(). Kept out of the WA object so
+// the public method can stay a thin single-flight wrapper — see
+// _deviceSignInFlight for why sharing one in-flight run is mandatory and not
+// merely tidy.
+async function _deviceSignIn() {
+  let caps;
+  try { caps = await _deviceCapabilities(); } catch (_) { return false; }
+  if (!caps.supported || !caps.hasKey) return false;
+
+  // Which of this account's active devices is THIS one? We don't ask — we try
+  // each in turn and let the signature settle it. list_my_devices() doesn't
+  // return public keys (deliberately: no reason to hand them out), and a
+  // device id cached in localStorage would be a guess that outlives the key
+  // it names. Trying is cheap and self-verifying: signing a challenge issued
+  // for another device produces a signature that fails against that device's
+  // stored key, which is exactly the right answer. wa_device_cap() bounds the
+  // loop at 3.
+  let mine;
+  try { mine = await _rpc("list_my_devices"); } catch (_) { return false; }
+  const rows = (mine && mine.devices) || [];
+  const active = rows.filter((d) => d.status === "active");
+  if (!active.length) return false;
+
+  for (const d of active) {
+    try {
+      const ch = await _sb.functions.invoke("device-auth", {
+        body: { action: "challenge", device_id: d.id },
+      });
+      if (ch.error || !ch.data || !ch.data.ok) continue;
+      // Sign what the function handed back, never a locally rebuilt string —
+      // the format must match byte for byte or verification silently fails.
+      const signature = await _deviceSign(ch.data.sign_this);
+      const vr = await _sb.functions.invoke("device-auth", {
+        body: { action: "verify", device_id: d.id, nonce: ch.data.nonce, signature },
+      });
+      if (vr.error || !vr.data || !vr.data.ok) continue;
+      _deviceHeader = vr.data.header;
+      return true;
+    } catch (e) {
+      // AUTH_REQUIRED (phone not unlocked recently enough) and KEY_INVALIDATED
+      // are the two the caller must be able to act on; everything else is just
+      // "this device didn't work".
+      //
+      // AUTH_REQUIRED should now be unreachable for keys created after the
+      // requireAuth:false change in _deviceEnsureKey(). It stays because keys
+      // generated by the old code still exist on already-enrolled phones, and
+      // for them this message is the one accurate thing we can say.
+      const code = (e && (e.code || e.message)) || "";
+      if (/AUTH_REQUIRED|unlock your phone/i.test(code)) {
+        throw new Error("Please unlock your phone, then try again.");
+      }
+      if (/KEY_INVALIDATED|no longer valid/i.test(code)) {
+        throw new Error("This device's key is no longer valid. Please register it again.");
+      }
+    }
+  }
+  return false;
 }
 
 async function _deviceSign(payload) {
@@ -1288,63 +1407,67 @@ const WA = {
   // through PostgREST (send, reload, moderate) but stop receiving LIVE updates.
   // Unresolved — see the Phase 6 note in the plan. It does not bite in audit
   // mode, and it does not affect ordinary members at all.
-  async deviceSignIn() {
-    if (_deviceHeader) return true;
-    let caps;
-    try { caps = await _deviceCapabilities(); } catch (_) { return false; }
-    if (!caps.supported || !caps.hasKey) return false;
-
-    // Which of this account's active devices is THIS one? We don't ask — we try
-    // each in turn and let the signature settle it. list_my_devices() doesn't
-    // return public keys (deliberately: no reason to hand them out), and a
-    // device id cached in localStorage would be a guess that outlives the key
-    // it names. Trying is cheap and self-verifying: signing a challenge issued
-    // for another device produces a signature that fails against that device's
-    // stored key, which is exactly the right answer. wa_device_cap() bounds the
-    // loop at 3.
-    let mine;
-    try { mine = await _rpc("list_my_devices"); } catch (_) { return false; }
-    const rows = (mine && mine.devices) || [];
-    const active = rows.filter((d) => d.status === "active");
-    if (!active.length) return false;
-
-    for (const d of active) {
-      try {
-        const ch = await _sb.functions.invoke("device-auth", {
-          body: { action: "challenge", device_id: d.id },
-        });
-        if (ch.error || !ch.data || !ch.data.ok) continue;
-        // Sign what the function handed back, never a locally rebuilt string —
-        // the format must match byte for byte or verification silently fails.
-        const signature = await _deviceSign(ch.data.sign_this);
-        const vr = await _sb.functions.invoke("device-auth", {
-          body: { action: "verify", device_id: d.id, nonce: ch.data.nonce, signature },
-        });
-        if (vr.error || !vr.data || !vr.data.ok) continue;
-        _deviceHeader = vr.data.header;
-        return true;
-      } catch (e) {
-        // AUTH_REQUIRED (phone not unlocked recently enough) and KEY_INVALIDATED
-        // are the two the caller must be able to act on; everything else is just
-        // "this device didn't work".
-        const code = (e && (e.code || e.message)) || "";
-        if (/AUTH_REQUIRED|unlock your phone/i.test(code)) {
-          throw new Error("Please unlock your phone, then try again.");
-        }
-        if (/KEY_INVALIDATED|no longer valid/i.test(code)) {
-          throw new Error("This device's key is no longer valid. Please register it again.");
-        }
-      }
-    }
-    return false;
+  //
+  // ⚠ SINGLE-FLIGHT. Concurrent callers share one handshake rather than racing —
+  // see _deviceSignInFlight. Awaiting this from the UI is therefore cheap and
+  // safe even while the boot call is still running.
+  deviceSignIn() {
+    if (_deviceHeader) return Promise.resolve(true);
+    if (_deviceSignInFlight) return _deviceSignInFlight;
+    _deviceSignInFlight = _deviceSignIn().finally(() => { _deviceSignInFlight = null; });
+    return _deviceSignInFlight;
   },
 
   // Drop the session proof without touching the key — used by sign-out, so the
   // next person on this machine starts from nothing.
-  deviceSignOut() { _deviceHeader = null; },
+  //
+  // Clears the in-flight handshake too, so a sign-in by the NEXT person starts a
+  // fresh one instead of joining the departing user's.
+  deviceSignOut() { _deviceHeader = null; _deviceSignInFlight = null; },
 
   myDevices() { return _rpc("list_my_devices"); },
   revokeDevice(id) { return _rpc("revoke_device", { p_id: id }); },
+
+  // Throw this machine's key away so the next enrolment generates a fresh one.
+  // The escape hatch for a key that can no longer be used: one created before
+  // requireAuth:false (so it still demands an unlock inside 60s), or one Android
+  // invalidated when the screen lock changed.
+  //
+  // ⚠ Revokes the server-side row FIRST, then destroys the local key. That order
+  // matters: wa_device_cap() caps an account at 3 devices, so leaving the dead
+  // row behind would let two re-registrations exhaust the allowance and the
+  // third fail with a cap error that looks unrelated to what the user did. If
+  // revoke succeeds and the delete then fails, the device is merely revoked —
+  // recoverable. The reverse order can strand a row nothing can ever sign for.
+  async resetDeviceKey() {
+    let mine = { devices: [] };
+    try { mine = await _rpc("list_my_devices"); } catch (_) {}
+    for (const d of (mine.devices || [])) {
+      if (d.status === "active" || d.status === "pending") {
+        try { await _rpc("revoke_device", { p_id: d.id }); } catch (_) {}
+      }
+    }
+    await _deviceDeleteKey();
+
+    // Confirm the key is actually gone rather than trusting the call returned.
+    // ⚠ Not belt-and-braces — it closes a real dead end. enroll_device() rejects
+    // a pubkey whose row is 'revoked' outright ("This device was revoked. Ask
+    // the Sutradhar to re-approve it."), so a delete that quietly failed would
+    // leave the old key in place and turn the next Register tap into that error,
+    // which names neither the cause nor a way out. Failing here instead keeps
+    // the user on the one screen that can still fix it, and this reset is safe
+    // to run again: the revokes are already done and deleting is idempotent.
+    let gone = false;
+    try { gone = !(await _deviceCapabilities()).hasKey; } catch (_) { gone = true; }
+    if (!gone) {
+      throw new Error(
+        "This device's key could not be removed. Please close the app completely, " +
+        "open it again, and retry.");
+    }
+
+    _deviceHeader = null;
+    _deviceSignInFlight = null;
+  },
 
   // ----- Sutradhar only ---------------------------------------------------
   listDeviceRequests() { return _rpc("list_device_requests"); },
