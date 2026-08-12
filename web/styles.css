@@ -1022,8 +1022,13 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   font-style: normal; letter-spacing: .09em; }                 /* dark pink, own centred line */
 
 .pl-text { color: var(--accent); font-weight: 600; font-size: 16px; margin-top: 8px; min-height: 22px; }
+/* "कृपया अमृत बरसाइए।" flashes 3 times while it's on screen (645ms per cycle,
+   matching the preloader's message-swap interval in index.html) rather than
+   sitting static for three identical re-renders. */
+@keyframes pl-text-blink { 0%, 100% { opacity: 1; } 25%, 75% { opacity: .15; } 50% { opacity: 1; } }
+.pl-text.pl-blink { animation: pl-text-blink 645ms ease-in-out 3; }
 @media (prefers-reduced-motion: reduce) {
-  .chakra, .chakra::before, .chakra::after, .pl-nadi-a, .pl-nadi-b, .pl-rise, .pl-particle, .preloader.burst .pl-burst { animation: none !important; }
+  .chakra, .chakra::before, .chakra::after, .pl-nadi-a, .pl-nadi-b, .pl-rise, .pl-particle, .preloader.burst .pl-burst, .pl-text.pl-blink { animation: none !important; }
   .chakra { opacity: 1; transform: scale(1); box-shadow: 0 0 14px 3px color-mix(in srgb, var(--color) 55%, transparent); }
   .pl-nadi-a, .pl-nadi-b { stroke-dashoffset: 0; opacity: .4; }
 }
@@ -2177,6 +2182,10 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
   margin: 6px 10px 4px; padding: 8px 12px; border-radius: 12px;
   background: #ede7f6; color: #6a1b9a; font: 500 13px var(--sans);
 }
+/* Without this, the bar's own `display: flex` above beats the browser's
+   default [hidden] handling (author styles win ties over the UA sheet), so
+   the empty bar showed as an unlabelled purple pill above every list. */
+.mx-filter[hidden] { display: none; }
 .mx-f-txt { flex: 1 1 auto; min-width: 0; }
 .mx-f-btn {
   flex: none; border: 1px solid #6a1b9a; background: transparent; color: #6a1b9a;
@@ -2624,4 +2633,118 @@ body.gated { overflow: hidden; }
 .mod-rc-codes code {
   font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; letter-spacing: .08em;
   padding: 7px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+}
+
+/* ---- desktop search: the non-daily sections ------------------------------
+   Daily results keep the thumbnail list above; Special / Letterpad / Anushthan
+   render as compact rows that expand IN PLACE — those sections have no
+   per-message desktop route, so opening one would otherwise mean bouncing the
+   reader to a list of ~1,100 messages to find it again. */
+.sg-groups { margin-top: 26px; display: flex; flex-direction: column; gap: 20px; }
+.sg-sec { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.sg-head {
+  display: flex; align-items: center; gap: 8px; margin: 0;
+  padding: 11px 14px; border-bottom: 1px solid var(--border);
+  font: 600 14px var(--sans); color: var(--text); background: #fafbfd;
+}
+.sg-ico { font-size: 15px; }
+.sg-n { color: var(--muted); font-weight: 500; }
+.sg-open { margin-left: auto; font-size: 12px; color: #1565c0; text-decoration: none; font-weight: 500; }
+.sg-open:hover { text-decoration: underline; }
+.sg-list { display: flex; flex-direction: column; }
+.sg-row { border-bottom: 1px solid var(--border); }
+.sg-row:last-child { border-bottom: 0; }
+.sg-row > summary { padding: 11px 14px; cursor: pointer; list-style: none; }
+.sg-row > summary::-webkit-details-marker { display: none; }
+.sg-row > summary:hover { background: #f4f8fd; }
+.sg-row[open] > summary { background: #eef4fc; }
+.sg-r-top { font-size: 11.5px; color: var(--muted); }
+.sg-r-title { font-weight: 600; margin-top: 2px; }
+.sg-r-prev { font-size: 13.5px; color: var(--text); margin-top: 3px; opacity: .85; }
+.sg-r-full { padding: 4px 14px 14px; white-space: pre-wrap; font-size: 14.5px; line-height: 1.65; }
+.sg-r-foot { padding: 0 14px 12px; font-size: 12px; color: var(--muted); }
+.sg-more { padding: 10px 14px; font-size: 12.5px; color: var(--muted); }
+
+/* --- Admin Talks (add_admin_talks.sql) ------------------------------------
+   `at-` namespace. The room itself is the ordinary .wc- chat; only the
+   participants header, the participants sheet and the system pill are new. */
+
+/* Membership announcements ("X was added by Y"). A real message row, so it
+   sits in the .wc-msg flow — but it is nobody's speech, so it drops the bubble,
+   the avatar and the clock entirely and centres like a day separator. */
+.wc-msg-sys { display: flex; justify-content: center; padding: 6px 18px; }
+.wc-sys {
+  max-width: 82%; text-align: center;
+  font-size: 11.5px; line-height: 1.45; color: var(--muted);
+  background: #f2f0f6; border-radius: 10px; padding: 5px 12px;
+}
+
+/* The tappable header: name, participant summary, chevron — the group-info row
+   from any chat app. A <button>, so it reaches keyboard users for free. */
+.at-head {
+  display: flex; align-items: center; gap: 12px; width: 100%; cursor: pointer;
+  text-align: left; padding: 11px 14px; margin-bottom: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+}
+.at-head:hover { background: var(--accent-soft); border-color: var(--accent-2); }
+.at-head-ico { font-size: 20px; flex: 0 0 auto; }
+.at-head-body { flex: 1 1 auto; min-width: 0; }
+.at-head-title { display: block; font: 700 16px var(--serif); color: var(--accent); }
+.at-head-sub {
+  display: block; margin-top: 1px; font: 500 12px var(--sans); color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.at-head-chev { flex: 0 0 auto; font-size: 20px; color: var(--muted); }
+
+/* Desktop gives the chat a fixed frame the way .an-chat does; the mobile shell
+   supplies its own full-height .m-chatbody, so this only applies off-mobile. */
+.at-page .at-chat {
+  height: min(66vh, 660px);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
+
+/* Participants sheet */
+.at-sheet {
+  position: fixed; inset: 0; z-index: 60; display: flex;
+  align-items: center; justify-content: center; padding: 18px;
+  background: rgba(28, 24, 34, .5);
+}
+.at-sheet-card {
+  width: min(420px, 100%); max-height: 78vh; display: flex; flex-direction: column;
+  background: var(--surface); border-radius: 16px; overflow: hidden;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .28);
+}
+.at-sheet-top {
+  display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+  padding: 13px 16px; border-bottom: 1px solid var(--border-soft);
+}
+.at-sheet-h { flex: 1 1 auto; font: 700 15px var(--sans); color: var(--text); }
+.at-sheet-x { border: none; background: none; cursor: pointer; font-size: 15px; color: var(--muted); }
+.at-plist { flex: 1 1 auto; overflow-y: auto; list-style: none; margin: 0; padding: 6px 0; }
+.at-p { display: flex; align-items: center; gap: 11px; padding: 8px 16px; }
+.at-p-av {
+  position: relative; flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-soft); color: var(--accent); font: 700 15px var(--sans);
+}
+/* Presence comes from the chat's OWN Realtime channel — see mountAdminTalks. */
+.at-p-dot {
+  position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px;
+  border-radius: 50%; background: #2fa84f; border: 2px solid var(--surface);
+}
+.at-p-body { flex: 1 1 auto; min-width: 0; }
+.at-p-name {
+  display: block; font: 600 14px var(--sans); color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.at-p-you { font-style: normal; font-size: 11px; font-weight: 700; color: var(--accent); }
+.at-p-meta { display: block; font: 500 11.5px var(--sans); color: var(--muted); }
+.at-p-live { flex: 0 0 auto; font: 700 10.5px var(--sans); color: #2fa84f; }
+/* Why a newcomer's history starts where it does — asked once, answered here
+   rather than in a support message. */
+.at-sheet-note {
+  flex: 0 0 auto; padding: 11px 16px; border-top: 1px solid var(--border-soft);
+  font: 500 11.5px var(--sans); color: var(--muted); line-height: 1.5;
 }

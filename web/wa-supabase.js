@@ -115,6 +115,10 @@ function _mapMsg(row) {
     replySnippet: row.reply_snippet || null,
     deletedAt: row.deleted_at || null,
     attachments: Array.isArray(row.attachments) ? row.attachments : null,
+    // Admin Talks system lines ("X was added"). Never set on an ordinary
+    // message, and never settable by a client — Postgres blanks it on insert
+    // unless admin_talk_system_msg() is the one writing (add_admin_talks.sql §3).
+    sys: row.sys || null,
   };
 }
 
@@ -155,6 +159,36 @@ function _anubhutiMissing(error) {
   const m = (error && error.message) || "";
   return /anubhuti/i.test(m) && /does not exist|not find|schema cache/i.test(m)
     ? "Anubhuti Sharing isn't set up yet. (Admin: run supabase/add_anubhuti.sql.)"
+    : null;
+}
+
+// ---- Admin Talks ----------------------------------------------------------
+// The sutradhar + moderators' private room. ONE fixed thread, so the wid is a
+// constant rather than something a caller composes — there is no second room to
+// address and nothing to derive it from.
+//
+// ⚠ This constant is only an address. Nothing here decides who may read or
+// write it: `messages_select`/`messages_insert` branch on the 'admin:' prefix in
+// Postgres (add_admin_talks.sql §5), which is the only check that survives
+// someone calling PostgREST with the anon key instead of loading this file.
+// ⚠ Underscored because app.js declares its own ADMIN_TALKS_WID at top level.
+// Both files are CLASSIC scripts sharing one lexical global scope, so two
+// top-level `const`s of the same name is a SyntaxError that kills the entire
+// app on load — not a shadowed variable. Same reason every other helper in
+// this file is prefixed. app.js reads the value from WA.ADMIN_TALKS_WID.
+const _ADMIN_TALKS_WID = "admin:talks";
+// Matches the whole reserved namespace, not just the one room — the RLS
+// carve-outs are written against 'admin:%', so any client-side "is this
+// private?" test has to cover exactly the same set.
+const _isAdminWid = (wid) => /^admin:/.test(String(wid || ""));
+
+// Friendly text when add_admin_talks.sql hasn't been run. Matched on the RPC
+// name as well as the table, since a missing FUNCTION reports "Could not find
+// the function public.list_admin_talk_members…" and never names a table.
+function _adminTalksMissing(error) {
+  const m = (error && error.message) || "";
+  return /admin_talk/i.test(m) && /does not exist|not find|schema cache/i.test(m)
+    ? "Admin Talks isn't set up on the server yet. (Admin: run supabase/add_admin_talks.sql.)"
     : null;
 }
 
@@ -738,7 +772,11 @@ const WA = {
     }
     if (error) throw new Error(error.message);
     // Notify the other members (send-push kind "chat" verifies we're the author).
-    _firePush({ kind: "chat", id: data.id });
+    // ⚠ Admin Talks takes a DIFFERENT kind. "chat" addresses every approved
+    // member, so reusing it here would put a private admin line in the
+    // notification shade of the whole community — the one place RLS cannot
+    // protect it, because the push is composed server-side after the read.
+    _firePush({ kind: wid === _ADMIN_TALKS_WID ? "admintalks" : "chat", id: data.id });
     return { message: _mapMsg(data) };
   },
 
@@ -999,7 +1037,11 @@ const WA = {
       .select("*")
       .order("created_at", { ascending: false }).limit(n);
     if (error || !data) return { messages: [] };
-    return { messages: data.filter((r) => !r.deleted_at)
+    // ⚠ 'admin:' threads are filtered here as well as in RLS. RLS already hides
+    // them from members, but a MODERATOR passes that check — and "recent
+    // community activity" is a public-facing summary, not a place for the
+    // private room's last line to surface.
+    return { messages: data.filter((r) => !r.deleted_at && !_isAdminWid(r.wisdom_id))
       .map((r) => ({ user: r.username, wid: r.wisdom_id, text: r.text, ts: r.created_at })) };
   },
 
@@ -1027,6 +1069,7 @@ const WA = {
     const byWid = new Map();
     for (const r of data || []) {
       if (r.deleted_at) continue;      // a removed message is not a thread's last line
+      if (_isAdminWid(r.wisdom_id)) continue;   // Admin Talks is not a satsang
       const t = byWid.get(r.wisdom_id);
       if (t) { t.count++; continue; }
       byWid.set(r.wisdom_id, {
@@ -1101,6 +1144,49 @@ const WA = {
     const { error } = await _sb.from("anubhuti_topics").delete().eq("id", id);
     if (error) throw new Error(_anubhutiMissing(error) || error.message);
     return { ok: true };
+  },
+
+  // ----- Admin Talks -----------------------------------------------------
+  // The private room shared by the sutradhar and the moderators. Its
+  // conversation is an ordinary `messages` thread, so postMessage /
+  // subscribeChat / reactions / pinning all take ADMIN_TALKS_WID and need
+  // nothing of their own here.
+  ADMIN_TALKS_WID: _ADMIN_TALKS_WID,
+
+  // Who is in the room, sutradhar first: [{id, username, role, joined_at}],
+  // plus `me` — the caller's own roster row, or null if they are not in it.
+  //
+  // ⚠ `me` is the answer the UI should trust, not the cached role in
+  // localStorage. A moderator whose roster row is missing (demoted in another
+  // session, or a project where the migration hasn't run) must see the door
+  // closed rather than a chat that errors on send.
+  async adminTalkMembers() {
+    try {
+      const d = await _rpc("list_admin_talk_members");
+      return { me: (d && d.me) || null, members: (d && d.members) || [] };
+    } catch (e) {
+      const m = _adminTalksMissing(e);
+      if (m) throw Object.assign(new Error(m), { code: "NO_TABLE" });
+      throw e;
+    }
+  },
+
+  // How many messages in the room are newer than `sinceIso` and not our own —
+  // the drawer badge, and nothing else. A HEAD request with an exact count, so
+  // the rows themselves never cross the wire for a number.
+  //
+  // Returns 0 rather than throwing on any failure: an offline launch must leave
+  // the cached badge alone, not clear it or break the boot path.
+  // System announcements are counted — being added to the room IS news.
+  async adminTalkUnread(sinceIso, me) {
+    try {
+      let q = _sb.from("messages").select("id", { count: "exact", head: true })
+        .eq("wisdom_id", _ADMIN_TALKS_WID).is("deleted_at", null);
+      if (sinceIso) q = q.gt("created_at", sinceIso);
+      if (me) q = q.neq("username", me);
+      const { count, error } = await q;
+      return error ? 0 : (count || 0);
+    } catch (_) { return 0; }
   },
 
   // ----- Push notifications (Phase 4) ------------------------------------

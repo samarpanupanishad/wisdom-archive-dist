@@ -25,6 +25,17 @@ function highlight(text, q) {
     return esc.replace(re, "<mark>$1</mark>");
   } catch { return esc; }
 }
+// A window of `len` chars centred on the first occurrence of `term`, so the
+// matched word is visible in a result row (not just the start of the text).
+// Shared by the desktop search groups and mobile's Search By cards.
+function snippetAround(text, term, len) {
+  const t = (text || "").replace(/\s+/g, " ");
+  if (!term) return t.slice(0, len);
+  const i = t.toLowerCase().indexOf(term.toLowerCase());
+  if (i < 0) return t.slice(0, len);
+  const start = Math.max(0, i - Math.floor((len - term.length) / 2));
+  return (start > 0 ? "…" : "") + t.slice(start, start + len);
+}
 function fmtDate(iso) { if (!iso) return ""; const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; }
 // "9th July, 2026" — ordinal day + full month + comma + year (share subjects).
 function ordinalSuffix(n) { const s = ["th", "st", "nd", "rd"], v = n % 100; return s[(v - 20) % 10] || s[v] || s[0]; }
@@ -129,7 +140,7 @@ function renderAvatarPop() {
   const pop = document.getElementById("avatar-pop"); if (!pop) return;
   if (isSignedIn()) {
     const u = currentUser();
-    pop.innerHTML = `<div class="ap-user"><div class="ap-name">${escapeHtml(u.username)}</div><div class="ap-role">${escapeHtml(roleLabel(u.role))}</div></div>
+    pop.innerHTML = `<div class="ap-user"><div class="ap-name">${escapeHtml(u.username)}</div></div>
       <button class="btn ap-signout">Sign out</button>`;
     // Not a member yet → the popover is where they can ask to join.
     if (!(u.role === "member" || u.role === "moderator" || u.role === "sutradhar")) {
@@ -507,6 +518,7 @@ const PATHS = {
   shield: '<path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/><path d="M9.2 12l2 2 3.6-3.8"/>',
   spark: '<path d="M11 4l1.7 4.8L17.5 10.5l-4.8 1.7L11 17l-1.7-4.8L4.5 10.5l4.8-1.7L11 4z"/><path d="M18.5 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9.9-2.3z"/>',
   letter: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/>',
+  lock: '<rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7"/><path d="M12 14.2v2.2"/>',
   lotus: '<path d="M12 20c-4.4 0-8-2.7-8-6 2 .4 3.4 1.2 4.4 2.1"/><path d="M12 20c4.4 0 8-2.7 8-6-2 .4-3.4 1.2-4.4 2.1"/><path d="M12 20c-2.8-2-4.2-4.4-4.2-7 0-2.8 1.5-5.3 4.2-7 2.7 1.7 4.2 4.2 4.2 7 0 2.6-1.4 5-4.2 7z"/>',
 };
 const icon = (n) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${PATHS[n] || ""}</svg>`;
@@ -523,6 +535,7 @@ const NAV = [
   { divider: true },
   { route: "admin", label: "Add Guru's Msg", hash: "#/admin", icon: "upload" },
   { route: "moderator", label: "Moderator", hash: "#/moderator", icon: "shield", modOnly: true },
+  { route: "admintalks", label: "Admin Talks", hash: "#/admintalks", icon: "lock", modOnly: true },
   { route: "stats", label: "Statistics", hash: "#/stats", icon: "pie" },
   { route: "settings", label: "Settings", hash: "#/settings", icon: "gear" },
   { route: "about", label: "About", hash: "#/about", icon: "info" },
@@ -534,7 +547,8 @@ function buildNav() {
     if (it.divider) { nav.appendChild(el(`<div class="divider"></div>`)); return; }
     const badge = it.route === "special" ? `<span class="nav-badge" data-special-badge hidden></span>`
       : it.route === "letterpad" ? `<span class="nav-badge" data-letterpad-badge hidden></span>`
-      : it.route === "anubhuti" ? `<span class="nav-badge" data-anubhuti-badge hidden></span>` : "";
+      : it.route === "anubhuti" ? `<span class="nav-badge" data-anubhuti-badge hidden></span>`
+      : it.route === "admintalks" ? `<span class="nav-badge" data-admintalk-badge hidden></span>` : "";
     nav.appendChild(el(`<a href="${it.hash}" data-route="${it.route}"${it.modOnly ? ' class="mod-only"' : ""}><span class="ico">${icon(it.icon)}</span><span class="label">${it.label}</span>${badge}</a>`));
   });
 }
@@ -553,8 +567,10 @@ function toast(msg, opts) {
   //   (pos "up", pushing past the first/start).
   // - mobile default: just BELOW the fixed top panel, near the share/download
   //   buttons it reports on. Desktop: original bottom-centre position.
+  // - opts.bg: override background only, keeping the normal (non-red) position
+  //   rules below — e.g. the welcome toast wants red without relocating.
   const mobile = document.body.classList.contains("m-mode");
-  t.style.background = opts && opts.red ? "#d32f2f" : "#2c2a33";
+  t.style.background = opts && opts.bg ? opts.bg : (opts && opts.red ? "#d32f2f" : "#2c2a33");
   t.style.color = "#fff";
   if (opts && opts.red) { t.style.top = opts.pos === "up" ? "20%" : "80%"; t.style.bottom = "auto"; t.style.transform = "translate(-50%,-50%)"; t.style.zIndex = "620"; }
   else if (mobile) { t.style.top = "calc(60px + env(safe-area-inset-top))"; t.style.bottom = "auto"; t.style.transform = "translateX(-50%)"; t.style.zIndex = "620"; }
@@ -940,11 +956,25 @@ const isAnubhutiWid = (wid) => ANUBHUTI_NS_RE.test(String(wid || ""));
 const anubhutiIdOf = (wid) => { const m = ANUBHUTI_NS_RE.exec(String(wid || "")); return m ? m[1] : ""; };
 const anubhutiWidOf = (id) => "anubhuti:" + id;
 
+// Admin Talks — the sutradhar + moderators' private room. ONE fixed thread, so
+// this is a constant and not a namespace with ids to parse.
+//
+// ⚠ Deliberately in NEITHER SATSANG_NS_RE nor CHAT_NS_RE. It is not a satsang
+// (it hangs off no Guru's message and must never appear in that index), and it
+// has no reader page at #/m/<section>/<id> — the room IS its own page.
+//
+// ⚠ Nothing on this side of the wire keeps the room private. Every read and
+// write is gated in Postgres on the 'admin:' prefix (add_admin_talks.sql §5);
+// hiding the menu is a courtesy to non-admins, not the lock.
+const ADMIN_TALKS_WID = "admin:talks";
+const isAdminTalksWid = (wid) => /^admin:/.test(String(wid || ""));
+
 // "This thread has been read up to `iso`" — routed to whichever badge owns it.
-// Both modules share one seen-map, but each keeps its own count, so marking has
-// to go through the right one or that count never drops.
+// All three modules share one seen-map, but each keeps its own count, so marking
+// has to go through the right one or that count never drops.
 function markThreadSeen(wid, iso) {
-  if (isAnubhutiWid(wid)) ANUBHUTI.markSeen(wid, iso);
+  if (isAdminTalksWid(wid)) ADMINTALK.markSeen(iso);
+  else if (isAnubhutiWid(wid)) ANUBHUTI.markSeen(wid, iso);
   else SATSANG.markSeen(wid, iso);
 }
 
@@ -1102,7 +1132,7 @@ function wireModSignIn(body, onSuccess) {
       const password = body.querySelector(".su-pw").value;
       if (!username || !email || !password) { sres.innerHTML = `<div class="conc-err">Fill in all fields.</div>`; return; }
       sbtn.disabled = true; sbtn.textContent = "Creating…";
-      try { const user = await modSignUp(username, email, password); refreshModNav(); toast("Welcome, " + user.username); onSuccess(); }
+      try { const user = await modSignUp(username, email, password); refreshModNav(); toast("Welcome, " + user.username, { bg: "#d32f2f" }); onSuccess(); }
       catch (err) { sres.innerHTML = `<div class="conc-err">${escapeHtml(err.message)}</div>`; sbtn.disabled = false; sbtn.textContent = "Create account"; }
     };
     sbtn.addEventListener("click", submit);
@@ -1861,6 +1891,22 @@ function chatJumpToParent(msgsEl, mid) {
 // `prev` is the message above it (or null): grouping is decided here so every
 // path produces the same block structure.
 function buildChatMsgEl(m, ctx, prev) {
+  // Admin Talks membership announcements ("X was added by Y"). A real row in
+  // `messages`, so it threads, sorts and arrives live like anything else — but
+  // it is nobody's speech, so it gets a centred pill instead of a bubble: no
+  // avatar, no clock, no reply/react/delete affordances.
+  //
+  // ⚠ It keeps the `wc-msg` class (the prev-walkers in chatAppendLive and
+  // chatUpdateLive look for exactly that, and skipping it would let two real
+  // messages group ACROSS an announcement) but carries an EMPTY `data-user`.
+  // Its `m.user` is the person the line is about, so a real username here would
+  // group that person's next message into the pill and swallow their name.
+  if (m.sys) {
+    return el(`<div class="wc-msg wc-msg-sys" data-mid="${escapeHtml(m.id || "")}"
+         data-user="" data-ts="${escapeHtml(m.ts || "")}">
+      <div class="wc-sys">${escapeHtml(m.text || "")}</div>
+    </div>`);
+  }
   const isMe = m.user === ctx.me;
   const grouped = chatGroupsWith(prev, m);
   // A removed message keeps its slot: replies still point somewhere, and the
@@ -1952,7 +1998,11 @@ function renderChatMessages(msgsEl, messages, ctx) {
       dividerDone = true;
     }
     msgsEl.appendChild(buildChatMsgEl(m, ctx, prev));
-    prev = m;
+    // A system announcement keeps its TIMESTAMP as the neighbour (so the next
+    // message doesn't draw a second day separator) but hands on an empty user,
+    // which is what stops the next real message grouping into it. Same reason
+    // the pill itself renders with data-user="" — see buildChatMsgEl.
+    prev = m.sys ? { user: "", ts: m.ts } : m;
   });
   msgsEl.scrollTop = msgsEl.scrollHeight;
 }
@@ -2038,7 +2088,14 @@ function openChatStream(wid, msgsEl, ctx) {
 
 // `label` overrides the header title — Special Telegram / Letterpad messages
 // pass their own subject, since "Guru's msg #special:2564" is meaningless.
-async function renderWisdomChat(body, wid, label) {
+//
+// `opts.onCtx(ctx)` hands the live chat context back to the caller once it
+// exists. Admin Talks uses it to read `ctx.present` when the participants sheet
+// opens, so the "online now" dots come from the chat's OWN presence channel
+// rather than a second connection — concurrent connections are the scarcest
+// free-tier resource. Nothing else passes it, and the chat behaves identically
+// when it's absent.
+async function renderWisdomChat(body, wid, label, opts) {
   closeChatStream();
   body.innerHTML = `<div class="wc-wrap">
     <div class="wc-hdr">
@@ -2063,7 +2120,10 @@ async function renderWisdomChat(body, wid, label) {
   const msgsEl = body.querySelector("#wc-msgs");
   const footEl = body.querySelector("#wc-foot");
   const newMsgBtn = body.querySelector("#wc-new-msg");
-  body.querySelector(".wc-refresh").addEventListener("click", () => renderWisdomChat(body, wid));
+  // Re-render with the SAME label and opts: dropping them made ↻ fall back to
+  // chatWidLabel(), which reads "Guru's msg #anubhuti:7" — and would cost Admin
+  // Talks its presence hook.
+  body.querySelector(".wc-refresh").addEventListener("click", () => renderWisdomChat(body, wid, label, opts));
   newMsgBtn.addEventListener("click", () => {
     msgsEl.scrollTop = msgsEl.scrollHeight;
     newMsgBtn.hidden = true;
@@ -2106,6 +2166,7 @@ async function renderWisdomChat(body, wid, label) {
   const ctx = { me: data.me, canModerate: !!data.can_moderate, canDelete: !!data.can_delete,
                 canReply: !(!data.can_moderate && data.is_muted), reacts: new Map(),
                 seenBefore: SATSANG.seenFor(wid) || "", wid, body };
+  if (opts && opts.onCtx) opts.onCtx(ctx);
   // Reactions load in ONE query for the whole thread, before the first paint, so
   // pills don't pop in a moment after the messages. A failure here must never
   // cost the chat itself — an empty store just means no pills.
@@ -2548,7 +2609,10 @@ function searchBackBtn() {
 //                  fetches it lazily (list rows don't carry images); Favorites
 //                  already has it, so this can just return item directly.
 function renderThumbList(items, opts) {
-  const { nav, backButton, header, emptyMsg, fetchEntry } = opts;
+  // footer (optional): a factory for extra content below the list. Called on
+  // EVERY showList() — including the empty branch, and again after a detail
+  // view is backed out of — so search's other sections can't vanish.
+  const { nav, backButton, header, emptyMsg, fetchEntry, footer } = opts;
   const snippet = opts.snippet || ((item, lang) => escapeHtml(item[`body_${lang}`] || ""));
 
   function showList() {
@@ -2559,7 +2623,11 @@ function renderThumbList(items, opts) {
     const wrap = el(`<div class="flush-top"></div>`);
     if (backButton) wrap.appendChild(backButton);
     if (header) wrap.appendChild(header);
-    if (!items.length) { wrap.appendChild(el(`<div class="empty">${emptyMsg}</div>`)); $view.replaceChildren(wrap); return; }
+    if (!items.length) {
+      wrap.appendChild(el(`<div class="empty">${emptyMsg}</div>`));
+      if (footer) wrap.appendChild(footer());
+      $view.replaceChildren(wrap); return;
+    }
     const list = el(`<div class="results"></div>`);
     // Render in chunks: a common search word (or a long favorites list) can
     // match/hold hundreds of entries, and each row runs a highlight regex
@@ -2587,6 +2655,7 @@ function renderThumbList(items, opts) {
     moreBtn.addEventListener("click", renderChunk);
     wrap.appendChild(list);
     wrap.appendChild(moreBtn);
+    if (footer) wrap.appendChild(footer());
     $view.replaceChildren(wrap);
     renderChunk();   // first batch
   }
@@ -2627,6 +2696,60 @@ function renderThumbList(items, opts) {
   showList();
 }
 
+// The non-daily sections of a desktop search, in the operator's fixed order.
+// Mobile's Search By renders its own rows from the same data (the split
+// satsangGroups() established) — but both match through MSG_CORPUS, so the two
+// can never disagree about whether a message contains a word.
+const DESK_SEARCH_SECS = [
+  { key: "special", label: "Special Telegram Msg", icon: "✨", href: "#/special" },
+  { key: "letterpad", label: "Guru's Letterpad Msg", icon: "✍️", href: "#/letterpad" },
+  // Anushthan messages ARE Letterpad messages shown in a second section (see
+  // MSG_CORPUS.anushthanRows), so its rows open the Letterpad page.
+  { key: "anushthan", label: "Anushthan Msg", icon: "🪔", href: "#/letterpad" },
+];
+function searchMsgGroups(q) {
+  const term = (q || "").trim().toLowerCase();
+  // The query's script picks the language, exactly as the daily FTS does:
+  // Devanagari → Hindi bodies, Latin → English.
+  const lang = HindiType.hasDevanagari(term) ? "hi" : "en";
+  return DESK_SEARCH_SECS.map((s) => ({
+    sec: s, lang, term,
+    rows: term ? MSG_CORPUS.search(s.key, lang, term) : [],
+  }));
+}
+// One group. Rows carry the whole message behind a <details> — desktop has no
+// per-message route for these sections, and expanding in place beats bouncing
+// the reader to a list of 1,100 and making them find it again.
+function searchGroupsEl(groups) {
+  const wrap = el(`<div class="sg-groups"></div>`);
+  for (const g of groups) {
+    const n = g.rows.length;
+    const sec = el(`<section class="sg-sec">
+      <h3 class="sg-head"><span class="sg-ico">${g.sec.icon}</span> ${escapeHtml(g.sec.label)}
+        <span class="sg-n">(${n} result${n === 1 ? "" : "s"})</span>
+        <a class="sg-open" href="${g.sec.href}">open section →</a></h3>
+      <div class="sg-list"></div></section>`);
+    const list = sec.querySelector(".sg-list");
+    if (!n) list.innerHTML = `<div class="empty">No results.</div>`;
+    for (const r of g.rows.slice(0, 60)) {
+      const f = MSG_CORPUS.fieldsOf(g.sec.key, r, g.lang);
+      const prev = snippetAround(f.body || f.title, g.term, 220);
+      list.appendChild(el(`<details class="sg-row">
+        <summary>
+          <div class="sg-r-top">#${escapeHtml(f.id)}${f.date ? " · " + fmtDate(f.date) : ""}</div>
+          ${f.title ? `<div class="sg-r-title">${highlight(f.title, g.term)}</div>` : ""}
+          <div class="sg-r-prev">${highlight(prev, g.term)}</div>
+        </summary>
+        <div class="sg-r-full">${highlight(f.body || "", g.term)}</div>
+        ${f.foot ? `<div class="sg-r-foot">${escapeHtml(f.foot)}</div>` : ""}
+      </details>`));
+    }
+    if (n > 60) list.appendChild(el(`<div class="sg-more">Showing the newest 60 of ${n}. Narrow the word to see the rest.</div>`));
+    wrap.appendChild(sec);
+  }
+  return wrap;
+}
+
 async function renderSearch(q) {
   if (document.activeElement !== searchInput) searchInput.value = q;
   searchClear.style.display = q ? "block" : "none";
@@ -2641,13 +2764,33 @@ async function renderSearch(q) {
   const data = await api("/api/search?q=" + encodeURIComponent(q));
   if (!current(nav)) return;
 
-  renderThumbList(data.results, {
-    nav,
-    backButton: searchBackBtn(),
-    header: el(`<div class="page-head"><div class="page-title">Search Results for <span class="hl-accent">“${escapeHtml(q)}”</span></div><div class="page-sub">Found ${data.count} Guru's msg${data.count === 1 ? "" : "s"}</div></div>`),
-    emptyMsg: `No Guru's msg matched “${escapeHtml(q)}”.`,
-    snippet: (r, lang) => highlight(r[`body_${lang}`], q),
-    fetchEntry: (r) => api("/api/entry/" + encodeURIComponent(r.id)),   // list rows don't carry images
+  const paint = (groups) => {
+    const extra = groups.reduce((n, g) => n + g.rows.length, 0);
+    const total = data.count + extra;
+    renderThumbList(data.results, {
+      nav,
+      backButton: searchBackBtn(),
+      header: el(`<div class="page-head"><div class="page-title">Search Results for <span class="hl-accent">“${escapeHtml(q)}”</span></div><div class="page-sub">Found ${total} Guru's msg${total === 1 ? "" : "s"} across Daily, Special Telegram, Letterpad and Anushthan</div></div>`),
+      // Daily's own empty state — the groups below are rendered either way, and
+      // they are often the ONLY hit (a word the guru used solely in a Telegram
+      // or letterpad message is in none of the daily transcripts).
+      emptyMsg: `No Daily Msg matched “${escapeHtml(q)}”.`,
+      snippet: (r, lang) => highlight(r[`body_${lang}`], q),
+      fetchEntry: (r) => api("/api/entry/" + encodeURIComponent(r.id)),   // list rows don't carry images
+      footer: () => searchGroupsEl(groups),
+    });
+  };
+  const first = searchMsgGroups(q);
+  paint(first);
+  // Special / Letterpad are CLIENT caches: on a desktop session that has never
+  // opened those sections they are empty, and the very messages this search
+  // exists to find would silently not be there. Warm once, then repaint — but
+  // only if the counts actually moved, so a warm cache never janks the page.
+  Promise.allSettled([SPECIAL.sync(), LETTERPAD.loadIndex()]).then(() => {
+    if (!current(nav)) return;
+    const again = searchMsgGroups(q);
+    const moved = again.some((g, i) => g.rows.length !== first[i].rows.length);
+    if (moved) paint(again);
   });
 }
 
@@ -3665,6 +3808,7 @@ async function route() {
   // recount, and SATSANG.refresh() throttles itself to one call per 30s.
   SATSANG.refresh().catch(() => {});
   ANUBHUTI.refresh().catch(() => {});   // same contract, same 30s throttle
+  ADMINTALK.refresh().catch(() => {});  // no-ops for everyone but a moderator
   // Mobile app shell (APK / ?waNativeTest=1): image-first pages take over
   // home / entry / #/m/* routes; every other route falls through to the
   // standard views below, framed by the mobile top bar.
@@ -3682,6 +3826,7 @@ async function route() {
   if (seg[0] === "anubhuti") { setActiveNav("anubhuti"); return renderAnubhuti(params); }
   if (seg[0] === "admin") { setActiveNav("admin"); return renderAdmin(); }
   if (seg[0] === "moderator") { setActiveNav("moderator"); return renderModerator(); }
+  if (seg[0] === "admintalks") { setActiveNav("admintalks"); return renderAdminTalks(); }
   if (seg[0] === "stats") { setActiveNav("stats"); return renderStats(); }
   if (seg[0] === "settings") { setActiveNav("settings"); return renderInfo("settings"); }
   if (seg[0] === "about") { setActiveNav("about"); return renderInfo("about"); }
@@ -4041,7 +4186,12 @@ const HindiType = (() => {
     return s;
   }
 
-  let vocab = null, loading = null;
+  // dailyTerms — [[word, msgs]] from /api/vocab: the DAILY archive's Hindi words.
+  // vocab      — the merged, romanised index actually searched (daily + every
+  //              Special / Letterpad / Anushthan word, Devanagari AND Latin).
+  // builtSig   — the corpus signature `vocab` was built from, so a sync landing
+  //              new messages rebuilds it instead of suggesting a stale list.
+  let dailyTerms = null, vocab = null, loading = null, builtSig = "";
   // Fallback for installed APKs whose BUNDLED wa-native.js predates /api/vocab:
   // OTA updates ship app.js but never wa-native.js (see mobile/publish_update.py
   // UI_FILES), so on such phones the endpoint 404s forever. /api/search DOES
@@ -4064,55 +4214,152 @@ const HindiType = (() => {
     if (!seen.size) throw new Error("no vocab source");
     return [...freq.entries()].sort((a, b) => b[1] - a[1]);
   }
-  function buildIndex(terms) {
+  // ---- the message sections' own words ------------------------------------
+  // /api/vocab can only ever see the daily archive: Special / Letterpad /
+  // Anushthan live in client caches, not wisdom.db. Their Hindi words alone
+  // outnumber the daily archive's ~3:1, and a word that exists ONLY there was
+  // simply unsuggestible — which in हिंदी mode means unsearchable, since typing
+  // Roman letters offers suggestions rather than running a search.
+  const DEV_RE = /[ऀ-ॣॱ-ॿ]{2,}/g;
+  const LAT_RE = /[A-Za-z]{3,}/g;
+  // Devanagari digits normalise to Latin, so typing "2018" finds "२०१८" too.
+  const DIG_RE = /[0-9]+|[०-९]+/g;
+  const toLatinDigits = (s) => String(s).replace(/[०-९]/g, (c) => String(c.charCodeAt(0) - 0x0966));
+  // Cheap "have the message caches changed?" probe. Row counts + the newest id
+  // catch anything newly synced. An English translation arriving as an UPDATE to
+  // an existing row moves neither, so its words join the list next session — the
+  // live search finds that message meanwhile, so nothing is unreachable.
+  function corpusSig() {
+    const s = MSG_CORPUS.rowsOf("special"), l = MSG_CORPUS.rowsOf("letterpad");
+    return [s.length, (s[0] || {}).id || "", l.length, (l[0] || {}).id || ""].join("|");
+  }
+  // Every word in every cached message, counted by how many MESSAGES contain it
+  // (same unit as /api/vocab's entry counts, so the two merge honestly).
+  function corpusTerms() {
+    const hi = new Map(), en = new Map(), num = new Map();
+    const seen = new Set();
+    const scan = (key, prefix, rows) => {
+      for (const r of rows || []) {
+        // Anushthan rows are BORROWED Letterpad rows — one message shown in two
+        // sections. Scanning both would double every word it contains.
+        const id = prefix + (r.id === undefined ? "" : r.id);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        // ⚠ Scanned PER LANGUAGE, matching the language each chip will search
+        // in: picking a Devanagari chip searches Hindi bodies, a Latin or year
+        // chip searches English ones. Scanning both together would count a word
+        // in messages its own search then cannot reach, and the number on a chip
+        // is a promise that that many messages come back.
+        const thi = MSG_CORPUS.textOf(key, r, "hi");
+        const ten = MSG_CORPUS.textOf(key, r, "en");
+        for (const w of new Set(thi.match(DEV_RE) || [])) hi.set(w, (hi.get(w) || 0) + 1);
+        for (const w of new Set(ten.match(DIG_RE) || [])) {
+          // Years only. Bare numbers are what Search By → Number is for, and a
+          // chip for every quantity in the archive would bury the real words.
+          // ⚠ Counted under the SURFACE form: "२०२५" and "2025" are separate
+          // chips because the search is a literal substring match and would not
+          // find one by the other. Typing "2025" still offers both — that is
+          // what the Latin-digit KEY is for (see buildIndex).
+          const lat = toLatinDigits(w);
+          if (lat.length === 4 && +lat >= 1900 && +lat <= 2099) num.set(w, (num.get(w) || 0) + 1);
+        }
+        const once = new Set();
+        for (const surf of ten.match(LAT_RE) || []) {
+          const k = surf.toLowerCase();
+          let cur = en.get(k);
+          if (!cur) { cur = { n: 0, disp: surf }; en.set(k, cur); }
+          // A word seen lower-case anywhere is shown lower-case; one that is
+          // ONLY ever capitalised is a proper noun (Karna, Shirdi) and keeps it.
+          if (surf === k) cur.disp = surf;
+          if (!once.has(k)) { once.add(k); cur.n++; }
+        }
+      }
+    };
+    scan("special", "s", MSG_CORPUS.rowsOf("special"));
+    scan("letterpad", "l", MSG_CORPUS.rowsOf("letterpad"));
+    scan("anushthan", "l", MSG_CORPUS.anushthanRows());   // borrowed rows dedupe against letterpad
+    return { hi, en, num };
+  }
+  function buildIndex(daily, corpus) {
     const idx = [];
-    for (const t of terms) {
-      const dev = t[0], doc = t[1];
+    // Hindi: the daily archive's words and the message sections' merged into one
+    // count — a suggestion's number means "messages containing this", archive-wide.
+    const hi = new Map(corpus.hi);
+    for (const t of daily || []) hi.set(t[0], (hi.get(t[0]) || 0) + (t[1] || 0));
+    for (const [dev, doc] of hi) {
       const base = romanize(dev);
       if (!base) continue;
       const vars = base.includes("R") ? [base.replace(/R/g, "ri"), base.replace(/R/g, "ru")] : [base];
       idx.push({
-        dev, doc,
+        term: dev, script: "hi", doc,
         roman: vars[0].replace(/aa/g, "a").replace(/ee/g, "i").replace(/oo/g, "u"),
         keys: vars.map(romanNorm),
       });
     }
+    // Latin words ride the SAME normalised key space, so one keystroke ranks
+    // both scripts together. This is the only path to a message written in
+    // English only — e.g. Karn (special #2379), whose body_hi is empty.
+    for (const [k, v] of corpus.en) idx.push({ term: v.disp, script: "en", doc: v.n, roman: "English", keys: [romanNorm(k)] });
+    // Keyed by Latin digits, shown in the script it is actually written in, so
+    // typing "2025" reaches a message that spells the year "२०२५" too.
+    for (const [w, doc] of corpus.num) {
+      const lat = toLatinDigits(w);
+      idx.push({ term: w, script: "num", doc, roman: lat === w ? "" : lat, keys: [lat] });
+    }
     return idx;
   }
+  function build() {
+    vocab = buildIndex(dailyTerms, corpusTerms());
+    builtSig = corpusSig();
+    return vocab;
+  }
   function load() {
-    if (vocab) return Promise.resolve(vocab);
+    if (vocab && builtSig === corpusSig()) return Promise.resolve(vocab);
+    if (dailyTerms) return Promise.resolve(build());   // rebuild over freshly synced messages
     if (!loading) loading = (async () => {
       try {
         const d = await api("/api/vocab?lang=hi");
-        vocab = buildIndex(d.terms || []);
-        try { localStorage.setItem("wa:hiVocab", JSON.stringify(d.terms)); } catch {}
+        dailyTerms = d.terms || [];
+        try { localStorage.setItem("wa:hiVocab", JSON.stringify(dailyTerms)); } catch {}
       } catch {
         // Offline, server hiccup, or an APK whose bundled wa-native.js has no
         // /api/vocab: last good copy first (instant), else rebuild the word
         // list from full search bodies (vocabFromSearch above) and cache it.
-        try { vocab = buildIndex(JSON.parse(localStorage.getItem("wa:hiVocab") || "[]")); } catch { vocab = []; }
-        if (!vocab.length) {
+        try { dailyTerms = JSON.parse(localStorage.getItem("wa:hiVocab") || "[]"); } catch { dailyTerms = []; }
+        if (!dailyTerms.length) {
           try {
-            const terms = await vocabFromSearch();
-            vocab = buildIndex(terms);
-            try { localStorage.setItem("wa:hiVocab", JSON.stringify(terms)); } catch {}
-          } catch { /* keep empty — suggestions simply stay off */ }
+            dailyTerms = await vocabFromSearch();
+            try { localStorage.setItem("wa:hiVocab", JSON.stringify(dailyTerms)); } catch {}
+          } catch { dailyTerms = []; }   // no daily words — the message sections still suggest
         }
       }
-      return vocab;
+      loading = null;
+      return build();
     })();
     return loading;
   }
   function suggest(input, n) {
     if (!vocab) { load(); return []; }
+    // The mode's own script sorts first, so हिंदी mode still leads with
+    // Devanagari and only falls through to English words when nothing in the
+    // archive's Hindi matches what was typed.
+    const pref = mode() === "en" ? "en" : "hi";
+    const match = (key, numeric) => vocab
+      .filter((t) => (t.script === "num") === numeric && t.keys.some((x) => x.startsWith(key)))
+      .sort((a, b) => (b.keys.includes(key) ? 1 : 0) - (a.keys.includes(key) ? 1 : 0)
+        || (b.script === pref) - (a.script === pref)
+        || b.doc - a.doc);
     const k = romanNorm(input);
-    if (!k) return [];
-    const match = (key) => vocab
-      .filter((t) => t.keys.some((x) => x.startsWith(key)))
-      .sort((a, b) => (b.keys.includes(key) ? 1 : 0) - (a.keys.includes(key) ? 1 : 0) || b.doc - a.doc);
-    let out = match(k);
+    // A typed number can only mean a number. Without this branch romanNorm()
+    // throws every digit away, "2025" normalises to "" and nothing is offered —
+    // which is exactly why years looked unsearchable.
+    if (!k) {
+      const d = toLatinDigits(input).replace(/[^0-9]/g, "");
+      return d ? match(d, true).slice(0, n || 6) : [];
+    }
+    let out = match(k, false);
     // Common trailing vowel the schwa deletion removed: yoga → yog, mitra → mitr.
-    if (!out.length && k.endsWith("a")) out = match(k.slice(0, -1));
+    if (!out.length && k.endsWith("a")) out = match(k.slice(0, -1), false);
     return out.slice(0, n || 6);
   }
   const hasDevanagari = (s) => /[ऀ-ॿ]/.test(s);
@@ -4121,9 +4368,11 @@ const HindiType = (() => {
   function mode() { try { return localStorage.getItem("wa:searchLang") || "hi"; } catch { return "hi"; } }
   function setMode(m) { try { localStorage.setItem("wa:searchLang", m); } catch {} }
   // One suggestion row; used by both surfaces so they can't drift apart.
+  // ⚠ `data-term`, not `data-dev`: a chip is no longer always Devanagari — it
+  // can be an English word or a year, and picking it searches that text as-is.
   function rowHtml(t, i) {
-    return `<button type="button" class="hi-row${i === 0 ? " top" : ""}" data-dev="${escapeHtml(t.dev)}" style="animation-delay:${i * 35}ms">
-      <span class="hi-dev">${escapeHtml(t.dev)}</span>
+    return `<button type="button" class="hi-row${i === 0 ? " top" : ""}" data-term="${escapeHtml(t.term)}" style="animation-delay:${i * 35}ms">
+      <span class="hi-dev">${escapeHtml(t.term)}</span>
       <span class="hi-rom">${escapeHtml(t.roman)}</span>
       <span class="hi-n">${t.doc}</span>
     </button>`;
@@ -4150,16 +4399,29 @@ function hiSegPaint() {
 }
 function hiHideSugg() { if (!hiSugg) return; hiSugg.hidden = true; hiSugg.innerHTML = ""; }
 function hiRenderSugg() {
-  if (!hiSugg) return;
+  if (!hiSugg) return false;
   const items = HindiType.suggest(searchInput.value, 6);
-  if (!items.length) { hiHideSugg(); return; }
+  if (!items.length) { hiHideSugg(); return false; }
   hiSugg.innerHTML = items.map((t, i) => HindiType.rowHtml(t, i)).join("");
   hiSugg.hidden = false;
+  return true;
 }
-function hiPick(dev) {
+// Suggestions FIRST, but never a dead end: with nothing to offer, हिंदी mode used
+// to swallow the keystroke entirely and just sit there. Search what was typed.
+function hiSuggestOrSearch() {
+  if (hiRenderSugg()) return;
+  clearTimeout(debounce);
+  debounce = setTimeout(hiRouteSearch, 250);
+}
+function hiRouteSearch() {
+  const v = searchInput.value;
+  history.replaceState(null, "", v.trim() ? "#/search?q=" + encodeURIComponent(v) : "#/search");
+  safeRoute();
+}
+function hiPick(term) {
   hiHideSugg();
-  searchInput.value = dev;
-  go("#/search?q=" + encodeURIComponent(dev));
+  searchInput.value = term;
+  go("#/search?q=" + encodeURIComponent(term));
 }
 const hindiTyping = () => !!hiSugg && HindiType.mode() === "hi" && searchInput.value.trim() && !HindiType.hasDevanagari(searchInput.value);
 if (hiSeg && hiSugg) {
@@ -4171,7 +4433,7 @@ if (hiSeg && hiSugg) {
     searchInput.focus();
   });
   hiSugg.addEventListener("click", (e) => {
-    const b = e.target.closest("[data-dev]"); if (b) hiPick(b.dataset.dev);
+    const b = e.target.closest("[data-term]"); if (b) hiPick(b.dataset.term);
   });
   document.addEventListener("click", (e) => {
     if (!hiSugg.hidden && !hiSugg.contains(e.target) && e.target !== searchInput) hiHideSugg();
@@ -4183,16 +4445,18 @@ if (hiSeg && hiSugg) {
 searchInput.addEventListener("input", () => {
   clearTimeout(debounce);
   if (hindiTyping()) {
-    // Roman keystrokes in Hindi mode: show Devanagari suggestions instead of
-    // searching the Roman text (which would only match English bodies).
+    // Roman keystrokes in Hindi mode: offer real archive words to pick instead
+    // of searching the Roman text. The list now spans Daily + Special +
+    // Letterpad + Anushthan and both scripts, so a word only ever written in a
+    // Telegram/letterpad message is pickable too; when it still matches nothing,
+    // hiSuggestOrSearch() searches the typed text rather than doing nothing.
     const v = searchInput.value;
-    HindiType.load().then(() => { if (searchInput.value === v) hiRenderSugg(); });
-    hiRenderSugg();
+    HindiType.load().then(() => { if (searchInput.value === v) hiSuggestOrSearch(); });
+    hiSuggestOrSearch();
     return;
   }
   hiHideSugg();
-  const v = searchInput.value;
-  debounce = setTimeout(() => { history.replaceState(null, "", v.trim() ? "#/search?q=" + encodeURIComponent(v) : "#/search"); safeRoute(); }, 200);
+  debounce = setTimeout(hiRouteSearch, 200);
 });
 searchInput.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !hiSugg.hidden) { hiHideSugg(); return; }
@@ -4200,7 +4464,7 @@ searchInput.addEventListener("keydown", (e) => {
   clearTimeout(debounce);
   if (hindiTyping()) {
     const top = HindiType.suggest(searchInput.value, 1)[0];
-    if (top) { hiPick(top.dev); return; }
+    if (top) { hiPick(top.term); return; }
   }
   go("#/search?q=" + encodeURIComponent(searchInput.value));
 });
@@ -4455,7 +4719,10 @@ function refreshAnyMsgDot() {
   const n = (typeof SPECIAL !== "undefined" ? SPECIAL.unread() : 0) +
             (typeof LETTERPAD !== "undefined" ? LETTERPAD.unread() : 0) +
             (typeof SATSANG !== "undefined" ? SATSANG.unread() : 0) +
-            (typeof ANUBHUTI !== "undefined" ? ANUBHUTI.unread() : 0);
+            (typeof ANUBHUTI !== "undefined" ? ANUBHUTI.unread() : 0) +
+            // Only ever non-zero for a moderator — ADMINTALK zeroes itself for
+            // everyone else, so this adds nothing to a member's dot.
+            (typeof ADMINTALK !== "undefined" ? ADMINTALK.unread() : 0);
   document.querySelectorAll("[data-anymsg-dot]").forEach((b) => { b.hidden = !n; });
 }
 
@@ -4678,6 +4945,75 @@ const ANUBHUTI = (() => {
 
   return { unread, known, markSeen, refreshBadges, refresh, noteIncoming, isUnread,
            lastError: () => loadFailed, notSetUp: () => notSetUp };
+})();
+
+// ==========================================================================
+// ADMIN TALKS — the sutradhar + moderators' private room, and its badge.
+//
+// Mirrors the SPECIAL / LETTERPAD / SATSANG / ANUBHUTI badge contract
+// (unread / markSeen / refreshBadges) so refreshAnyMsgDot() treats it like the
+// rest. Like ANUBHUTI it keeps NO seen-store of its own — the read mark is one
+// more entry in SATSANG's `wa:satsang:seen` map, keyed by "admin:talks", which
+// cannot collide with a numeric or namespaced wid.
+//
+// ⚠ It counts MESSAGES, not threads — the opposite of SATSANG, and correct
+// here: there is exactly one room, so "1 thread has something new" would be the
+// only number it could ever show.
+//
+// ⚠ Everything is gated on isModerator(). That is a display decision only: a
+// demoted moderator whose cached role is stale still gets nothing from the
+// server, because the count query goes through the same RLS as the room.
+// ==========================================================================
+const ADMINTALK = (() => {
+  const COUNT_KEY = "wa:admintalk:unread";   // cached count, so the badge paints offline
+  let count = 0;
+  try { count = parseInt(localStorage.getItem(COUNT_KEY) || "0", 10) || 0; } catch {}
+  let lastRefresh = 0;
+  let notSetUp = false;    // add_admin_talks.sql hasn't been run on this project
+
+  function unread() { return count; }
+  function refreshBadges() {
+    const txt = count > 99 ? "99+" : String(count);
+    document.querySelectorAll("[data-admintalk-badge]").forEach((b) => { b.hidden = !count; b.textContent = txt; });
+    refreshAnyMsgDot();
+  }
+  function setCount(n) {
+    count = Math.max(0, n | 0);
+    try { localStorage.setItem(COUNT_KEY, String(count)); } catch {}
+    refreshBadges();
+  }
+  function markSeen(iso) {
+    SATSANG.markSeen(ADMIN_TALKS_WID, iso);
+    setCount(0);            // one room: reading it clears the whole count
+  }
+
+  // Never throws into a caller, and never clears the badge on a failed read —
+  // a boot with no signal must leave what's already on screen alone.
+  async function refresh(force) {
+    if (!isModerator()) { setCount(0); return 0; }
+    if (!force && Date.now() - lastRefresh < 30000) return count;
+    lastRefresh = Date.now();
+    const me = (currentUser() || {}).username || "";
+    // A device that has never opened the room has no mark. Counting all of
+    // history against it would greet a new moderator with a badge for a
+    // conversation the server won't even let them read (their window starts at
+    // their joined_at) — so no mark means no count until they look once.
+    const since = SATSANG.seenFor(ADMIN_TALKS_WID);
+    if (!since) { setCount(0); return 0; }
+    setCount(await WA.adminTalkUnread(since, me));
+    return count;
+  }
+
+  // A message arriving while the app is on some other screen (push receipt or
+  // the shared Realtime handler). Own messages never count.
+  function noteIncoming(m) {
+    if (!m || !isModerator() || !isAdminTalksWid(m.wid)) return;
+    if (m.user && m.user === (currentUser() || {}).username) return;
+    setCount(count + 1);
+  }
+
+  return { unread, markSeen, refreshBadges, refresh, noteIncoming,
+           notSetUp: () => notSetUp, setNotSetUp: (v) => { notSetUp = !!v; } };
 })();
 
 // ---- the Samuhik Satsang index: every running discussion, grouped ----------
@@ -5136,6 +5472,105 @@ const LETTERPAD = (() => {
   return { loadIndex, imgUrl, unread, markSeen, refreshBadges, items, lastSeen: lastSeenAt };
 })();
 
+// ==========================================================================
+// MSG_CORPUS — the ONE place that knows what TEXT a non-daily message carries
+// ==========================================================================
+// Special / Letterpad / Anushthan live in client caches, never in wisdom.db, so
+// they are invisible to BOTH /api/search and /api/vocab. Everything that has to
+// read their words goes through here:
+//   • HindiType folds them into the typing suggestions — a word the guru used
+//     ONLY in a Telegram or letterpad message is otherwise unpickable, and in
+//     हिंदी mode an unpickable word is an unsearchable one.
+//   • Both search surfaces match through `match()`. Desktop (renderSearch) and
+//     mobile (Search By → Word) still render their own rows — the same split
+//     satsangGroups() uses — but the PREDICATE lives here so the two can never
+//     drift on what counts as a hit.
+// ⚠ Module scope on purpose: MOBILE_UI returns a stub on desktop, so anything
+// defined inside it does not exist there at all.
+const MSG_CORPUS = (() => {
+  // ---- OTA-EDITABLE: Anushthan MESSAGES ------------------------------------
+  // (Moved out of MOBILE_UI so desktop search can see it too — edit it here.)
+  // Two ways to fill it, both OTA-shippable:
+  //   1. Literal rows in ANUSHTHAN_MESSAGES below.
+  //   2. Date ranges in ANUSHTHAN_FROM_LETTERPAD — Letterpad messages whose
+  //      date falls inside a range are ALSO surfaced as Anushthan messages.
+  //      Per the operator: they appear in BOTH sections, they are not moved out
+  //      of Letterpad.
+  // Seeded 2026-08-10 with the Gahan Dhyan Anushthan window's two letterpad
+  // messages (2026-02-01 "2026" and 2026-02-12 "The Problem of Dispassion in
+  // Sadhaks") — both already live in letterpad_source/, this range just also
+  // surfaces them here.
+  const ANUSHTHAN_MESSAGES = [
+  ];
+  const ANUSHTHAN_FROM_LETTERPAD = [
+    { from: "2026-01-01", to: "2026-02-15" },
+  ];
+  // Rows in the shape the Letterpad section already normalises (MSG_SECTIONS
+  // .anushthan reuses letterpad's `norm`), so borrowed rows need no conversion.
+  function anushthanRows() {
+    const borrowed = ANUSHTHAN_FROM_LETTERPAD.length && typeof LETTERPAD !== "undefined"
+      ? (LETTERPAD.items() || []).filter((m) =>
+          ANUSHTHAN_FROM_LETTERPAD.some((r) => m.date >= r.from && m.date <= r.to))
+      : [];
+    return ANUSHTHAN_MESSAGES.concat(borrowed);
+  }
+
+  const KEYS = ["special", "letterpad", "anushthan"];
+  // `typeof` guards: HindiType.load() can be kicked off from the desktop top-bar
+  // wiring, which evaluates ABOVE these consts — reached before they initialise
+  // it would be a TDZ throw, not an undefined.
+  function rowsOf(key) {
+    if (key === "special") return (typeof SPECIAL !== "undefined" && SPECIAL.cached()) || [];
+    if (key === "letterpad") return (typeof LETTERPAD !== "undefined" && LETTERPAD.items()) || [];
+    return anushthanRows();
+  }
+  // One row flattened to {id, date, title, body, foot} in ONE language. Mirrors
+  // how each section's reader picks fields, including the fall back to the other
+  // language when a translation does not exist (Hindi-only rows are permanent
+  // and normal). Search results are rendered straight from this.
+  // ⚠ Deliberately more generous than letterpad's `norm`, which gates English on
+  // pages_en: for FINDING a message, text is text — the row opens the message
+  // either way, and gating would hide words that are demonstrably in it.
+  function fieldsOf(key, r, lang) {
+    const en = lang === "en";
+    const pick = (a, b) => (en ? (r[a] || r[b]) : (r[b] || r[a])) || "";
+    const id = String(r.id === undefined ? "" : r.id);
+    if (key === "special") {
+      return {
+        id,
+        // Feed date = when it was POSTED; the guru re-posts old teachings and
+        // msg_date is only the date printed in the signature block.
+        date: ((r.posted_at || r.created_at || "").slice(0, 10)) || (r.msg_date || ""),
+        title: pick("title_en", "title_hi"),
+        body: pick("body_en", "body_hi"),
+        foot: [r.signature || "", pick("place_en", "place_hi")].filter(Boolean).join(" · "),
+      };
+    }
+    // Letterpad + BORROWED anushthan rows share the letterpad shape; literal
+    // ANUSHTHAN_MESSAGES entries may already be flat {title, text} instead.
+    if (r.title !== undefined || r.text !== undefined) {
+      return { id, date: r.date || "", title: r.title || "", body: r.text || "", foot: "" };
+    }
+    return {
+      id, date: r.date || "",
+      title: pick("title_en", "title_hi").replace(/\n/g, " · "),
+      body: pick("body_en", "body_hi"), foot: "",
+    };
+  }
+  function textOf(key, r, lang) {
+    const f = fieldsOf(key, r, lang);
+    return [f.title, f.body, f.foot].join("\n");
+  }
+  // `term` must already be lower-cased by the caller (it is matched against many
+  // rows; lowering it once per search rather than once per row is the point).
+  const match = (key, r, lang, term) => textOf(key, r, lang).toLowerCase().includes(term);
+  // Rows of one section matching `term`, newest-first order preserved from the
+  // cache. The caller renders them however its surface renders rows.
+  const search = (key, lang, term) => rowsOf(key).filter((r) => match(key, r, lang, term));
+  return { KEYS, rowsOf, fieldsOf, textOf, match, search, anushthanRows,
+           ANUSHTHAN_MESSAGES, ANUSHTHAN_FROM_LETTERPAD };
+})();
+
 // One letterpad message card: title, date line, its page images (lazy), and
 // the OCR text. `lang` picks which language's pages+text to show; a small
 // toggle is added only when both languages exist for that message.
@@ -5328,6 +5763,154 @@ async function renderAnubhutiTopic(id) {
 }
 
 // --------------------------------------------------------------------------
+// ADMIN TALKS — the sutradhar + moderators' private room
+//
+//   #/admintalks     (desktop)      #/m/admintalks  (mobile)
+//
+// One fixed thread (ADMIN_TALKS_WID) rendered by the ordinary renderWisdomChat,
+// under a WhatsApp-style participants header. Everything below is shared by
+// both shells: the desktop and mobile pages differ only in their frame.
+//
+// ⚠ Membership is NOT "is a moderator". It is a roster row in
+// admin_talk_members, and a moderator only reads messages posted after their
+// own joined_at (add_admin_talks.sql §1). So the roster fetch is what decides
+// whether the room opens — never the cached role, which can be stale.
+// --------------------------------------------------------------------------
+const ADMIN_TALKS_TITLE = "Admin Talks";
+
+// {me, members:[{id, username, role, joined_at}]} or a thrown Error. Cached for
+// the life of the page render so the header and the participants sheet agree
+// without a second round trip; every fresh page render re-fetches.
+let _adminTalkRoster = null;
+async function loadAdminTalkRoster(force) {
+  if (_adminTalkRoster && !force) return _adminTalkRoster;
+  _adminTalkRoster = await WA.adminTalkMembers();
+  return _adminTalkRoster;
+}
+
+// "Sutradhar · 4 moderators" — the same summary line WhatsApp puts under a
+// group's name, built from roles rather than listing every name (which would
+// truncate to uselessness on a phone).
+function adminTalkSummary(members) {
+  const mods = members.filter((m) => m.role === "moderator").length;
+  const lead = members.some((m) => m.role === "sutradhar") ? "Sutradhar" : "";
+  const modTxt = mods ? `${mods} moderator${mods === 1 ? "" : "s"}` : "";
+  return [lead, modTxt].filter(Boolean).join(" · ") || "No one yet";
+}
+
+// The tappable header. `getCtx()` is read at CLICK time, not at build time —
+// the chat context does not exist yet when this is constructed, and presence
+// changes while the sheet is closed.
+function adminTalkHeadEl(roster, getCtx) {
+  const n = roster.members.length;
+  const head = el(`<button class="at-head" type="button">
+    <span class="at-head-ico">🔒</span>
+    <span class="at-head-body">
+      <span class="at-head-title">${escapeHtml(ADMIN_TALKS_TITLE)}</span>
+      <span class="at-head-sub">${escapeHtml(`${n} participant${n === 1 ? "" : "s"} · ${adminTalkSummary(roster.members)}`)}</span>
+    </span>
+    <span class="at-head-chev">›</span>
+  </button>`);
+  head.addEventListener("click", () => openAdminTalkParticipants(roster, getCtx && getCtx()));
+  return head;
+}
+
+// The participants sheet. Sutradhar first, "You" marked, a green dot for
+// whoever is in the room right now, and the date each person was added — which
+// is also the honest answer to "why does my history start here?".
+function openAdminTalkParticipants(roster, ctx) {
+  const me = (currentUser() || {}).username || "";
+  // ctx.present already excludes us (openChatStream filters it out), and we are
+  // demonstrably here, so add ourselves back rather than showing the reader as
+  // the only person offline.
+  const here = new Set([...((ctx && ctx.present) || []), me]);
+  const rows = roster.members.map((m) => {
+    const when = String(m.joined_at || "").slice(0, 10);
+    const online = here.has(m.username);
+    return `<li class="at-p">
+      <span class="at-p-av">${escapeHtml((m.username || "?")[0].toUpperCase())}${online ? `<i class="at-p-dot"></i>` : ""}</span>
+      <span class="at-p-body">
+        <span class="at-p-name">${escapeHtml(m.username || "")}${m.username === me ? ` <em class="at-p-you">You</em>` : ""}</span>
+        <span class="at-p-meta">${escapeHtml(roleLabel(m.role))}${when ? " · Added " + escapeHtml(fmtDate(when)) : ""}</span>
+      </span>
+      ${online ? `<span class="at-p-live">online</span>` : ""}
+    </li>`;
+  }).join("");
+
+  const sheet = el(`<div class="at-sheet">
+    <div class="at-sheet-card" role="dialog" aria-label="Participants">
+      <div class="at-sheet-top">
+        <span class="at-sheet-h">${roster.members.length} participants</span>
+        <button class="at-sheet-x" type="button" aria-label="Close">✕</button>
+      </div>
+      <ul class="at-plist">${rows}</ul>
+      <div class="at-sheet-note">Moderators join this room automatically. Anyone added later
+        sees the conversation from the day they were added.</div>
+    </div>
+  </div>`);
+  const close = () => sheet.remove();
+  sheet.querySelector(".at-sheet-x").addEventListener("click", close);
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+  document.body.appendChild(sheet);
+}
+
+// The closed-door screen. Shown to anyone who reaches the route without the
+// powers for it — by typing the hash, or with a role that changed under them.
+function adminTalkGateHtml(sub) {
+  return `<div class="wc-satsang-gate">
+    <div class="wc-sg-ico">🔒</div>
+    <div class="wc-sg-h">${escapeHtml(ADMIN_TALKS_TITLE)}</div>
+    <div class="wc-sg-sub">${escapeHtml(sub)}</div>
+  </div>`;
+}
+
+// Build the room into `node`, gates included. Shared by both shells; the caller
+// owns the page frame around it. Returns nothing — failures paint in place.
+async function mountAdminTalks(node) {
+  if (!isModerator()) {
+    node.innerHTML = adminTalkGateHtml(
+      "This room is for the Sutradhar and the moderators.");
+    return;
+  }
+  node.innerHTML = `<div class="loading" style="padding:20px">Loading…</div>`;
+
+  let roster;
+  try {
+    roster = await loadAdminTalkRoster(true);
+  } catch (e) {
+    node.innerHTML = e.code === "NO_TABLE"
+      ? `<div class="empty">${escapeHtml(e.message)}</div>`
+      : adminTalkGateHtml("Couldn't check who is in this room. Check your connection and try again.");
+    return;
+  }
+  // The server's answer, not the cached role: a moderator with no active roster
+  // row has no window into the room and would see an empty chat they cannot
+  // post to. Say so instead.
+  if (!roster.me) {
+    node.innerHTML = adminTalkGateHtml(
+      "You're not in this room yet. The Sutradhar adds moderators to it.");
+    return;
+  }
+
+  let chatCtx = null;
+  const head = adminTalkHeadEl(roster, () => chatCtx);
+  const chat = el(`<div class="at-chat m-chatbody"></div>`);
+  node.replaceChildren(head, chat);
+  await renderWisdomChat(chat, ADMIN_TALKS_WID, ADMIN_TALKS_TITLE,
+                         { onCtx: (c) => { chatCtx = c; } });
+  // WhatsApp reading order: open at the latest message.
+  const msgs = chat.querySelector("#wc-msgs");
+  if (msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+async function renderAdminTalks() {
+  const nav = _nav;
+  $view.innerHTML = `<div class="an-page at-page"></div>`;
+  if (!current(nav)) return;
+  await mountAdminTalks($view.querySelector(".at-page"));
+}
+
+// --------------------------------------------------------------------------
 // Init
 // --------------------------------------------------------------------------
 buildNav();
@@ -5420,6 +6003,11 @@ const MOBILE_UI = (() => {
           <a href="#/favorites"><span class="mi">♥</span> Favorites</a>
           <a href="#/stats"><span class="mi">📊</span> Statistics</a>
           <a href="#/m/contact"><span class="mi">✉️</span> Message to Admin</a>
+          <!-- Admin Talks: the sutradhar + moderators' private room. Same
+               .m-mod-only visibility mechanism as the Moderator row above, and
+               like it, the hiding is courtesy only — Postgres is what keeps the
+               room shut (add_admin_talks.sql). -->
+          <a href="#/m/admintalks" class="m-mod-only" hidden><span class="mi">🔒</span> Admin Talks <span class="m-badge" data-admintalk-badge hidden></span></a>
           <a href="#/settings"><span class="mi">⚙️</span> Settings</a>
           <a href="#/about"><span class="mi">🕉️</span> About</a>
         </div>
@@ -5444,7 +6032,7 @@ const MOBILE_UI = (() => {
     const u = currentUser();
     row.innerHTML = isSignedIn()
       ? `<span class="m-acc-avatar">${escapeHtml((u.username || "?")[0].toUpperCase())}</span>
-         <span class="m-acc-name">${escapeHtml(u.username)}<small>${escapeHtml(roleLabel(u.role))}</small></span>`
+         <span class="m-acc-name">${escapeHtml(u.username)}</span>`
       : `<span class="m-acc-avatar">॥</span>
          <span class="m-acc-name">Sign in<small>for Samuhik Satsang</small></span>`;
     // Moderator/sutradhar-only rows (see the drawer markup above).
@@ -5611,6 +6199,19 @@ const MOBILE_UI = (() => {
   // Route only AFTER this device has today's content — the whole point of
   // tapping a daily-message notification. The splash keeps the reader from
   // seeing yesterday's message flash past on the way.
+  //
+  // ⚠ The wait below is BOUNDED (contentSync during the boot window only
+  // watches the launch sync, capped at 20s — see awaitLaunchSync) because it
+  // must never start a second syncOnce() that could race the launch one and
+  // close the live db out from under it. On a slow network the launch sync
+  // can legitimately still be running past that cap, and giving up there used
+  // to just navigate onto whatever stale content was already on screen with
+  // nothing left to fix it — the user then had to background/foreground (or
+  // kill and relaunch) to ever see it, since only appStateChange re-checked.
+  // So: navigate now (never leave the tap looking like it did nothing), but
+  // if the wanted version still hasn't landed, keep WATCHING the same
+  // in-flight sync in the background and silently repaint once it actually
+  // finishes — the exact repaint appStateChange already does on resume.
   async function goFresh(hash, want) {
     document.body.insertAdjacentHTML("beforeend", `<div class="m-freshsync" id="m-freshsync">
       <div class="m-fs-card"><div class="m-fs-spin"></div>
@@ -5618,6 +6219,11 @@ const MOBILE_UI = (() => {
     try { await contentSync(want); }
     finally { const s = $("m-freshsync"); if (s) s.remove(); }
     go(hash);
+    if (want && contentVersionNow() !== want) {
+      awaitLaunchSync(want, 60000).then(() => {
+        if (contentVersionNow() === want && AT_HOME_RE.test(location.hash || "#/")) safeRoute();
+      });
+    }
   }
 
   // Resuming a backgrounded app never re-checked for new content at all — the
@@ -5632,6 +6238,7 @@ const MOBILE_UI = (() => {
       // recounted on every wake (cheap, one query) regardless of the sync throttle.
       SATSANG.refresh(true).catch(() => {});
       ANUBHUTI.refresh(true).catch(() => {});
+      ADMINTALK.refresh(true).catch(() => {});
       if (!syncIsSafeToStart()) return;
       if (Date.now() - _lastContentSync < SYNC_ON_WAKE_MS) return;
       contentSync().then((r) => {
@@ -5719,10 +6326,14 @@ const MOBILE_UI = (() => {
         // lands on the right badge without the caller having to know which.
         // "anubhuti" (a brand-new sharing) carries the same data.wid shape, so
         // it badges through exactly the same path as a reply.
-        if (d.kind === "chat" || d.kind === "anubhuti") {
+        // "admintalks" is its own kind because its AUDIENCE is different — the
+        // room's moderators, never the whole membership. It badges through the
+        // same path (ADMINTALK ignores any wid that isn't the room's).
+        if (d.kind === "chat" || d.kind === "anubhuti" || d.kind === "admintalks") {
           const m = { wid: d.wid || "", ts: new Date().toISOString() };
           SATSANG.noteIncoming(m);
           ANUBHUTI.noteIncoming(m);
+          ADMINTALK.noteIncoming(m);
         }
       });
       // Routes by the notification's own data payload (send-push sets
@@ -5789,31 +6400,11 @@ const MOBILE_UI = (() => {
   };
   const isAnushthan = (s) => ANUSHTHAN_RANGES.some((r) => s >= r.from && s <= r.to);
 
-  // ---- OTA-EDITABLE: Anushthan MESSAGES ------------------------------------
-  // Two ways to fill it, both OTA-shippable:
-  //   1. Literal rows in ANUSHTHAN_MESSAGES below.
-  //   2. Date ranges in ANUSHTHAN_FROM_LETTERPAD — Letterpad messages whose
-  //      date falls inside a range are ALSO surfaced as Anushthan messages.
-  //      Per the operator: they appear in BOTH sections, they are not moved out
-  //      of Letterpad.
-  // Seeded 2026-08-10 with the Gahan Dhyan Anushthan window's two letterpad
-  // messages (2026-02-01 "2026" and 2026-02-12 "The Problem of Dispassion in
-  // Sadhaks") — both already live in letterpad_source/, this range just also
-  // surfaces them here.
-  const ANUSHTHAN_MESSAGES = [
-  ];
-  const ANUSHTHAN_FROM_LETTERPAD = [
-    { from: "2026-01-01", to: "2026-02-15" },
-  ];
-  // Rows in the shape the Letterpad section already normalises (`norm` below
-  // reuses MSG_SECTIONS.letterpad's), so borrowed rows need no conversion.
-  function anushthanRows() {
-    const borrowed = ANUSHTHAN_FROM_LETTERPAD.length && typeof LETTERPAD !== "undefined"
-      ? (LETTERPAD.items() || []).filter((m) =>
-          ANUSHTHAN_FROM_LETTERPAD.some((r) => m.date >= r.from && m.date <= r.to))
-      : [];
-    return ANUSHTHAN_MESSAGES.concat(borrowed);
-  }
+  // ---- Anushthan MESSAGES — now defined in MSG_CORPUS (module scope) --------
+  // ⚠ The OTA-editable lists moved OUT of here: desktop search needs them too,
+  // and MOBILE_UI is a stub on desktop. Edit ANUSHTHAN_MESSAGES /
+  // ANUSHTHAN_FROM_LETTERPAD in MSG_CORPUS; this is only the local alias.
+  const anushthanRows = MSG_CORPUS.anushthanRows;
 
   // ---- localized labels (follow the हिंदी/English toggle; numerals stay 0-9)
   const DP_WD = { en: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
@@ -6568,6 +7159,25 @@ const MOBILE_UI = (() => {
   // so a later unrelated navigation harmlessly falls back to normal browsing.
   let _activeList = null;   // { ids: [...], index: N } | null
   function setActiveList(ids, index) { _activeList = { ids: ids.slice(), index }; }
+  // The same idea for the MESSAGE sections. msgReaderPage mounts the whole
+  // section by default (all ~1,100 Special posts); opened from Search By it
+  // mounts only what the search matched, so swiping walks the results.
+  // Keyed by READER key, not section key — Anushthan has no reader of its own
+  // and its rows open Letterpad's, so both must land in the same bucket.
+  // Self-correcting like _activeList: the reader drops the scope when the
+  // message it was asked to show isn't in it.
+  const _activeMsgLists = {};   // { [readerKey]: Set(id) }
+  const readerKeyOf = (sec) => (sec.key === "anushthan" ? "letterpad" : sec.key);
+  function setActiveMsgList(sec, rows) {
+    const key = readerKeyOf(sec);
+    const ids = (rows || []).map((r) => String(sec.idOf(r)));
+    // Anushthan rows ARE Letterpad rows, so its group must widen Letterpad's
+    // scope rather than replace it — otherwise whichever group rendered last
+    // would decide what the shared reader can scroll through.
+    const prev = sec.key === "anushthan" ? _activeMsgLists[key] : null;
+    _activeMsgLists[key] = new Set(prev ? [...prev, ...ids] : ids);
+  }
+  function clearActiveMsgLists() { Object.keys(_activeMsgLists).forEach((k) => delete _activeMsgLists[k]); }
   function paintLang(lang) {
     $("m-langseg").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.lang === lang));
   }
@@ -7225,16 +7835,8 @@ const MOBILE_UI = (() => {
   }
 
   // ---- Search By (word / date / number) -----------------------------------
-  // A window of `len` chars centred on the first occurrence of `term`, so the
-  // matched word is visible in the card (not just the start of the text).
-  function snippetAround(text, term, len) {
-    const t = (text || "").replace(/\s+/g, " ");
-    if (!term) return t.slice(0, len);
-    const i = t.toLowerCase().indexOf(term.toLowerCase());
-    if (i < 0) return t.slice(0, len);
-    const start = Math.max(0, i - Math.floor((len - term.length) / 2));
-    return (start > 0 ? "…" : "") + t.slice(start, start + len);
-  }
+  // snippetAround() is module scope now — desktop search shows the same
+  // match-centred window, and one implementation can't drift from the other.
   // Highlight `term` inside already-HTML-escaped text (global mark CSS = yellow).
   function markTerm(escapedText, term) {
     if (!term) return escapedText;
@@ -7323,10 +7925,19 @@ const MOBILE_UI = (() => {
   // which for a Special message is both its Telegram post date and the date
   // printed in its signature block (see specialDatesOf) — the guru re-posts old
   // teachings, so one row legitimately belongs to two different years.
-  function searchMsgSectionRows(sec, lang, matchFn, hrefOf) {
-    return (sec.cached() || [])
-      .filter((r) => matchFn(sec.norm(r, lang), secDatesOf(sec, r)))
-      .map((r) => el(msgIndexRowHtml(sec, r, sec.lastSeen ? sec.lastSeen() : "", hrefOf)));
+  // matchFn also receives the RAW row and the section — a word search matches
+  // through MSG_CORPUS (the shared predicate desktop uses too), which reads the
+  // stored fields directly rather than the reader-shaped `view`.
+  // `hl` (word searches only) makes the rows highlight + window on the match,
+  // exactly like the Daily cards beside them. Also returns the matched ROWS, so
+  // the caller can scope the reader's feed to just these results.
+  function searchMsgSectionRows(sec, lang, matchFn, hrefOf, hl) {
+    const hits = (sec.cached() || [])
+      .filter((r) => matchFn(sec.norm(r, lang), secDatesOf(sec, r), r, sec));
+    return {
+      hits,
+      nodes: hits.map((r) => el(msgIndexRowHtml(sec, r, sec.lastSeen ? sec.lastSeen() : "", hrefOf, "", hl))),
+    };
   }
   function secDatesOf(sec, r) {
     if (sec.key === "special") return specialDatesOf(r);
@@ -7344,10 +7955,14 @@ const MOBILE_UI = (() => {
   // The four groups every Search By tab renders, in the operator's fixed order.
   // matchFn is applied to the message sections; `dailyRows` is passed in because
   // Daily comes from the archive API, not a client cache.
-  function searchGroupsFor(dailyRows, lang, matchFn, secHref) {
+  // Also records the matched rows per section as the reader's list scope, so
+  // swiping inside a result walks THESE results and not the whole 1,100-message
+  // section (the message-side twin of setActiveList for Daily).
+  function searchGroupsFor(dailyRows, lang, matchFn, secHref, hl) {
     const g = (label, sec) => {
-      const rows = searchMsgSectionRows(sec, lang, matchFn, secHref);
-      return { label, count: rows.length, rows };
+      const { hits, nodes } = searchMsgSectionRows(sec, lang, matchFn, secHref, hl);
+      setActiveMsgList(sec, hits);
+      return { label, count: nodes.length, rows: nodes };
     };
     return [
       { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
@@ -7384,10 +7999,19 @@ const MOBILE_UI = (() => {
       tab: "word", word: "", wordResultsHtml: "",
       dateIso: "", dateResultsHtml: "",
       rangeFrom: "", rangeTo: "", rangeResultsHtml: "",
+      // Where the results were scrolled to when a result was opened. Restoring
+      // the HTML alone still dumps the reader back at the top of a long list,
+      // which reads as "my search was lost" even though it wasn't.
+      scrollTop: 0,
     };
   }
   const _searchState = { plain: freshSearchState(), chat: freshSearchState() };
-  function resetSearchState() { _searchState.plain = freshSearchState(); _searchState.chat = freshSearchState(); _activeList = null; }
+  function resetSearchState() {
+    _searchState.plain = freshSearchState();
+    _searchState.chat = freshSearchState();
+    _activeList = null;
+    clearActiveMsgLists();
+  }
 
   function searchPage(params) {
     // for=chat → picking a Guru's msg for the community chat: results open the
@@ -7397,9 +8021,17 @@ const MOBILE_UI = (() => {
     // Special/Letterpad rows had a hardcoded reader href, so in the picker they
     // quietly ignored `hrefFor` and dropped the user into the message instead of
     // its discussion. Route them to the namespaced chat id the same way.
+    //
+    // Plain search: the reader is reached FROM here, so it must come back here —
+    // `?from=search` is what says so (the same trick `?d=` already uses to carry
+    // list context into a reader). Without it the reader's back hook lands on
+    // the section list, which is not where the user came from. Anushthan has no
+    // reader of its own, so its rows open Letterpad's.
     const secHref = forChat
       ? (sec, v) => "#/m/community?wid=" + encodeURIComponent(sec.key + ":" + v.id)
-      : null;
+      : (sec, v) => (sec.key === "anushthan" && !v.pages)
+        ? ""    // a literal Anushthan row with no pages has nothing to open
+        : "#/m/" + readerKeyOf(sec) + "/" + encodeURIComponent(v.id) + "?from=search";
     const st = forChat ? _searchState.chat : _searchState.plain;
 
     const node = el(`<div class="m-searchwrap">
@@ -7438,6 +8070,26 @@ const MOBILE_UI = (() => {
       hapticTick();
       head.parentElement.classList.toggle("collapsed");
     });
+    // Remember how far down the results a tapped item was, BEFORE the router
+    // tears this page down — capture phase, since the row is an <a> and the
+    // navigation happens on the way back up.
+    results.addEventListener("click", (ev) => {
+      if (ev.target.closest("a")) st.scrollTop = results.scrollTop;
+    }, true);
+    // Called by each tab right after it re-inserts its stored HTML. rAF because
+    // a freshly painted list has no scroll height to move to yet.
+    // ⚠ Re-asserted across the next two frames, not set once. The list is a
+    // flex child of a `calc(100vh - …)` column, so on the frame the page mounts
+    // its scrollHeight can still be its unlaid-out height — assigning scrollTop
+    // then silently clamps to 0, which looked exactly like "the scroll position
+    // was never saved". Lazy thumbnails resolving can shorten it again.
+    const restoreScroll = () => {
+      const y = st.scrollTop;
+      if (!y) return;
+      const apply = () => { if (results.isConnected) results.scrollTop = y; };
+      apply();
+      requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
+    };
 
     const tabs = {
       word() {
@@ -7466,10 +8118,17 @@ const MOBILE_UI = (() => {
         const sugg = body.querySelector("#m-hi-sugg");
         q.value = st.word;
         results.innerHTML = st.wordResultsHtml;   // restore instantly, no re-fetch/flash
+        restoreScroll();
         let deb = null, seq = 0;
         const run = async () => {
           const term = q.value.trim();
+          // A REPAINT of the same query (returning from a result, or the
+          // background section refresh calling _rerun) must keep the reader
+          // where they were; a NEW query starts at the top. Without this the
+          // restore below is undone moments later by that refresh.
+          const sameTerm = term === st.word;
           st.word = term;
+          if (!sameTerm) st.scrollTop = 0;
           if (!term) { results.innerHTML = ""; st.wordResultsHtml = ""; return; }
           const mySeq = ++seq;
           try {
@@ -7482,9 +8141,12 @@ const MOBILE_UI = (() => {
             const dailyRows = d.results.map((r, i) => resultItem(r, hrefFor,
               !forChat ? { ids: dailyIds, index: i } : null, { lang: displayLang, term }));
             const t = term.toLowerCase();
-            const matchFn = (v) => (v.title || "").toLowerCase().includes(t) || (v.text || "").toLowerCase().includes(t);
-            renderSearchGroups(results, searchGroupsFor(dailyRows, displayLang, matchFn, secHref), false);
+            const matchFn = (v, dates, r, sec) => MSG_CORPUS.match(sec.key, r, displayLang, t);
+            // hl → section rows highlight + window on the match, like Daily's.
+            renderSearchGroups(results, searchGroupsFor(dailyRows, displayLang, matchFn, secHref,
+              { term, lang: displayLang }), false);
             st.wordResultsHtml = results.innerHTML;
+            if (sameTerm) restoreScroll();
           } catch (err) { if (mySeq === seq) { results.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`; st.wordResultsHtml = results.innerHTML; } }
         };
         // Big round clear button (the native search × is too small to tap).
@@ -7511,9 +8173,19 @@ const MOBILE_UI = (() => {
         const hindiTyping = () => HindiType.mode() === "hi" && q.value.trim() && !HindiType.hasDevanagari(q.value);
         const renderSugg = () => {
           const items = HindiType.suggest(q.value, 6);
-          if (!items.length) { hideSugg(); return; }
+          if (!items.length) { hideSugg(); return false; }
           sugg.innerHTML = items.map((t, i) => HindiType.rowHtml(t, i)).join("");
           sugg.hidden = false;
+          return true;
+        };
+        // Suggestions FIRST, but never a dead end: with nothing to offer, हिंदी
+        // mode used to swallow the keystroke and leave a blank screen. The word
+        // list now covers all four sections in both scripts, so this fires far
+        // less often — and when it does, it searches what was typed.
+        const suggestOrSearch = () => {
+          if (renderSugg()) return;
+          clearTimeout(deb);
+          deb = setTimeout(run, 250);
         };
         seg.addEventListener("click", (ev) => {
           const b = ev.target.closest("button[data-mode]"); if (!b) return;
@@ -7524,10 +8196,10 @@ const MOBILE_UI = (() => {
           q.focus();
         });
         sugg.addEventListener("click", (ev) => {
-          const b = ev.target.closest("[data-dev]"); if (!b) return;
+          const b = ev.target.closest("[data-term]"); if (!b) return;
           hapticTick();
           hideSugg();
-          q.value = b.dataset.dev;
+          q.value = b.dataset.term;
           clearTimeout(deb); run();
         });
         q.addEventListener("input", () => {
@@ -7535,8 +8207,8 @@ const MOBILE_UI = (() => {
           syncClr();
           if (hindiTyping()) {
             const v = q.value;
-            HindiType.load().then(() => { if (q.value === v) renderSugg(); });
-            renderSugg();
+            HindiType.load().then(() => { if (q.value === v) suggestOrSearch(); });
+            suggestOrSearch();
             return;
           }
           hideSugg();
@@ -7547,7 +8219,7 @@ const MOBILE_UI = (() => {
           ev.preventDefault(); clearTimeout(deb);
           if (hindiTyping()) {
             const top = HindiType.suggest(q.value, 1)[0];
-            if (top) { hapticTick(); hideSugg(); q.value = top.dev; run(); return; }
+            if (top) { hapticTick(); hideSugg(); q.value = top.term; run(); return; }
           }
           run();
         });
@@ -7566,6 +8238,7 @@ const MOBILE_UI = (() => {
         body.innerHTML = `<div class="m-hint" style="text-align:center;padding:18px">
           <a href="#" id="m-datelink">${st.dateIso ? "Change date: " + fmtDate(st.dateIso) : "Tap to pick a date"}</a></div>`;
         results.innerHTML = st.dateResultsHtml || "";   // restore instantly, no re-fetch/flash
+        restoreScroll();
         const runDateSearch = async (iso) => {
           st.dateIso = iso;
           body.querySelector("#m-datelink").textContent = "Change date: " + fmtDate(iso);
@@ -7608,6 +8281,7 @@ const MOBILE_UI = (() => {
           </div>
           <div class="m-hint" id="m-r-hint">${(st.rangeFrom && st.rangeTo) ? "" : "Pick both dates to search."}</div>`;
         results.innerHTML = st.rangeResultsHtml || "";
+        restoreScroll();
         const fromBtn = body.querySelector("#m-r-from"), toBtn = body.querySelector("#m-r-to"), hint = body.querySelector("#m-r-hint");
         const syncBtns = () => {
           fromBtn.textContent = st.rangeFrom ? fmtDate(st.rangeFrom) : "From date";
@@ -7903,6 +8577,19 @@ const MOBILE_UI = (() => {
     box.replaceChildren(...topics.map(anubhutiRowEl));
   }
 
+  // Admin Talks. The whole page is mountAdminTalks() — the mobile shell only
+  // supplies the frame, so the room can never drift between the two surfaces.
+  //
+  // ⚠ No setTopAction(): there is nothing to create here. And deliberately no
+  // store.setLastViewed()/_stageId — "admin:talks" is not an archive id, and
+  // writing it into wa:lastViewed would break the daily reader's resume (the
+  // same rule that keeps special:/letterpad:/anubhuti: out of it).
+  async function adminTalksPage() {
+    const node = el(`<div class="m-community m-admintalks at-page"></div>`);
+    pageFrame(ADMIN_TALKS_TITLE, node);
+    await mountAdminTalks(node);
+  }
+
   async function anubhutiChatPage(id) {
     const node = el(`<div class="m-community m-anubhuti"></div>`);
     pageFrame("Anubhuti Sharing", node);
@@ -8086,8 +8773,14 @@ const MOBILE_UI = (() => {
     </div>`;
 
   // ---- the INDEX (#/m/special · #/m/letterpad) ------------------------------
-  function msgIndexRowHtml(sec, r, seenMark, hrefOf, suffix) {
-    const v = sec.norm(r, prefLang);
+  // hl (optional) = { term, lang }: this row is a WORD-search result. It then
+  // matches Daily's result cards instead of looking like an index row —
+  // previewed in the language the search actually matched (not the app's
+  // display toggle, which could show Hindi for an English hit) and windowed on
+  // the match rather than the message's opening words, which for a long Telegram
+  // post meant the matched word was usually nowhere on the row.
+  function msgIndexRowHtml(sec, r, seenMark, hrefOf, suffix, hl) {
+    const v = sec.norm(r, (hl && hl.lang) || prefLang);
     const fresh = sec.isNew(r, seenMark);
     const np = v.pages ? v.pages.length : 0;
     // Image sections show the first page; text sections show their glyph — and
@@ -8096,7 +8789,9 @@ const MOBILE_UI = (() => {
       ? `<img class="mx-thumb" src="${v.pages[0]}" loading="lazy" decoding="async" alt="">`
       : `<div class="mx-thumb mx-thumb-txt"><span class="mx-ico">${sec.icon}</span>` +
         `<span class="mx-spark s1">✨</span><span class="mx-spark s2">✨</span><span class="mx-spark s3">⭐</span></div>`;
-    const prev = (v.text || "").replace(/\s+/g, " ").slice(0, 140);
+    const prev = hl && hl.term
+      ? snippetAround(v.text || "", hl.term, 140)
+      : (v.text || "").replace(/\s+/g, " ").slice(0, 140);
     // `sec.hrefOf` is the section's own default target, for a section whose rows
     // do NOT live at #/m/<key>/<id> — Anushthan borrows Letterpad's reader,
     // because it has no reader of its own. An explicit `hrefOf` (the chat
@@ -8117,8 +8812,8 @@ const MOBILE_UI = (() => {
         ${thumb}
         <div class="mx-meta">
           <div class="mx-top">${escapeHtml(v.date ? fmtDate(v.date) : "")}${np > 1 ? ` · ${np} pages` : ""}${note ? ` <span class="mx-note">${escapeHtml(note)}</span>` : ""}${fresh ? ` <span class="mx-new">NEW</span>` : ""}</div>
-          <div class="mx-title">${escapeHtml(v.title || "—")}</div>
-          <div class="mx-prev">${escapeHtml(prev)}</div>
+          <div class="mx-title">${hl && hl.term ? markTerm(escapeHtml(v.title || "—"), hl.term) : escapeHtml(v.title || "—")}</div>
+          <div class="mx-prev">${hl && hl.term ? markTerm(escapeHtml(prev), hl.term) : escapeHtml(prev)}</div>
         </div>
       </a>`;
   }
@@ -8258,8 +8953,20 @@ const MOBILE_UI = (() => {
     const fromUrl = (params && params.get("d")) || "";
     let filterDate = isIsoDate(fromUrl) ? fromUrl : "";
     const qSuffix = () => (filterDate ? "?d=" + filterDate : "");
-    const listHref = () => "#/m/" + sec.key + qSuffix();
+    // Reached from Search By (`?from=search`)? Then the list this reader belongs
+    // to is the SEARCH RESULTS, not the section: back returns there and the feed
+    // is confined to what was matched. Self-correcting — if the scope no longer
+    // holds the message being shown (a stale marker, a cleared search), the
+    // whole section is used and back falls back to the section list, exactly as
+    // an ordinary index → reader trip behaves.
+    const scopeIds = ((params && params.get("from")) === "search") ? _activeMsgLists[key] : null;
+    const scoped = !!(scopeIds && scopeIds.size && scopeIds.has(String(focusId)));
+    const listHref = () => scoped ? "#/m/search" : "#/m/" + sec.key + qSuffix();
     _pageBackHook = () => { goReplace(listHref()); return true; };
+    // Every row set the reader mounts passes through here, so a background sync
+    // or a live update can't quietly widen the feed back to the full section
+    // while the message is open.
+    const scope = (list) => scoped ? (list || []).filter((r) => scopeIds.has(String(sec.idOf(r)))) : (list || []);
 
     const WIN = 3;                  // messages added per extension
     let rows = [], lo = 0, hi = 0, curArt = null, rafC = 0, _sig = "";
@@ -8387,9 +9094,11 @@ const MOBILE_UI = (() => {
       }
       if (!pick || pick === curArt) return;
       curArt = pick;
-      // ?d= rides along so a reload — or the back hook reading the URL — still
-      // knows which filtered list this reader was opened from.
-      history.replaceState(null, "", "#/m/" + sec.key + "/" + encodeURIComponent(pick.dataset.id) + qSuffix());
+      // ?d= (or ?from=search) rides along so a reload — or the back hook reading
+      // the URL — still knows which list this reader was opened from. Scrolling
+      // to a different result must not lose the way back to Search By.
+      history.replaceState(null, "", "#/m/" + sec.key + "/" + encodeURIComponent(pick.dataset.id) +
+        (scoped ? "?from=search" : qSuffix()));
       wirePanel(pick);
     }
 
@@ -8484,16 +9193,17 @@ const MOBILE_UI = (() => {
     // data actually moved. A no-op refresh (the common case — the index or the
     // delta sync returning nothing new) must never yank the reader around.
     const remountIfChanged = (list) => {
-      if (!current(nav) || rowsSig(list || []) === _sig) return;
-      mount(list, focusNow());
+      const next = scope(list);
+      if (!current(nav) || rowsSig(next) === _sig) return;
+      mount(next, focusNow());
     };
-    mount(sec.cached(), focusId);                     // cache first — instant + offline
+    mount(scope(sec.cached()), focusId);              // cache first — instant + offline
     sec.markSeen();
     // Same reason as the index page: the APK seed may only have landed during
     // refresh(), so a failure still re-mounts from whatever the cache now holds.
     sec.refresh()
       .then(remountIfChanged)
-      .catch(() => remountIfChanged(sec.cached()));
+      .catch(() => remountIfChanged(sec.cached()));   // scope() is applied inside
     _pageLangHook = () => mount(rows, focusNow());    // language flip always repaints
     if (sec.subscribe) {
       _specialStream = sec.subscribe(() => sec.refresh()
@@ -8565,7 +9275,7 @@ const MOBILE_UI = (() => {
       const u = currentUser();
       node.innerHTML = `<div class="m-acc-card">
           <span class="m-acc-avatar big">${escapeHtml((u.username || "?")[0].toUpperCase())}</span>
-          <div class="m-acc-name">${escapeHtml(u.username)}<small>${escapeHtml(roleLabel(u.role))}</small></div>
+          <div class="m-acc-name">${escapeHtml(u.username)}</div>
         </div>`;
       // Not a member yet → let them ask right here, before the sign-out button.
       if (!isCommunityMember()) node.appendChild(accessBox());
@@ -8585,7 +9295,7 @@ const MOBILE_UI = (() => {
   return {
     active,
     openChatZoom,
-    handles(seg) { return !seg.length || seg[0] === "entry" || seg[0] === "m" || seg[0] === "favorites" || seg[0] === "special" || seg[0] === "letterpad" || seg[0] === "anubhuti"; },
+    handles(seg) { return !seg.length || seg[0] === "entry" || seg[0] === "m" || seg[0] === "favorites" || seg[0] === "special" || seg[0] === "letterpad" || seg[0] === "anubhuti" || seg[0] === "admintalks"; },
     async route(seg, params) {
       closeDrawer();
       exitZoom();
@@ -8595,7 +9305,13 @@ const MOBILE_UI = (() => {
       setEnglishAvailable(true);   // any per-message gating belongs to the page we're leaving
       // Leaving the Search By flow for anywhere except a result's detail page
       // (or staying within search itself) clears the remembered query/results.
-      const preserveSearch = seg[0] === "entry" || (seg[0] === "m" && seg[1] === "search");
+      // ⚠ A message READER (#/m/special/<id>) is a result's detail page too —
+      // Search By returns Special/Letterpad/Anushthan hits, and wiping the state
+      // on the way into one meant backing out landed on an empty search. The
+      // reader only routes BACK here when it carries ?from=search, so the extra
+      // preservation costs nothing on an ordinary index → reader trip.
+      const preserveSearch = seg[0] === "entry"
+        || (seg[0] === "m" && (seg[1] === "search" || (seg[2] && MSG_SECTIONS[seg[1]])));
       if (!preserveSearch) resetSearchState();
       if (!seg.length) return viewer(null, params, true);
       if (seg[0] === "entry") return viewer(seg[1], params, false);
@@ -8604,6 +9320,7 @@ const MOBILE_UI = (() => {
       if (seg[0] === "letterpad") return msgIndexPage("letterpad", params);
       if (seg[0] === "anushthan") return msgIndexPage("anushthan", params);
       if (seg[0] === "anubhuti") return anubhutiRoute(params);   // desktop-style link → same pages
+      if (seg[0] === "admintalks") return adminTalksPage();      // desktop-style link → same page
       const p = seg[1];
       if (p === "search") return searchPage(params);
       if (p === "nomsg") return renderDateMessage(params.get("d"));
@@ -8618,6 +9335,7 @@ const MOBILE_UI = (() => {
       // things — Anubhuti Sharing is the members' own space, Anushthan Msg is a
       // Guru's-message section that has no content yet. Don't merge these.
       if (p === "anubhuti") return anubhutiRoute(params);
+      if (p === "admintalks") return adminTalksPage();
       // #/m/<section>        → the index
       // #/m/<section>/<id>   → the full-screen reader, opened on that message
       //                        (also where a push-notification tap can land)
@@ -8853,7 +9571,7 @@ const AUTH_GATE = (() => {
     // stale signed-out render is still on screen — re-run the route so it
     // reflects the new session instead of showing the previous user's view.
     if (started) safeRoute(); else run();
-    toast("Welcome, " + (d.user && d.user.username ? d.user.username : "sadhak"));
+    toast("Welcome, " + (d.user && d.user.username ? d.user.username : "sadhak"), { bg: "#d32f2f" });
   }
 
   function close() { if (root) root.hidden = true; document.body.classList.remove("gated"); }
@@ -9100,4 +9818,8 @@ AUTH_GATE.boot(function startApp() {
   // Anubhuti Sharing: same contract again. Its refresh no-ops for non-members.
   ANUBHUTI.refreshBadges();
   ANUBHUTI.refresh(true).catch(() => {});
+  // Admin Talks: same contract once more. Its refresh no-ops for anyone who
+  // isn't a moderator, so a member's boot costs nothing extra.
+  ADMINTALK.refreshBadges();
+  ADMINTALK.refresh(true).catch(() => {});
 });
