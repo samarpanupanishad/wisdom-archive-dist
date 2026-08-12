@@ -1224,6 +1224,12 @@ function wrapSelection(ta, before, after) {
 
 const CHAT_EMOJIS = ['😊','😂','🙏','❤️','👍','🙌','✨','🌟','💡','🔥','🌺','🕉️','☀️','🌸','💎','🦋','📿','🌿','💫','🎯','👁️','🌈','💜','🎵','🧘','🪷','🌙','⭐','🕊️','🙏🏽','🤍','🫶','🌊','🍃','🦚'];
 
+// Touch devices (phones/tablets, in-app or in a mobile browser) have no
+// physical Shift key, so the on-screen keyboard's return/newline key would
+// otherwise send every message a member meant to just break a line — on
+// these, Enter always inserts a newline and only the Send button sends.
+const CHAT_TOUCH_ENTER = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+
 // --------------------------------------------------------------------------
 // Community tab — per-wisdom chat when a wisdom is open, recent feed otherwise
 // --------------------------------------------------------------------------
@@ -2240,7 +2246,7 @@ async function renderWisdomChat(body, wid, label, opts) {
       <input type="file" id="wc-cam" accept="image/*" capture="environment" hidden>
       <div class="wc-compose">
         <div class="wc-inputbox">
-          <textarea class="wc-ta" id="wc-ta" placeholder="Share your reflection… (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
+          <textarea class="wc-ta" id="wc-ta" placeholder="Share your thoughts..." rows="1"></textarea>
           <div class="wc-tools">
             <button class="wc-tb-btn wc-emoji-btn" title="Emoji">😊</button>
             <button class="wc-tb-btn wc-attach-btn" title="Attach a photo or PDF">📎</button>
@@ -2429,7 +2435,7 @@ async function renderWisdomChat(body, wid, label, opts) {
       }
     };
     sendBtn.addEventListener("click", doSend);
-    ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } });
+    ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !CHAT_TOUCH_ENTER) { e.preventDefault(); doSend(); } });
   }
 }
 
