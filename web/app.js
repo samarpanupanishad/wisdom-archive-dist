@@ -9426,46 +9426,6 @@ const MOBILE_UI = (() => {
         paintHint();
         nsw.disabled = false;
       });
-      // ---- Push diagnostics (moderators + sutradhar only) ------------------
-      // A phone has no console, so a chat push that returns {sent:0,"no devices"}
-      // or 403 looked exactly like one that worked. This card reads back what
-      // the app already records: the registration trail (`wa:push:diag`) and the
-      // last send-push REPLY (`wa:push:lastfire`). Kept out of ordinary members'
-      // Settings — it is a maintenance tool, not a feature.
-      if (isModerator()) {
-        const dbox = el(`<div class="sync-box" id="m-pushdiag-box">
-          <h3 style="margin-top:0">Notification diagnostics</h3>
-          <div class="m-hint" id="m-pd-body" style="white-space:pre-wrap;word-break:break-word"></div>
-          <button class="btn" id="m-pd-refresh" style="margin-top:8px">Refresh</button>
-          <button class="btn" id="m-pd-copy" style="margin-top:8px">Copy</button>
-        </div>`);
-        prose.appendChild(dbox);
-        const pdText = () => {
-          let d = {}, f = {};
-          try { d = JSON.parse(localStorage.getItem("wa:push:diag") || "{}"); } catch (_) {}
-          try { f = JSON.parse(localStorage.getItem("wa:push:lastfire") || "{}"); } catch (_) {}
-          const tok = (WA.storedPushToken && WA.storedPushToken()) || "";
-          const u = currentUser() || {};
-          return [
-            "account:  " + (u.username || "?") + "  role=" + (u.role || "?"),
-            "notify_satsang: " + (u.notify_satsang !== false),
-            "this device has a token: " + (tok ? "yes (" + tok.slice(0, 12) + "…)" : "NO"),
-            "",
-            "registration trail:",
-            JSON.stringify(d, null, 1),
-            "",
-            "last send-push reply:",
-            JSON.stringify(f, null, 1),
-          ].join("\n");
-        };
-        const pdBody = dbox.querySelector("#m-pd-body");
-        pdBody.textContent = pdText();
-        dbox.querySelector("#m-pd-refresh").addEventListener("click", () => { pdBody.textContent = pdText(); });
-        dbox.querySelector("#m-pd-copy").addEventListener("click", async () => {
-          try { await navigator.clipboard.writeText(pdText()); toast("Copied."); }
-          catch { toast("Could not copy here."); }
-        });
-      }
 
       const box = el(`<div class="sync-box" id="m-display-box">
         <h3 style="margin-top:0">Display</h3>
