@@ -6352,7 +6352,22 @@ const MOBILE_UI = (() => {
       // newer send-push payloads — the route shape is the fallback test.
       Push.addListener("pushNotificationActionPerformed", (a) => {
         const data = (a && a.notification && a.notification.data) || {};
-        const route = data.route || "#/m/special";
+        let route = data.route || "#/m/special";
+        // Older payloads (everything sent before 2026-08-13) addressed a Special
+        // Message to the section INDEX and left the reader to the user — the tap
+        // dumped them in a 1,100-row list with no hint which row was the new one.
+        // send-push now routes straight to the reader, but notifications already
+        // sitting in the tray still carry the old route, and data.msg_id is enough
+        // to repair those here.
+        //
+        // ⚠ Special only. A letterpad row's data.msg_id is its POSTGRES id, while
+        // its reader is keyed by the dist slug ("<date>_<nn>") — building
+        // "#/m/letterpad/<msg_id>" would open the reader on nothing. Old letterpad
+        // payloads therefore keep landing on the list; new ones carry the slug in
+        // data.route already.
+        if (data.kind === "special" && data.msg_id && /^#\/m\/special\/?$/.test(route)) {
+          route = "#/m/special/" + encodeURIComponent(data.msg_id);
+        }
         try {
           if (data.kind === "daily" || AT_HOME_RE.test(route)) goFresh(route, data.cv || "");
           else go(route);
@@ -7278,6 +7293,30 @@ const MOBILE_UI = (() => {
   ["touchstart", "pointerdown", "mousedown"].forEach((ev) =>
     document.addEventListener(ev, warmFlipAudio, { once: true, passive: true, capture: true }));
 
+  // One in-flight /api/entry request per id, shared by every caller.
+  //
+  // ⚠ This is not just a saved round trip — on the APK it is what keeps a
+  // freshly-synced message from rendering as a BROKEN IMAGE. Two renders of home
+  // can start microseconds apart (wa-native's post-sync repaint and a daily
+  // notification tap's goFresh both land there), and wa-native's image cache
+  // CLAIMS a filename the moment it begins downloading it: the first resolve
+  // returns the remote URL and starts the download, the second sees the claim and
+  // returns an on-device path whose file does not exist yet. Nothing repaints
+  // afterwards, so the reader was left with a blank white message until the app
+  // was killed and relaunched (reported 2026-08-13). One request → one set of
+  // image URLs → the race cannot happen.
+  const _entryInFlight = new Map();
+  function fetchEntry(id) {
+    const key = String(id);
+    const hit = _entryInFlight.get(key);
+    if (hit) return hit;
+    const p = api("/api/entry/" + encodeURIComponent(key));
+    _entryInFlight.set(key, p);
+    // Settled either way → stop sharing it, so a failure isn't cached forever.
+    p.catch(() => {}).then(() => { _entryInFlight.delete(key); });
+    return p;
+  }
+
   // ---- the viewer (home + #/entry/<id>) ----------------------------------
   async function viewer(id, params, isHome) {
     setChrome(isHome ? "home" : "viewer", "Samarpan Upanishad", null);
@@ -7293,7 +7332,7 @@ const MOBILE_UI = (() => {
           id = latest.results[0].id;
         }
       }
-      const e = await api("/api/entry/" + encodeURIComponent(id));
+      const e = await fetchEntry(id);
       if (!current(nav)) return;
       // Lucky Msg / a typed-in number lookup: one standalone message, no
       // scrolling away to other days.
@@ -7318,9 +7357,46 @@ const MOBILE_UI = (() => {
     $view.replaceChildren(wrap);
   }
 
+  // ---- broken-image recovery (native) -------------------------------------
+  // An entry image's src is usually an on-device cache path, and those can be
+  // missing for reasons app.js cannot see: Android's "Clear cache" wipes the
+  // directory wa-native writes into, and an image still downloading resolves to a
+  // path with no file yet (see fetchEntry). Either way the reader was left staring
+  // at a blank white message. So every entry image says which entry and language
+  // it is, and a failed load retries ONCE against the public update host — where
+  // the same file always exists, at a path fixed by the importer's naming rules
+  // ("<id>_Hin.jpg" / "<id>_Eng.jpg" under source_data/<id>/).
+  let _distBase = null;
+  async function distBase() {
+    if (_distBase !== null) return _distBase;
+    const fn = window.WA_NATIVE && WA_NATIVE.updateBase;   // newer shells expose it
+    const direct = typeof fn === "function" ? fn() : (fn || "");
+    if (direct) return (_distBase = String(direct).replace(/\/+$/, ""));
+    try {
+      const m = await (await fetch("/wa-mobile.json")).json();
+      _distBase = String(m.updateBase || "").replace(/\/+$/, "");
+    } catch { _distBase = ""; }
+    return _distBase;
+  }
+  // Capture phase: an <img> error event does not bubble, so a listener on the
+  // document only ever sees it this way.
+  document.addEventListener("error", (ev) => {
+    const im = ev.target;
+    if (!im || im.tagName !== "IMG" || im.dataset.imgretried) return;
+    const id = im.dataset.imgid;
+    if (!id) return;
+    im.dataset.imgretried = "1";
+    distBase().then((base) => {
+      if (!base || !im.isConnected) return;
+      const file = id + (im.dataset.imglang === "en" ? "_Eng" : "_Hin") + ".jpg";
+      const next = base + "/source_data/" + encodeURIComponent(id) + "/" + encodeURIComponent(file);
+      if (im.getAttribute("src") !== next) im.src = next;
+    });
+  }, true);
+
   function faceHtml(e, lang) {
     const url = lang === "hi" ? e.img_hi_url : e.img_en_url;
-    if (url) return `<img src="${url}" alt="" decoding="async">`;
+    if (url) return `<img src="${url}" alt="" decoding="async" data-imgid="${escapeHtml(String(e.id))}" data-imglang="${lang}">`;
     const topic = escapeHtml(e.topic_hi || e.topic_en || "");
     const body = escapeHtml((lang === "hi" ? e.body_hi : e.body_en) || "");
     if (body) return `<div class="m-textface">${topic ? `<h3>${topic}</h3>` : ""}<p>${body.replace(/\n/g, "<br>")}</p></div>`;
@@ -7459,8 +7535,13 @@ const MOBILE_UI = (() => {
       if (im && im.getAttribute("src")) enterZoom(im.getAttribute("src"));
     });
 
-    // Share / Download act on whichever language image is visible now.
-    const curImg = () => (lang === "hi" ? e.img_hi_url : e.img_en_url);
+    // Share / Download act on whichever language image is visible now — read off
+    // the live <img>, not the entry, so they follow a src the broken-image retry
+    // above has already repaired instead of the URL that failed.
+    const curImg = () => {
+      const im = root.querySelector(lang === "hi" ? ".m-front img" : ".m-back img");
+      return (im && im.getAttribute("src")) || (lang === "hi" ? e.img_hi_url : e.img_en_url);
+    };
     const curName = () => `GM_${e.date ? fmtDateFile(e.date) : e.id}.jpg`;
     // Share subject/caption = one clean line, e.g. "Guru's Daily msg - 9th July, 2026".
     const curCaption = () => `Guru's Daily msg - ${fmtDateShare(e.date)}`;
@@ -7527,7 +7608,7 @@ const MOBILE_UI = (() => {
   function trimMap(m, max) { while (m.size > max) m.delete(m.keys().next().value); }
   async function getEntryCached(id) {
     if (_entryCache.has(id)) return _entryCache.get(id);
-    const e = await api("/api/entry/" + encodeURIComponent(id));
+    const e = await fetchEntry(id);          // shared in-flight — see fetchEntry
     _entryCache.set(id, e); trimMap(_entryCache, 40);
     return e;
   }
@@ -8976,6 +9057,15 @@ const MOBILE_UI = (() => {
 
     const WIN = 3;                  // messages added per extension
     let rows = [], lo = 0, hi = 0, curArt = null, rafC = 0, _sig = "";
+    // The id this reader was ASKED for, kept until it has actually been mounted.
+    //
+    // A notification tap arrives seconds after the row was published, so the
+    // cached list usually does NOT contain it yet: mount() falls back to index 0,
+    // syncCurrent() makes that message `curArt`, and the refresh() remount below
+    // would then re-focus THAT — leaving the reader parked on the previous message
+    // with the new one silently above it. Wanting the asked-for id across remounts
+    // is what makes the tap land where the notification promised.
+    let wanted = String(focusId == null ? "" : focusId);
     // Cheap identity for a row set — length plus the end ids is enough to tell
     // "same feed" from "something published/retracted".
     const rowsSig = (l) => l.length + ":" + (l.length ? sec.idOf(l[0]) + "|" + sec.idOf(l[l.length - 1]) : "");
@@ -9152,8 +9242,9 @@ const MOBILE_UI = (() => {
       rows = list || [];
       curArt = null;
       if (!rows.length) { box.innerHTML = msgHolderHtml(sec); _sig = rowsSig(rows); return; }
-      let idx = rows.findIndex((r) => sec.idOf(r) === focus);
+      let idx = rows.findIndex((r) => String(sec.idOf(r)) === String(focus));
       if (idx < 0) idx = 0;
+      else if (String(focus) === wanted) wanted = "";   // asked-for message is on screen — stop chasing it
       lo = Math.max(0, idx - 1);
       hi = Math.min(rows.length, idx + 3);
       box.innerHTML = "";
@@ -9201,7 +9292,11 @@ const MOBILE_UI = (() => {
     const remountIfChanged = (list) => {
       const next = scope(list);
       if (!current(nav) || rowsSig(next) === _sig) return;
-      mount(next, focusNow());
+      // Did the refresh finally bring in the message this reader was opened for?
+      // Then that is the focus, and it is `pin`ned: the whole point of the tap was
+      // to read it, so a stray scroll on the wrong message must not veto the jump.
+      const arrived = wanted && next.some((r) => String(sec.idOf(r)) === wanted);
+      mount(next, arrived ? wanted : focusNow(), !!arrived);
     };
     mount(scope(sec.cached()), focusId);              // cache first — instant + offline
     sec.markSeen();
