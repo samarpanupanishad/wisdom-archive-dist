@@ -5376,16 +5376,25 @@ async function renderSpecial() {
 // ==========================================================================
 const LETTERPAD = (() => {
   const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
-  // OTA-updatable, so a hardcoded public URL is fine — if the dist repo ever
-  // moves, an app.js OTA fixes it. Same host the daily sync already fetches.
-  const REMOTE = "https://raw.githubusercontent.com/samarpanupnishad-ops/wisdom-archive-dist/main/letterpad";
+  // Letterpad lives on the same host as the daily sync, so it must follow that
+  // host when it relocates — wa-native persists a `next_base` handed out by the
+  // manifest, and updateBase() returns the moved address. Asking wa-native each
+  // time (rather than caching a constant) matters because this module is
+  // constructed before the native layer has read its manifest. FALLBACK is only
+  // reached on desktop test-mode or if the native layer never booted.
   // LOCAL = the copy bundled inside the APK (mobile/build_www.py copies
   // letterpad_source/ to www/letterpad/); on desktop it's what FastAPI serves.
   // ⚠ This is the ONLY copy that survives Android's "Clear storage", which
   // wipes localStorage AND the Filesystem plugin's data dir. So bundled pages
   // are always served from here, never re-downloaded.
   const LOCAL = "/letterpad";
-  const BASE = isNative ? REMOTE : LOCAL;
+  const FALLBACK = "https://raw.githubusercontent.com/samarpanupanishad/wisdom-archive-dist/main";
+  function base() {
+    if (!isNative) return LOCAL;
+    let root = "";
+    try { root = (window.WA_NATIVE && window.WA_NATIVE.updateBase()) || ""; } catch (_) {}
+    return (root || FALLBACK) + "/letterpad";
+  }
   const CACHE_KEY = "wa:letterpad:cache";
   // Unlike Special Messages' numeric ids, letterpad ids are date-strings
   // ("2026-07-15_01") — unread is tracked by posted_at (ISO string compare
@@ -5438,7 +5447,7 @@ const LETTERPAD = (() => {
     // SPECIAL's firstRun guard.
     const firstRun = !localStorage.getItem(SEEN_KEY) && !msgCount(_index);
     try {
-      const r = await fetch(BASE + "/index.json?v=" + Date.now(), { cache: "no-store" });
+      const r = await fetch(base() + "/index.json?v=" + Date.now(), { cache: "no-store" });
       if (r.ok) {
         const fresh = await r.json();
         if (!_index || fresh.version !== _index.version) {
@@ -5454,7 +5463,7 @@ const LETTERPAD = (() => {
   }
   // Bundled (survives everything) → persisted on device → the update host.
   const imgUrl = (rel) =>
-    _bundled.has(rel) ? LOCAL + "/" + rel : (_onDevice.get(rel) || BASE + "/" + rel);
+    _bundled.has(rel) ? LOCAL + "/" + rel : (_onDevice.get(rel) || base() + "/" + rel);
   function lastSeenAt() { try { return localStorage.getItem(SEEN_KEY) || ""; } catch { return ""; } }
   function unread() {
     const idx = _index || cached() || { messages: [] };
@@ -5575,6 +5584,253 @@ const MSG_CORPUS = (() => {
   const search = (key, lang, term) => rowsOf(key).filter((r) => match(key, r, lang, term));
   return { KEYS, rowsOf, fieldsOf, textOf, match, search, anushthanRows,
            ANUSHTHAN_MESSAGES, ANUSHTHAN_FROM_LETTERPAD };
+})();
+
+// ==========================================================================
+// WIDGET — the home-screen widget's data snapshot (Android only).
+//
+// ⚠ The widget itself is NATIVE: an AppWidgetProvider painting RemoteViews in
+// the LAUNCHER's process. It can reach none of this app's data — the daily
+// msgs live in SQLite WASM inside the WebView, Special sits in localStorage,
+// Letterpad in the OTA-downloaded letterpad/, and Anushthan is not stored
+// anywhere at all (it is COMPUTED, below, from MSG_CORPUS date ranges).
+//
+// So the widget computes NOTHING. This module flattens all four sections into
+// one newest-first list and hands it over as a finished snapshot through
+// @capacitor/preferences, whose Android backing store is the SharedPreferences
+// file the widget reads directly. localStorage cannot carry it — that is
+// WebView-private and invisible to the launcher process.
+//
+// Everything interesting therefore stays OTA-editable here: which messages
+// qualify, how far ahead the daily msgs are pre-computed, the language, the
+// text length and the tap target. Only the painting is frozen in the APK.
+// ==========================================================================
+const WIDGET = (() => {
+  const PREF_KEY = "wa:widget:on";          // master switch (this side)
+  const SNAP_KEY = "wa_widget_snapshot";    // Preferences key the widget reads
+
+  // ---- OTA-TUNABLE knobs ---------------------------------------------------
+  // Daily msgs are pre-resolved this many days AHEAD so the widget stays
+  // correct even if the app is not opened for a fortnight. This is the whole
+  // reason the widget can be reliable: Android defers widget refresh under Doze
+  // and cannot be trusted to run on any schedule, so the snapshot must already
+  // hold tomorrow's answer before tomorrow arrives.
+  const DAYS_AHEAD = 14;
+  const BODY_CHARS = 400;   // RemoteViews crosses an IPC binder limit; stay lean
+  const MAX_ITEMS = 60;
+  // ⚠ Newest-first ALONE silently drops whole sections. Measured against the
+  // live data: 41 Specials and 14 daily msgs fill the list long before the
+  // Anushthan rows (dated Feb 2026) are reached, so a flat cut at MAX_ITEMS
+  // shows three of the four sections and never the fourth. Each kind therefore
+  // keeps its newest few no matter how old they are; the rest of the list is
+  // filled in strict newest-first order as usual.
+  const KEEP_PER_KIND = 8;
+  // Same-day tie-break. A Special or Letterpad is an announcement from Baba
+  // Swami; the daily msg is a rotation that is there every day anyway. On the
+  // rare day both land, the announcement is the "new" one and goes on top.
+  const RANK = { special: 3, letterpad: 2, anushthan: 1, daily: 0 };
+
+  const isNativeApp = !!(window.Capacitor && window.Capacitor.isNativePlatform
+                         && window.Capacitor.isNativePlatform());
+  const enabled = () => { try { return localStorage.getItem(PREF_KEY) !== "0"; } catch { return true; } };
+  const setEnabled = (on) => { try { localStorage.setItem(PREF_KEY, on ? "1" : "0"); } catch {} };
+
+  const pad2 = (n) => (n < 10 ? "0" + n : "" + n);
+  const isoOf = (d) => d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  const clip = (s) => {
+    const t = String(s || "").replace(/\s+/g, " ").trim();
+    return t.length > BODY_CHARS ? t.slice(0, BODY_CHARS - 1) + "…" : t;
+  };
+  // The widget shows one language. Follow the app's existing हिंदी/English
+  // choice rather than inventing a second preference for the same question.
+  const lang = () => { try { return HindiType.mode() === "en" ? "en" : "hi"; } catch { return "hi"; } };
+
+  // ---- the three cached message sections -----------------------------------
+  // MSG_CORPUS.fieldsOf() already flattens each section's row into
+  // {id, date, title, body, foot} in one language, including the fall back to
+  // the other language when a translation is missing. Reusing it is what keeps
+  // the widget's wording identical to the reader's.
+  function sectionItems(key, L) {
+    let rows = [];
+    try { rows = MSG_CORPUS.rowsOf(key) || []; } catch { return []; }
+    const out = [];
+    for (const r of rows) {
+      let f;
+      try { f = MSG_CORPUS.fieldsOf(key, r, L); } catch { continue; }
+      if (!f || !f.date) continue;
+      if (!f.title && !f.body) continue;
+      out.push({
+        kind: key,
+        at: f.date,
+        title: clip(f.title),
+        body: clip(f.body),
+        // Anushthan rows ARE Letterpad messages surfaced in a second section and
+        // have no reader of their own — they open the Letterpad reader (see
+        // MOBILE_UI.route). Sending them to #/m/anushthan/<id> would dead-end.
+        href: "#/m/" + (key === "anushthan" ? "letterpad" : key) + "/" + encodeURIComponent(f.id),
+      });
+    }
+    return out;
+  }
+
+  // ---- the daily Guru's msg, resolved for the days ahead -------------------
+  async function dailyItems(L) {
+    let periods = [];
+    try { periods = (await api("/api/browse?group=date")).periods || []; } catch { return []; }
+    // ⚠ /api/daily resolves "today's msg" by MONTH-DAY across all years, newest
+    // year winning — NOT by exact date. Mirror that rule here; a widget showing
+    // a different msg than the home screen on the same day is a visible bug.
+    const byMd = new Map();
+    for (const p of periods) {
+      const d = p.period || "";
+      if (d.length < 10) continue;
+      const md = d.slice(5);
+      if (!byMd.has(md) || d > byMd.get(md)) byMd.set(md, d);
+    }
+    const today = new Date();
+    const out = [];
+    for (let i = 0; i < DAYS_AHEAD; i++) {
+      const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+      const showOn = isoOf(day);
+      const src = byMd.get(showOn.slice(5));
+      if (!src) continue;                      // no msg for that month-day at all
+      let rows = [];
+      try { rows = (await api("/api/browse?date=" + encodeURIComponent(src))).results || []; }
+      catch { continue; }
+      if (!rows.length) continue;
+      const r = rows[0];
+      const en = L === "en";
+      const title = (en ? (r.topic_en || r.topic_hi) : (r.topic_hi || r.topic_en)) || "";
+      const body = (en ? (r.preview_en || r.preview_hi) : (r.preview_hi || r.preview_en)) || "";
+      if (!title && !body) continue;
+      out.push({
+        kind: "daily",
+        // Sorted as if it were posted on the day it surfaces, so today's daily
+        // ranks alongside anything else that arrived today.
+        at: showOn,
+        // Not to be painted before its day: the snapshot deliberately runs ahead
+        // of the calendar, and without this the widget leaks next week's msg.
+        showOn,
+        title: clip(title), body: clip(body),
+        href: "#/entry/" + encodeURIComponent(r.id),
+      });
+    }
+    return out;
+  }
+
+  // ---- assemble + hand over ------------------------------------------------
+  async function build() {
+    const L = lang();
+    const today = isoOf(new Date());
+    const items = [].concat(
+      await dailyItems(L),
+      sectionItems("special", L),
+      sectionItems("letterpad", L),
+      sectionItems("anushthan", L),
+    );
+    // ⚠ Sort on a key CLAMPED to today, not on the raw date. Special carries
+    // posted_at as a UTC timestamp while this compares local calendar days, so
+    // a message posted late in the evening can legitimately read as tomorrow;
+    // a re-post signed with a future date would do the same. Sorted raw, such a
+    // row pins itself to the top of the widget and stays there — outranking
+    // every genuinely new message until its date finally arrives.
+    //
+    // Clamping (rather than hiding it, as the daily msgs are hidden by showOn)
+    // is the deliberate choice: a just-arrived announcement must still appear
+    // today, it simply must not outrank the rest of today.
+    const key = (i) => (i.at > today ? today : i.at);
+    items.sort((a, b) => {
+      const ka = key(a), kb = key(b);
+      return ka < kb ? 1 : ka > kb ? -1 : (RANK[b.kind] || 0) - (RANK[a.kind] || 0);
+    });
+    // Reserve each kind's newest few, then top the list up in the global
+    // newest-first order. Indices are collected (not the rows) so the final
+    // list stays in exactly the order sorted above — no second sort needed.
+    const keep = new Set();
+    const seen = {};
+    items.forEach((it, i) => {
+      seen[it.kind] = (seen[it.kind] || 0) + 1;
+      if (seen[it.kind] <= KEEP_PER_KIND) keep.add(i);
+    });
+    for (let i = 0; i < items.length && keep.size < MAX_ITEMS; i++) keep.add(i);
+    const picked = [...keep].sort((a, b) => a - b).slice(0, MAX_ITEMS).map((i) => items[i]);
+
+    return {
+      v: 1,
+      enabled: enabled(),
+      lang: L,
+      builtAt: new Date().toISOString(),
+      items: picked,
+    };
+  }
+
+  // Returns false (never throws) when the plugin is absent — i.e. on desktop, or
+  // on an APK built before the widget shipped, where writing a key nobody reads
+  // is simply a harmless no-op. That is what lets this ship OTA first.
+  async function push(snap) {
+    const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
+    if (!P || !P.set) return false;
+    try { await P.set({ key: SNAP_KEY, value: JSON.stringify(snap) }); }
+    catch { return false; }
+    // A SharedPreferences write notifies nobody. Without this nudge the widget
+    // would keep painting the previous list until the framework happened to
+    // wake it — up to its 30-minute floor, longer under Doze — which makes the
+    // Settings switch look broken. Absent on desktop and on any APK built
+    // before the widget shipped, hence the guard.
+    try {
+      const W = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.WaWidget;
+      if (W && W.refresh) await W.refresh();
+    } catch (_) {}
+    return true;
+  }
+
+  // Safe to call on every boot and after any section syncs. No-ops off-device.
+  // ⚠ Runs even when the master switch is OFF, and that is deliberate: the
+  // snapshot carries `enabled:false` so the widget can paint its neutral card.
+  // Skipping the write instead would leave the LAST snapshot in place, and the
+  // widget would go on showing messages after the user switched it off.
+  async function refresh() {
+    if (!isNativeApp) return false;
+    try { return await push(await build()); } catch { return false; }
+  }
+
+  // ---- tap-through from a widget row ---------------------------------------
+  // A tapped row launches MainActivity with a `samarpan-widget://open?h=<hash>`
+  // data URI (WaWidgetProvider.routeUri). Capacitor surfaces it through
+  // App.getLaunchUrl() on a cold start and the appUrlOpen event when the app was
+  // already running. The widget registers NO intent-filter — the launch Intent
+  // is explicit — so this is the only path the route arrives by.
+  const ROUTE_PREFIX = "samarpan-widget://";
+  // ⚠ Allowlist, not a sanitiser. The route is only ever one of this app's own
+  // hash routes; anything else means something other than the widget put it
+  // there, and following it is not this function's job.
+  const ROUTE_OK = /^#\/[A-Za-z0-9_\-./%]*$/;
+  function hashFromUrl(u) {
+    if (!u || String(u).indexOf(ROUTE_PREFIX) !== 0) return "";
+    const q = String(u).indexOf("?");
+    if (q < 0) return "";
+    let h = "";
+    try { h = new URLSearchParams(String(u).slice(q + 1)).get("h") || ""; } catch (_) { return ""; }
+    return ROUTE_OK.test(h) ? h : "";
+  }
+  function follow(hash) {
+    if (!hash) return false;
+    try { location.hash = hash.slice(1); } catch (_) { return false; }
+    return true;
+  }
+  // ⚠ Call this AFTER the auth gate has let the user through, not at module
+  // load: a hash set while the gate is up is overwritten when the app routes
+  // itself on start, and the tap silently lands on the home screen instead.
+  async function bindLaunch() {
+    const A = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if (!A) return;
+    try { if (A.addListener) A.addListener("appUrlOpen", (e) => follow(hashFromUrl(e && e.url))); }
+    catch (_) {}
+    try { if (A.getLaunchUrl) { const r = await A.getLaunchUrl(); follow(hashFromUrl(r && r.url)); } }
+    catch (_) {}
+  }
+
+  return { enabled, setEnabled, refresh, build, bindLaunch, hashFromUrl, PREF_KEY, SNAP_KEY };
 })();
 
 // One letterpad message card: title, date line, its page images (lazy), and
@@ -5995,6 +6251,10 @@ const MOBILE_UI = (() => {
         <a href="#/m/special"><span class="mi">✨</span> Special Telegram Msg <span class="m-badge" data-special-badge hidden></span></a>
         <a href="#/m/letterpad"><span class="mi">✍️</span> Guru's Letterpad Msg <span class="m-badge" data-letterpad-badge hidden></span></a>
         <a href="#/m/anushthan"><span class="mi">🪔</span> Anushthan Msg</a>
+        <!-- Upanishad Gyan: the hourly two-line thought and every one already
+             sent. In the main list, not under More — a notification tap lands
+             here thirteen times a day, so it must be findable without one. -->
+        <a href="#/m/gyan"><span class="mi">📿</span> Upanishad Gyan</a>
         <!-- Moderator tools. The desktop nav has had these since the start; the
              phone had no entry point at all, which left a sutradhar (the sole
              owner) unable to approve anyone from the device they actually use.
@@ -6263,6 +6523,31 @@ const MOBILE_UI = (() => {
   // "Notifications (debug)" card can show exactly where it fails on-device
   // (the WebView isn't USB-debuggable in the release build). Temporary
   // instrumentation — trim once push is confirmed working.
+  // ---- Upanishad Gyan preferences (device-level) --------------------------
+  // The hourly thought is the only notification a device can turn off without
+  // an account, and the only one with a language of its own — both because it
+  // is addressed to the DEVICE (see supabase/add_guru_thoughts.sql). The
+  // authority is the server (device_tokens), and these keys are the local
+  // mirror the Settings card paints from, so the switch is correct instantly
+  // and offline instead of waiting on a round trip.
+  //
+  // Language DEFAULTS to the हिंदी/English choice already on the device
+  // (wa:searchLang, the one the home-screen widget reuses) but is stored
+  // separately: someone who types their searches in English has not thereby
+  // asked for the guru's words in English on their lock screen.
+  const GYAN = {
+    lang() {
+      try {
+        const v = localStorage.getItem("wa:notif:lang");
+        if (v === "hi" || v === "en") return v;
+        return HindiType.mode() === "en" ? "en" : "hi";
+      } catch (_) { return "hi"; }
+    },
+    setLang(l) { try { localStorage.setItem("wa:notif:lang", l === "en" ? "en" : "hi"); } catch (_) {} },
+    on() { try { return localStorage.getItem("wa:notif:thought") !== "0"; } catch (_) { return true; } },
+    setOn(v) { try { localStorage.setItem("wa:notif:thought", v ? "1" : "0"); } catch (_) {} },
+  };
+
   let _pushInited = false;
   function _pdiag(patch) {
     let d = {};
@@ -6315,9 +6600,32 @@ const MOBILE_UI = (() => {
         });
         _pdiag({ channelSatsang: "created" });
       } catch (e) { _pdiag({ channelSatsang: "createChannel failed: " + (e && e.message || e) }); }
+      // ⚠ THIRTEEN A DAY — the highest-volume notification the app sends, by an
+      // order of magnitude. Importance 3 (DEFAULT), deliberately unlike every
+      // channel above it: it posts to the tray with no sound and no heads-up
+      // banner, which is the difference between a gift and an interruption.
+      // Its own channel also means Android's own per-channel controls can
+      // silence it without touching the guru's daily message.
+      //
+      // ⚠⚠ A push naming a channel the device has NOT created is dropped
+      // silently on Android 8+. This line is therefore the gate on the whole
+      // feature: publish it OTA and let it land BEFORE scheduling the cron in
+      // supabase/add_guru_thoughts.sql.
+      try {
+        await Push.createChannel({
+          id: "upanishad_gyan", name: "Upanishad Gyan",
+          description: "A short thought from the Guru's heart, each hour from 6 AM to 6 PM",
+          importance: 3, visibility: 1,
+        });
+        _pdiag({ channelGyan: "created" });
+      } catch (e) { _pdiag({ channelGyan: "createChannel failed: " + (e && e.message || e) }); }
       Push.addListener("registration", async (t) => {
         _pdiag({ token: (t && t.value || "").slice(0, 18) + "…", registeredAt: Date.now() });
-        try { await WA.registerDeviceToken(t.value, "android"); _pdiag({ supabase: "OK" }); }
+        // The language goes up at registration so a device that never opens
+        // Settings still receives its own language. The on/off flag deliberately
+        // does NOT: only the Settings card may change that, or every launch
+        // would re-assert a default over a deliberate opt-out.
+        try { await WA.registerDeviceToken(t.value, "android", GYAN.lang()); _pdiag({ supabase: "OK" }); }
         catch (e) { _pdiag({ supabase: "FAIL: " + (e && e.message || e) }); }
       });
       Push.addListener("registrationError", (e) => _pdiag({ regError: JSON.stringify(e) }));
@@ -6335,6 +6643,13 @@ const MOBILE_UI = (() => {
         // "admintalks" is its own kind because its AUDIENCE is different — the
         // room's moderators, never the whole membership. It badges through the
         // same path (ADMINTALK ignores any wid that isn't the room's).
+        // A thought that arrived while the app was open is not in the archive's
+        // cache, so the next open would paint a list missing the very thought
+        // just announced. Dropping the cache costs one refetch and nothing else
+        // (the page always re-reads from the network behind its first paint).
+        if (d.kind === "thought") {
+          try { localStorage.removeItem(GYAN_CACHE); } catch (_) {}
+        }
         if (d.kind === "chat" || d.kind === "anubhuti" || d.kind === "admintalks") {
           const m = { wid: d.wid || "", ts: new Date().toISOString() };
           SATSANG.noteIncoming(m);
@@ -7972,7 +8287,7 @@ const MOBILE_UI = (() => {
   }
 
   // ---- Search By — grouped results across Daily / Special / Letterpad / Anushthan
-  // Word and Date searches show all four, always expanded; Date Range shows them
+  // The Date search shows all four expanded; Word and Date Range show them
   // collapsed (tap a header to expand). Fixed order per the operator's brief.
   // Anushthan draws from anushthanRows() — empty until the operator supplies
   // that content, so the slot reads "(0 results)" for now and lights up with no
@@ -8059,8 +8374,10 @@ const MOBILE_UI = (() => {
     ];
   }
   // groups: [{ label, count, rows: HTMLElement[] }] in the fixed order above.
-  // collapsible=false → always expanded (Word/Date tabs); true → collapsed by
-  // default, each section toggled independently (Date Range tab).
+  // collapsible=false → always expanded (Date tab); true → collapsed by default,
+  // each section toggled independently (Word + Date Range tabs). The collapse
+  // state lives in the class names, so it survives the HTML snapshot each tab
+  // stores in `st` — back out of a result and the group you opened is still open.
   function renderSearchGroups(container, groups, collapsible) {
     container.innerHTML = groups.map((g, i) => `
       <div class="m-sec${collapsible ? " collapsible collapsed" : ""}" data-gi="${i}">
@@ -8149,7 +8466,7 @@ const MOBILE_UI = (() => {
     // Date tab pops its calendar open on entry, so that would throw a picker in
     // the user's face the moment a background sync landed.
     let _rerun = null;
-    // Section headers only toggle when collapsible (Date Range) — bound once
+    // Section headers only toggle when collapsible (Word + Date Range) — bound once
     // here, delegated, so it survives however many times a tab re-renders
     // `results` while this page stays mounted.
     results.addEventListener("click", (ev) => {
@@ -8231,7 +8548,7 @@ const MOBILE_UI = (() => {
             const matchFn = (v, dates, r, sec) => MSG_CORPUS.match(sec.key, r, displayLang, t);
             // hl → section rows highlight + window on the match, like Daily's.
             renderSearchGroups(results, searchGroupsFor(dailyRows, displayLang, matchFn, secHref,
-              { term, lang: displayLang }), false);
+              { term, lang: displayLang }), true);
             st.wordResultsHtml = results.innerHTML;
             if (sameTerm) restoreScroll();
           } catch (err) { if (mySeq === seq) { results.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`; st.wordResultsHtml = results.innerHTML; } }
@@ -8359,8 +8676,8 @@ const MOBILE_UI = (() => {
         // From/To pickers (blank by default) reuse the same spinner+calendar as
         // the Date tab; the pick is shown as dd/mm/yyyy (fmtDate is already that
         // format). Search runs once BOTH bounds are set. Results mirror the
-        // Word/Date tabs' grouping, but collapsed by default (tap a header to
-        // expand) since a wide range can turn up a lot at once.
+        // Word/Date tabs' grouping, collapsed by default like the Word tab (tap a
+        // header to expand) since a wide range can turn up a lot at once.
         body.innerHTML = `<div class="m-rangerow">
             <button type="button" class="m-rangebtn" id="m-r-from">${st.rangeFrom ? fmtDate(st.rangeFrom) : "From date"}</button>
             <span class="m-range-sep">–</span>
@@ -9323,6 +9640,86 @@ const MOBILE_UI = (() => {
   }
 
   // ---- Message to Admin ----------------------------------------------------
+  // ---- Upanishad Gyan — the hourly thought, and its archive ---------------
+  // Where a notification tap lands, and the reason the notifications may safely
+  // collapse into one another: every thought ever sent is here, so a phone left
+  // face-down all day loses nothing.
+  //
+  // Reads thought_slots (what was actually SENT), never the thoughts pool —
+  // showing the pool would hand every reader tomorrow's thought today and turn
+  // an hourly gift into a list to scroll to the end of.
+  //
+  // Cached in localStorage and painted from cache FIRST, so the screen opens
+  // instantly and still reads on a phone with no signal — the same offline
+  // stance as the message sections.
+  const GYAN_CACHE = "wa:gyan:cache";
+  function gyanCached() {
+    try { return JSON.parse(localStorage.getItem(GYAN_CACHE) || "[]"); } catch (_) { return []; }
+  }
+  function gyanSlotLabel(slot) {
+    const h = Number(slot);
+    if (!(h >= 0 && h <= 23)) return "";
+    const ampm = h < 12 ? "AM" : "PM";
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12} ${ampm}`;
+  }
+  async function gyanPage(params) {
+    const node = el(`<div class="m-gyan"></div>`);
+    pageFrame("Upanishad Gyan", node);
+
+    // Set by a notification tap (send-push puts the slot in the route), so the
+    // thought that was just announced is the one the eye lands on.
+    const wantDate = params && params.get("d");
+    const wantSlot = params && params.get("s");
+
+    const render = (items, note) => {
+      if (!items.length) {
+        node.innerHTML = `<div class="m-hint">${escapeHtml(note
+          || "The first thought will appear here once it is sent. They arrive every hour, 6 AM to 6 PM.")}</div>`;
+        return;
+      }
+      const L = GYAN.lang();
+      let html = note ? `<div class="m-hint" style="margin-bottom:12px">${escapeHtml(note)}</div>` : "";
+      let lastDate = null;
+      for (const t of items) {
+        // A thought with no translation in the chosen language is shown in the
+        // one it has — the same fallback the reader makes. Silence would be the
+        // worse answer, and it is the guru's word either way.
+        const text = (L === "en" ? (t.en || t.hi) : (t.hi || t.en)) || "";
+        if (!text) continue;
+        if (t.date !== lastDate) {
+          lastDate = t.date;
+          let label = t.date;
+          try { label = fmtDate(t.date); } catch (_) {}
+          html += `<div class="m-count" style="margin-top:16px">${escapeHtml(label)}</div>`;
+        }
+        const hit = wantDate && String(t.date) === String(wantDate) && String(t.slot) === String(wantSlot);
+        html += `<div class="m-msgitem${hit ? " m-gyan-hit" : ""}"` +
+          (hit ? ` id="m-gyan-hit"` : "") + `>` +
+          `<div class="m-msgtext" style="font-family:var(--serif);font-size:17px;line-height:1.6">${escapeHtml(text)}</div>` +
+          `<div class="m-msgts">${escapeHtml(gyanSlotLabel(t.slot))}</div></div>`;
+      }
+      node.innerHTML = html || `<div class="m-hint">Nothing to show yet.</div>`;
+      const hitEl = node.querySelector("#m-gyan-hit");
+      if (hitEl && hitEl.scrollIntoView) {
+        try { hitEl.scrollIntoView({ block: "center" }); } catch (_) {}
+      }
+    };
+
+    const cached = gyanCached();
+    render(cached, cached.length ? "" : "Loading…");
+
+    try {
+      const items = await WA.recentThoughts(120);
+      try { localStorage.setItem(GYAN_CACHE, JSON.stringify(items)); } catch (_) {}
+      render(items, "");
+    } catch (e) {
+      // Offline with a cache is not an error worth showing; offline without one
+      // is, or the screen is a blank page with no explanation.
+      if (!cached.length) render([], "Couldn't load the thoughts just now. They'll appear when you're back online.");
+    }
+  }
+
   async function contactPage() {
     const node = el(`<div class="m-contact"></div>`);
     pageFrame("Message to Admin", node);
@@ -9391,7 +9788,7 @@ const MOBILE_UI = (() => {
   // ---- router --------------------------------------------------------------
   const PAGE_TITLES = { favorites: "Favorites", browse: "Browse by Date", random: "Your Lucky Msg for Today",
     stats: "Statistics", settings: "Settings", about: "About", help: "Help & Support",
-    moderator: "Moderator", admin: "Add Guru's Msg", search: "Search" };
+    moderator: "Moderator", admin: "Add Guru's Msg", search: "Search", gyan: "Upanishad Gyan" };
 
   return {
     active,
@@ -9443,6 +9840,7 @@ const MOBILE_UI = (() => {
       if (p === "special" || p === "letterpad") {
         return seg[2] ? msgReaderPage(p, decodeURIComponent(seg[2]), params) : msgIndexPage(p, params);
       }
+      if (p === "gyan") return gyanPage(params);   // also where a thought notification lands
       if (p === "contact") return contactPage();
       if (p === "account") return accountPage();
       return viewer(null, params, true);
@@ -9520,6 +9918,116 @@ const MOBILE_UI = (() => {
         }
         paintHint();
         nsw.disabled = false;
+      });
+
+      // ---- Upanishad Gyan (the hourly thought) -----------------------------
+      // Thirteen notifications a day is far more than anything else this app
+      // sends, so unlike the daily / Special / Letterpad announcements it gets
+      // a real off switch — and, because it is the guru's own words rather than
+      // app chrome, its own language choice.
+      //
+      // ⚠ Both preferences are stored against THIS DEVICE's push token, not the
+      // account (supabase/add_guru_thoughts.sql explains why). Two consequences
+      // visible right here: the card can work with nobody signed in, and it is
+      // useless before the device has an FCM token — hence the guard below,
+      // which says so rather than offering a switch that silently does nothing.
+      const gbox = el(`<div class="sync-box" id="m-gyan-box">
+        <h3 style="margin-top:0">Upanishad Gyan</h3>
+        <label class="m-switchrow">Hourly thought from the Guru
+          <span class="m-switch"><input type="checkbox" id="m-gyan-on"><i></i></span></label>
+        <div class="m-hint" id="m-gyan-subhint">One short thought every hour, 6 AM to 6 PM.</div>
+        <div class="m-seg-row" id="m-gyan-langrow" style="justify-content:flex-start;margin:14px 0 0">
+          <div class="m-langseg m-searchseg" id="m-gyan-lang" role="group" aria-label="Upanishad Gyan language">
+            <button data-lang="hi" type="button">हिंदी</button>
+            <button data-lang="en" type="button">English</button>
+          </div>
+        </div>
+        <div class="m-hint" id="m-gyan-hint"></div>
+      </div>`);
+      prose.appendChild(gbox);
+      const gsw = gbox.querySelector("#m-gyan-on");
+      const glangRow = gbox.querySelector("#m-gyan-langrow");
+      const ghint = gbox.querySelector("#m-gyan-hint");
+      const gtok = (window.WA && WA.storedPushToken && WA.storedPushToken()) || "";
+
+      gsw.checked = GYAN.on();
+      const paintGyanLang = () => gbox.querySelectorAll("#m-gyan-lang button")
+        .forEach((b) => b.classList.toggle("active", b.dataset.lang === GYAN.lang()));
+      paintGyanLang();
+      const paintGyanHint = () => {
+        // The language choice is meaningless while the thoughts are switched
+        // off — hide it rather than leave a live-looking control that changes
+        // nothing anyone will see.
+        glangRow.hidden = !gsw.checked;
+        ghint.textContent = !granted
+          ? "Notifications are switched off for this app on your phone. Turn them on in Settings › Apps › Samarpan Upanishad › Notifications."
+          : !gtok
+            ? "This device isn't registered for notifications yet. Reopen the app once and this will start working."
+            : gsw.checked
+              ? "A thought arrives each hour between 6 AM and 6 PM. Every one of them stays in Upanishad Gyan, so nothing is missed."
+              : "No hourly notifications. You can still read every thought any time in Upanishad Gyan.";
+      };
+      paintGyanHint();
+
+      gsw.addEventListener("change", async () => {
+        const want = gsw.checked;
+        gsw.disabled = true;
+        try {
+          await WA.setThoughtPrefs(null, want);
+          GYAN.setOn(want);          // local mirror only AFTER the server took it
+          toast(want ? "Upanishad Gyan on" : "Upanishad Gyan off");
+        } catch (e) {
+          gsw.checked = !want;       // never leave the switch claiming something untrue
+          toast(e.message);
+        }
+        paintGyanHint();
+        gsw.disabled = false;
+      });
+
+      gbox.querySelector("#m-gyan-lang").addEventListener("click", async (e) => {
+        const b = e.target.closest("button[data-lang]");
+        if (!b) return;
+        const want = b.dataset.lang === "en" ? "en" : "hi";
+        const had = GYAN.lang();
+        if (want === had) return;
+        GYAN.setLang(want);          // paint immediately; roll back if the server refuses
+        paintGyanLang();
+        try {
+          await WA.setThoughtPrefs(want, null);
+          toast(want === "en" ? "Upanishad Gyan in English" : "उपनिषद ज्ञान हिंदी में");
+        } catch (err) {
+          GYAN.setLang(had);
+          paintGyanLang();
+          toast(err.message);
+        }
+      });
+
+      // ---- Home screen widget ----------------------------------------------
+      // One master switch, default ON. It does NOT control whether the widget
+      // exists — Android gives an app no way to remove its own widget from the
+      // home screen, only the user can do that by dragging it off. Off here
+      // means the widget stops showing messages and paints its neutral card,
+      // so the hint says exactly that rather than implying it disappears.
+      //
+      // The switch is OTA and ships ahead of the widget APK: on a phone whose
+      // shell has no widget yet, WIDGET.refresh() writes a preference nothing
+      // reads. Harmless, and it means the snapshot is already warm on the day
+      // the APK lands.
+      const wbox = el(`<div class="sync-box" id="m-widget-box">
+        <h3 style="margin-top:0">Home Screen Widget</h3>
+        <label class="m-switchrow">Show messages in the widget
+          <span class="m-switch"><input type="checkbox" id="m-widget-on"><i></i></span></label>
+        <div class="m-hint">Guru's daily, Special, Letterpad and Anusthan messages, newest first. Switching this off leaves the widget on your home screen but blank — to remove it, press and hold it and drag it away.</div>
+      </div>`);
+      prose.appendChild(wbox);
+      const wsw = wbox.querySelector("#m-widget-on");
+      wsw.checked = WIDGET.enabled();
+      wsw.addEventListener("change", () => {
+        WIDGET.setEnabled(wsw.checked);
+        // Repushed immediately rather than on next boot: a switch the user has
+        // just flipped must be true on the home screen before they get there.
+        WIDGET.refresh();
+        toast(wsw.checked ? "Widget messages on" : "Widget messages off");
       });
 
       const box = el(`<div class="sync-box" id="m-display-box">
@@ -9883,4 +10391,16 @@ AUTH_GATE.boot(function startApp() {
   // isn't a moderator, so a member's boot costs nothing extra.
   ADMINTALK.refreshBadges();
   ADMINTALK.refresh(true).catch(() => {});
+
+  // Home screen widget: rebuild the snapshot once the two caches it reads have
+  // actually landed. Building it before they resolve would hand the widget a
+  // list with no Special or Letterpad in it — briefly wrong, and wrong for the
+  // whole day if the phone is never opened again. No-ops on desktop and on any
+  // shell without the widget (see WIDGET.refresh).
+  Promise.allSettled([SPECIAL.sync(), LETTERPAD.loadIndex()])
+    .then(() => WIDGET.refresh())
+    .catch(() => {});
+  // …and honour a tap that arrived from a widget row. Bound here rather than at
+  // module load so the gate has already routed; see WIDGET.bindLaunch.
+  WIDGET.bindLaunch();
 });

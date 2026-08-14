@@ -1205,15 +1205,38 @@ const WA = {
   // grant but NOT the privileges PostgREST's upsert path requires, and the
   // unique `token` column makes a repeat registration a harmless 23505.
   // Rotated/stale tokens are pruned server-side by send-push on FCM 404.
-  async registerDeviceToken(token, platform) {
+  // `lang` ("hi"/"en") and `wantThought` are the Upanishad Gyan preferences, and
+  // both are OPTIONAL — null leaves whatever the device already chose alone.
+  // Launch-time registration passes the language (so a device that has never
+  // opened Settings still gets its own language) but NOT the on/off flag, which
+  // only the Settings card is allowed to change; passing a default there would
+  // silently re-enable notifications someone had switched off.
+  //
+  // ⚠ Three call shapes, oldest last: the 4-argument RPC, the 2-argument RPC
+  // (this OTA reached the phone before add_guru_thoughts.sql was run on the
+  // server), then a plain insert (no RPC at all). Registration must never fail
+  // just because the newest server section is missing — a device that does not
+  // register receives nothing at all, forever.
+  async registerDeviceToken(token, platform, lang, wantThought) {
     if (!token) return { ok: false };
     const plat = platform || "android";
     // Remembered so app.js can re-register after sign-in without waiting for
     // FCM to hand out the token again (it only fires once per install).
     try { localStorage.setItem("wa:push:token", token); } catch (_) {}
+    const missing = (e) => /register_device_token|schema cache|does not exist|not find/i.test(e.message || "");
+
+    const args = { tok: token, plat };
+    if (lang === "hi" || lang === "en") args.lang = lang;
+    if (wantThought === true || wantThought === false) args.want_thought = wantThought;
+    if (args.lang || args.want_thought !== undefined) {
+      const { error: newErr } = await _sb.rpc("register_device_token", args);
+      if (!newErr) return { ok: true };
+      if (!missing(newErr)) throw new Error(newErr.message);
+    }
+
     const { error } = await _sb.rpc("register_device_token", { tok: token, plat });
-    if (!error) return { ok: true };
-    if (!/register_device_token|schema cache|does not exist|not find/i.test(error.message || "")) {
+    if (!error) return { ok: true, thoughtPrefs: false };
+    if (!missing(error)) {
       throw new Error(error.message);
     }
     const { data: { session } } = await _sb.auth.getSession();
@@ -1225,6 +1248,44 @@ const WA = {
 
   // The FCM token this device last registered (see above), or "".
   storedPushToken() { try { return localStorage.getItem("wa:push:token") || ""; } catch (_) { return ""; } },
+
+  // ----- Upanishad Gyan (the hourly thought) ----------------------------
+  // Both preferences live on THIS DEVICE's token row, not on the account —
+  // these notifications reach phones that never signed in, so an account-level
+  // switch would leave most of the audience unable to turn them off or pick a
+  // language. See the header of supabase/add_guru_thoughts.sql.
+  async setThoughtPrefs(lang, wantThought) {
+    const tok = this.storedPushToken();
+    if (!tok) throw new Error("This device isn't registered for notifications yet. Open the app once with notifications allowed, then try again.");
+    const args = { tok };
+    if (lang === "hi" || lang === "en") args.lang = lang;
+    if (wantThought === true || wantThought === false) args.want_thought = wantThought;
+    const { error } = await _sb.rpc("set_thought_prefs", args);
+    if (error) {
+      throw new Error(/set_thought_prefs|schema cache|does not exist|not find/i.test(error.message || "")
+        ? "Upanishad Gyan isn't set up on the server yet. (Admin: run supabase/add_guru_thoughts.sql.)"
+        : error.message);
+    }
+    return { ok: true };
+  },
+
+  // The thoughts already sent, newest first — what the Upanishad Gyan screen
+  // shows. Reads the SLOTS, not the pool: an unsent thought is not yet the
+  // guru's word for any hour, and showing the whole pool would turn a quiet
+  // hourly gift into a scrollable list of everything coming.
+  async recentThoughts(limit) {
+    const { data, error } = await _sb.from("thought_slots")
+      .select("slot_date,slot,thoughts(id,text_hi,text_en)")
+      .order("slot_date", { ascending: false })
+      .order("slot", { ascending: false })
+      .limit(Math.min(Math.max(limit || 60, 1), 300));
+    if (error) throw new Error(error.message);
+    return (data || []).map((r) => ({
+      date: r.slot_date, slot: r.slot,
+      hi: (r.thoughts && r.thoughts.text_hi) || "",
+      en: (r.thoughts && r.thoughts.text_en) || "",
+    })).filter((t) => t.hi || t.en);
+  },
 
   // Samuhik Satsang notifications on/off for THIS ACCOUNT (all their devices).
   // Throws with a plain-English message when the schema section is missing, so

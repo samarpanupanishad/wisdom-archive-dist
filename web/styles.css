@@ -929,12 +929,12 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .preloader.pl-gate:not(.go) .pl-particle { animation-play-state: paused; }
 /* Watercolour mountains + lotus + title are baked into this artwork. */
 .pl-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none;
-  background: #f4f0f8 url("/assets/preloader-bg.jpg") center / cover no-repeat; }
+  background: #f4f0f8 var(--wa-asset-preloader-bg, url("/assets/preloader-bg.jpg")) center / cover no-repeat; }
 .pl-flash { position: fixed; inset: 0; background: radial-gradient(circle at 50% 46%, #fff, #fff); opacity: 0; z-index: 3; pointer-events: none; transition: opacity .5s ease; }
 .preloader.burst .pl-flash { opacity: .93; }
 /* Full-page guru image, revealed out of the white burst, held, then dismissed. */
 .pl-reveal { position: absolute; inset: 0; z-index: 5; opacity: 0; pointer-events: none;
-  background: #f4f0f8 url("/assets/guru-reveal.jpg") center / cover no-repeat;
+  background: #f4f0f8 var(--wa-asset-guru-reveal, url("/assets/guru-reveal.jpg")) center / cover no-repeat;
   transform: scale(1.04); transition: opacity 1s ease, transform 2.6s ease-out; }
 .preloader.guru .pl-reveal { opacity: 1; transform: scale(1); }
 :root {
@@ -1006,13 +1006,17 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    collide on short viewports. See the max-height rule at the end of this block. */
 .pl-brand { position: absolute; left: 0; right: 0; top: 5%; z-index: 2;
   text-align: center; pointer-events: none; padding: 0 16px; }
-/* Soft faded edge: no hard border against watercolour. The mask fades the photo
-   into the background instead of cutting it out, so the red does not sit on the
-   lavender as a pasted-on rectangle. */
-.pl-charan { display: block; margin: 0 auto .8em; width: 132px; height: 85px;
-  object-fit: cover; border-radius: 50%;
-  -webkit-mask-image: radial-gradient(ellipse at 50% 50%, #000 58%, transparent 78%);
-          mask-image: radial-gradient(ellipse at 50% 50%, #000 58%, transparent 78%); }
+/* The artwork is a TRANSPARENT CUTOUT now (guru-charan.png) — just the ink lines,
+   with the black vignette AND the cream paper patch both removed, so it sits on the
+   watercolour with nothing behind it. There is no rectangle left to disguise: the old
+   border-radius + radial fade-out mask are gone, and so is object-fit (the file is
+   cropped to the drawing, so there is nothing to cover).
+   ⚠ Do NOT "restore" the mask — with the art cropped tight it would clip the staff tip.
+   ⚠ Must stay a PNG. JPEG cannot carry an alpha channel at all.
+   The box IS the drawing now, not a frame around it. The old 132x85 fitted the whole
+   600x388 source, of which the ink was only 172x136 — so the drawing itself landed at
+   about 38x30 CSS px and read as a smudge. Sized to the art's own 1.26 ratio. */
+.pl-charan { display: block; margin: 0 auto .45em; width: 176px; height: 139px; }
 .pl-name { font-family: var(--serif, Georgia, "Times New Roman", serif); font-weight: 600;
   font-size: 22px; letter-spacing: .055em; line-height: 1.15; color: var(--accent); }
 .pl-tag { margin-top: .3em; font-family: var(--serif, Georgia, serif); font-style: italic;
@@ -1035,14 +1039,38 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 @media (max-width: 640px) {
   .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; } .pl-center { transform: translateY(3.5vh); }
 }
+/* The charan steps down in bands as the viewport gets shorter. The lockup is pinned
+   near the top and the chakra column is centred, so every pixel of picture height is
+   a pixel of clearance lost — and the cutout is a much taller box than the old photo
+   was (139px vs 85px), which spends headroom the old design had already used up.
+   Measured clearance between the lockup and the chakras (1280 wide, and re-checked
+   on phone widths, where it runs a few px looser):
+        height   old 132x85    176x139    140x110    112x88
+        1000        150           102
+         860         81            32         63
+         770         36           -13         18         40
+         700          1           -48        -17          5
+         667         -3           -51        -21          2
+   So the old design was ALREADY touching at ~700 and slightly overlapping at 667 —
+   these bands are chosen to stay at or above that, never below. Note a typical phone
+   (393x852) clears by 38px at full size, so handsets keep the largest charan. */
+@media (max-height: 845px) {
+  .pl-charan { width: 140px; height: 110px; margin-bottom: .35em; }
+}
+@media (max-height: 765px) {
+  .pl-charan { width: 112px; height: 88px; margin-bottom: .3em; }
+}
 /* Short viewports — landscape phones, small desktop windows. The chakra column is
    centred and the brand lockup is pinned near the top, so they compete for the same
    vertical space: measured at 620x400 the full-size lockup ran 75px INTO the chakras.
    Shrink the lockup rather than let them overlap. Portrait is unaffected (it clears
-   by 40px at full size), which is why this keys off height, not width. */
+   by 40px at full size), which is why this keys off height, not width.
+   ⚠ This band is tighter than the 765 one, not just a continuation of it: the lockup
+   moves to top:2% but the chakra column is still nearly full height, so 112x88 would
+   overlap by 20px here. 72x57 restores the original's exact +12 clearance. */
 @media (max-height: 560px) {
   .pl-brand { top: 2%; }
-  .pl-charan { width: 84px; height: 54px; margin-bottom: .45em; }
+  .pl-charan { width: 72px; height: 57px; margin-bottom: .25em; }
   .pl-name { font-size: 16px; }
   .pl-tag { font-size: 11px; }
   /* The lockup alone is not enough: the chakra column is ~314px on its own, so on a
@@ -1051,9 +1079,14 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   .pl-chakras { gap: 12px; padding: 10px 0 12px; }
 }
 /* Landscape phone (~375px tall). The app is NOT portrait-locked, so a rotation during
-   launch lands here. Everything shrinks again; measured to clear at 812x375. */
+   launch lands here. Everything shrinks again.
+   ⚠ The old note here said this "clears at 812x375" — measured, it does not: the
+   original 66x43 lockup already overlapped by 12px, absorbed by the chakra column's
+   own top padding. So 56x44 is chosen for PARITY with that (about -11), not because
+   the band clears. It is still ~3x more visible drawing than before, because the old
+   box was mostly black vignette: 66px of box held only ~19px of ink. */
 @media (max-height: 460px) {
-  .pl-charan { width: 66px; height: 43px; margin-bottom: .35em; }
+  .pl-charan { width: 56px; height: 44px; margin-bottom: .2em; }
   .pl-name { font-size: 14px; letter-spacing: .04em; }
   .pl-tag { font-size: 10px; }
   .chakra { width: 16px; height: 16px; }
@@ -1723,6 +1756,12 @@ body.m-mode .content:has(.m-page-scroll) { min-height: 0; }
 .m-msgfrom { font: 700 13.5px var(--sans); color: var(--accent); margin-bottom: 4px; }
 .m-msgtext { font: 400 14.5px var(--sans); color: var(--text); white-space: pre-wrap; }
 .m-msgts { margin-top: 6px; font: 400 12px var(--sans); color: var(--muted); }
+/* Upanishad Gyan (#/m/gyan) — the hourly thought's archive. It reuses the
+   .m-msgitem card wholesale; the only thing it adds is a marker for the one
+   thought a notification tap arrived for, which the page also scrolls to. */
+.m-gyan { min-height: 40vh; }
+.m-gyan-hit { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft, #e3f2fd); }
+
 .m-acc-card { display: flex; align-items: center; gap: 16px; padding: 18px 4px; margin-bottom: 14px; }
 .m-community { min-height: 60vh; }
 
@@ -2748,3 +2787,34 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
   flex: 0 0 auto; padding: 11px 16px; border-top: 1px solid var(--border-soft);
   font: 500 11.5px var(--sans); color: var(--muted); line-height: 1.5;
 }
+
+/* ---------------------------------------------------------------------------
+   Preloader presentation, moved out of index.html.
+
+   index.html ships inside the APK and never updates over the air; this file
+   does. Everything below used to be an inline style or a literal string in
+   the markup, which meant a wording tweak or a colour change cost a whole
+   new APK release. The markup is now a fixed skeleton -- seven .chakra
+   slots, three .pl-particle slots, empty text nodes -- and every decision
+   about how it looks and what it says lives here.
+   --------------------------------------------------------------------------- */
+:root { --pl-steps: 5; --pl-blink-step: 1; }
+.chakra[data-c="crown"] { --color: var(--c-crown); --delay: 0.432s; }
+.chakra[data-c="thirdeye"] { --color: var(--c-thirdeye); --delay: 0.360s; }
+.chakra[data-c="throat"] { --color: var(--c-throat); --delay: 0.288s; }
+.chakra[data-c="heart"] { --color: var(--c-heart); --delay: 0.216s; }
+.chakra[data-c="solar"] { --color: var(--c-solar); --delay: 0.144s; }
+.chakra[data-c="sacral"] { --color: var(--c-sacral); --delay: 0.072s; }
+.chakra[data-c="root"] { --color: var(--c-root); --delay: 0s; }
+.pl-particle[data-p="1"] { --dx: -6px; animation-delay: 0.40s; }
+.pl-particle[data-p="2"] { --dx: 7px; animation-delay: 0.57s; }
+.pl-particle[data-p="3"] { --dx: -3px; animation-delay: 0.74s; }
+.pl-charan { background: var(--wa-asset-guru-charan, url("/assets/guru-charan.png")) center / contain no-repeat; }
+.pl-name::before { content: "Samarpan Upanishad"; }
+.pl-tag-a::before { content: "sitting under the grace of "; }
+.pl-tag-b::before { content: "🌹 GURU 🌹"; }
+.pl-text[data-step="0"]::before { content: "Awakening Samarpan Upanishad..."; }
+.pl-text[data-step="1"]::before { content: "कृपया अमृत बरसाइए।"; }
+.pl-text[data-step="2"]::before { content: "कृपया अमृत बरसाइए।"; }
+.pl-text[data-step="3"]::before { content: "कृपया अमृत बरसाइए।"; }
+.pl-text[data-step="4"]::before { content: "Showering Guru's Msg... Thanks Gurudev for everything...!"; }
