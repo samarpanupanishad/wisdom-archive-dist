@@ -508,6 +508,8 @@ const PATHS = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/>',
   heart: '<path d="M12 20S4 14.5 4 9a4 4 0 0 1 8-1 4 4 0 0 1 8 1c0 5.5-8 11-8 11z"/>',
+  // A seated figure — the Personal Dhyan Diary.
+  dhyan: '<circle cx="12" cy="5.6" r="2.3"/><path d="M12 9.4c-2.6 0-4.1 1.9-4.7 4.3"/><path d="M12 9.4c2.6 0 4.1 1.9 4.7 4.3"/><path d="M5.4 18.6c1.5-2 3.8-3.1 6.6-3.1s5.1 1.1 6.6 3.1z"/>',
   calendar: '<rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/>',
   shuffle: '<path d="M16 4h4v4"/><path d="M20 4 4 20"/><path d="M16 20h4v-4"/><path d="M4 4l6 6"/>',
   pie: '<circle cx="12" cy="12" r="9"/><path d="M12 12V3"/><path d="M12 12l7.8 4.5"/>',
@@ -527,6 +529,11 @@ const NAV = [
   { route: "home", label: "Home", hash: "#/", icon: "home" },
   { route: "search", label: "Search", hash: "#/search", icon: "search" },
   { route: "favorites", label: "Favorites", hash: "#/favorites", icon: "heart" },
+  // ⚠ A literal, not DHYAN_TITLE: this array is evaluated near the top of the
+  // file and that const is declared with the page far below — referencing it
+  // here is a temporal-dead-zone throw that breaks all of app.js at load.
+  // Every other row does the same; keep the two in step by hand.
+  { route: "dhyan", label: "Personal Dhyan Diary", hash: "#/dhyan", icon: "dhyan" },
   { route: "browse-date", label: "Browse by Date", hash: "#/browse/date", icon: "calendar" },
   { route: "random", label: "Your Lucky Msg for Today", hash: "#/random", icon: "shuffle" },
   { route: "special", label: "Special Telegram Messages", hash: "#/special", icon: "spark" },
@@ -3833,6 +3840,7 @@ async function route() {
   if (seg[0] === "admin") { setActiveNav("admin"); return renderAdmin(); }
   if (seg[0] === "moderator") { setActiveNav("moderator"); return renderModerator(); }
   if (seg[0] === "admintalks") { setActiveNav("admintalks"); return renderAdminTalks(); }
+  if (seg[0] === "dhyan") { setActiveNav("dhyan"); return renderDhyanDiary(); }
   if (seg[0] === "stats") { setActiveNav("stats"); return renderStats(); }
   if (seg[0] === "settings") { setActiveNav("settings"); return renderInfo("settings"); }
   if (seg[0] === "about") { setActiveNav("about"); return renderInfo("about"); }
@@ -6173,6 +6181,1938 @@ async function renderAdminTalks() {
 }
 
 // --------------------------------------------------------------------------
+// PERSONAL DHYAN DIARY — the page.   Plan: DHYAN_DIARY_PLAN.md §8
+//   #/dhyan (desktop)        #/m/dhyan (mobile)
+//
+// Both shells call this ONE builder and supply only their own frame, the same
+// arrangement mountAdminTalks() uses — a personal record must not be able to
+// drift between the two surfaces.
+//
+// ⚠ THIS IS THE SHELL. The timer here is a plain stopwatch: no spinner, no
+// countdown, no mantra, no dhun. Those arrive next (plan §5) and slot into
+// start()/stop() below without changing the storage contract. What IS already
+// real is every path through SADHANA — starting, stopping, the stated mala
+// count, delete, and the crash-safe resume.
+//
+// ⚠ Records are per-device by design (plan §12). On desktop that means this
+// page shows THIS browser's sittings and not the phone's, which is why the
+// footer says so out loud rather than letting someone conclude their history
+// was lost.
+// --------------------------------------------------------------------------
+const DHYAN_TITLE = "Personal Dhyan Diary";
+
+// ---- generic rolling wheel -------------------------------------------------
+// A strip of all values translates inside a 5-row viewport; the band marks the
+// centred one. Drag with the finger, snap on release, haptic per value.
+//
+// ⚠ It reuses the DATE PICKER'S css classes and its ROW/CENTER constants on
+// purpose, so the two spinners cannot drift apart visually. The picker itself
+// predates this and keeps its own copy: its wheel is closure-bound to day /
+// month / year (clamping, month stepping, grid rebuild), and rewriting a
+// delicate working component with no test suite to catch a regression buys
+// nothing today. This is the generic one — point the picker at it if it is
+// ever touched for other reasons.
+function makeWheel(host, opts) {
+  const ROW = 34, CENTER = 2;
+  let values = opts.values.slice();
+  let idx = Math.max(0, values.indexOf(opts.value));
+  const fmt = opts.format || ((v) => String(v));
+  const strip = () => host.firstElementChild;
+  const restY = () => (CENTER - idx) * ROW;
+  const setY = (y, anim) => {
+    const s = strip(); if (!s) return;
+    s.style.transition = anim ? "transform .18s ease-out" : "none";
+    s.style.transform = `translateY(${y}px)`;
+  };
+  const mark = (i) => { const s = strip(); if (!s) return; for (const r of s.children) r.classList.toggle("sel", +r.dataset.i === i); };
+  function paint() {
+    host.innerHTML = `<div class="m-dp-strip">` +
+      values.map((v, i) => `<div class="m-dp-row" data-i="${i}">${escapeHtml(fmt(v))}</div>`).join("") + `</div>`;
+    setY(restY(), false);
+    mark(idx);
+  }
+  function commit(i, quiet) {
+    if (i === idx) return;
+    idx = i;
+    if (!quiet) hapticTickHook();
+    if (opts.onChange) opts.onChange(values[idx]);
+  }
+  let y0 = null, baseY = 0;
+  const begin = (yy) => { y0 = yy; baseY = restY(); setY(baseY, false); };
+  const moveTo = (yy) => {
+    if (y0 == null) return;
+    const maxY = CENTER * ROW, minY = (CENTER - (values.length - 1)) * ROW;
+    let ny = baseY + (yy - y0);
+    if (ny > maxY) ny = maxY + (ny - maxY) * 0.3;            // rubber-band past either end
+    else if (ny < minY) ny = minY + (ny - minY) * 0.3;
+    setY(ny, false);
+    const ci = Math.max(0, Math.min(values.length - 1, Math.round((CENTER * ROW - ny) / ROW)));
+    mark(ci);
+    commit(ci);
+  };
+  const end = () => { if (y0 == null) return; y0 = null; setY(restY(), true); };
+  host.addEventListener("touchstart", (e) => begin(e.touches[0].clientY), { passive: true });
+  host.addEventListener("touchmove", (e) => moveTo(e.touches[0].clientY), { passive: true });
+  host.addEventListener("touchend", end, { passive: true });
+  host.addEventListener("touchcancel", end, { passive: true });
+  host.addEventListener("mousedown", (e) => {
+    e.preventDefault(); begin(e.clientY);
+    const mv = (ev) => moveTo(ev.clientY);
+    const up = () => { end(); window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+  });
+  host.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const ni = Math.max(0, Math.min(values.length - 1, idx + (e.deltaY > 0 ? 1 : -1)));
+    if (ni !== idx) { commit(ni); setY(restY(), true); mark(idx); }
+  }, { passive: false });
+  paint();
+  return {
+    value: () => values[idx],
+    // Used when the mantra's length raises the floor on a guru-mode sitting.
+    setValues(next, keep) {
+      values = next.slice();
+      const want = keep === undefined ? values[idx] : keep;
+      idx = Math.max(0, values.indexOf(want) < 0 ? 0 : values.indexOf(want));
+      paint();
+      if (opts.onChange) opts.onChange(values[idx]);
+    },
+  };
+}
+
+// ---- the sitting's audio ----------------------------------------------------
+// Plan §5. Three jobs: play Guru's mantra at the start of a guru-mode sitting,
+// hold the audio session open for the whole sit, and sound the dhun at the end.
+//
+// ⚠ The dhun is scheduled on the WEB AUDIO CLOCK, not a setTimeout.
+// AudioContext.currentTime is a hardware audio clock and start(when) is sample
+// accurate, so the audio engine fires the bell even if JavaScript has been
+// throttled to a standstill by a backgrounded WebView. A 30-minute setTimeout
+// in that state is close to a coin flip.
+//
+// ⚠ The silent bed is NOT padding. Android keeps a WebView responsive while it
+// is actively playing audio; in guru mode the mantra does that for the opening
+// minutes, but in MAUN nothing plays at all and the app is a candidate for
+// freezing from the first second — which is exactly where the user chose
+// silence and trusted the bell. So silence is played deliberately.
+//
+// ⚠ There is NO notification backstop, by operator decision (plan §6): the
+// phone is locked and must stay dark. If an OEM kills background audio the
+// sitting ends silently — and the RECORD is still correct, because it never
+// depended on the sound.
+const SIT_AUDIO = (() => {
+  let ctx = null, bed = null, dhun = null, mantra = null, decoded = null;
+
+  // Assets ship over the air like artwork, so on a phone they live wherever the
+  // frozen shell put them. ⚠ wa-boot only republishes downloaded files to CSS
+  // (as --wa-asset-*), which is no use to an <audio> element — read the raw map
+  // it writes instead, and fall back to the bundled path. See plan §5.
+  function assetUrl(name) {
+    try {
+      const map = JSON.parse(localStorage.getItem("wa:mobile:uiFiles") || "{}");
+      const hit = map["/assets/" + name];
+      if (hit) return hit;
+    } catch (_) {}
+    return "assets/" + name;
+  }
+  const MANTRA_FILE = "dhyan-mantra.mp3";
+  const DHUN_FILE = "dhyan-dhun.mp3";
+
+  // Is Guru's mantra actually on this device yet? Guru mode must not claim to
+  // play something that is not there.
+  let _mantraOk = null;
+  function mantraReady() {
+    if (_mantraOk !== null) return Promise.resolve(_mantraOk);
+    return new Promise((res) => {
+      const a = new Audio();
+      a.preload = "metadata";
+      a.onloadedmetadata = () => { _mantraOk = { ok: true, sec: Math.round(a.duration || 0) }; res(_mantraOk); };
+      a.onerror = () => { _mantraOk = { ok: false, sec: 0 }; res(_mantraOk); };
+      a.src = assetUrl(MANTRA_FILE);
+    });
+  }
+
+  // A soft bowl-like strike, built from oscillators. This is what sounds when
+  // no dhun file has been supplied yet — a sitting must NEVER end in silence
+  // (plan §5), and a missing file is not a reason to leave the user waiting.
+  function scheduleSynthBell(at) {
+    const parts = [[210, 1], [420, 0.5], [631, 0.28], [842, 0.12]];
+    for (let strike = 0; strike < 3; strike++) {
+      const t = at + strike * 7;
+      for (const [freq, amp] of parts) {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = "sine"; o.frequency.value = freq;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.22 * amp, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 6);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t); o.stop(t + 6.2);
+      }
+    }
+  }
+
+  async function loadDhun() {
+    if (decoded !== null) return decoded;
+    try {
+      const buf = await fetch(assetUrl(DHUN_FILE)).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()));
+      decoded = await ctx.decodeAudioData(buf);
+    } catch (_) { decoded = false; }     // false = "asked, not there" (vs null = "not asked")
+    return decoded;
+  }
+
+  function startBed() {
+    // One second of digital silence on a loop. Cheap, and it is the whole
+    // reason a locked maun sitting can still be heard from.
+    const b = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    bed = ctx.createBufferSource();
+    bed.buffer = b; bed.loop = true;
+    bed.connect(ctx.destination);
+    bed.start();
+  }
+
+  // ⚠ MUST be called from inside the Start tap — a user gesture is what
+  // unlocks audio, and a context created later starts suspended.
+  async function arm(msUntilEnd, opts) {
+    disarm();
+    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (_) { ctx = null; return { bell: false, mantra: false }; }
+    try { if (ctx.state === "suspended") await ctx.resume(); } catch (_) {}
+    startBed();
+
+    const at = ctx.currentTime + Math.max(0, msUntilEnd / 1000);
+    let bellFile = false;
+    if (opts && opts.dhun !== false) {
+      const buf = await loadDhun();
+      if (buf) {
+        dhun = ctx.createBufferSource();
+        dhun.buffer = buf;
+        dhun.connect(ctx.destination);
+        dhun.start(at);
+        bellFile = true;
+      } else {
+        scheduleSynthBell(at);
+      }
+    }
+
+    let playedMantra = false;
+    if (opts && opts.mode === "guru") {
+      const m = await mantraReady();
+      if (m.ok) {
+        mantra = new Audio(assetUrl(MANTRA_FILE));
+        mantra.volume = 0;
+        // Guru's voice fades in rather than starting at full volume in
+        // someone's ear; it also respects the device volume, never overrides it.
+        mantra.play().then(() => {
+          let v = 0;
+          const fade = setInterval(() => {
+            v = Math.min(1, v + 0.06);
+            if (mantra) mantra.volume = v;
+            if (v >= 1) clearInterval(fade);
+          }, 60);
+        }).catch(() => {});
+        playedMantra = true;
+      }
+    }
+    return { bell: bellFile ? "file" : "synth", mantra: playedMantra };
+  }
+
+  function disarm() {
+    try { if (mantra) { mantra.pause(); mantra.src = ""; } } catch (_) {}
+    mantra = null;
+    try { if (dhun) dhun.stop(); } catch (_) {}
+    dhun = null;
+    try { if (bed) bed.stop(); } catch (_) {}
+    bed = null;
+    try { if (ctx) ctx.close(); } catch (_) {}
+    ctx = null;
+  }
+
+  return { arm, disarm, mantraReady, assetUrl, MANTRA_FILE, DHUN_FILE };
+})();
+
+// Offered durations. 30 is the prescription the diary presents; the rest is
+// the operator's "let user adjust more or less according to his likings".
+const DHYAN_MINUTES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 75, 90, 120];
+
+// ---- setup sheet: how long, and in which mode -------------------------------
+function openDhyanSetup(onStarted) {
+  const st = SADHANA.settings();
+  let mins = DHYAN_MINUTES.includes(st.targetMin) ? st.targetMin : 30;
+  let mode = st.defaultMode === "maun" ? "maun" : "guru";
+
+  const ov = el(`
+    <div class="dd-sheet-ov">
+      <div class="dd-sheet" role="dialog" aria-label="Start a sitting">
+        <div class="dd-sheet-h">Samarpan Dhyan</div>
+        <div class="dd-modes" role="group" aria-label="Mode">
+          <button class="dd-mode" data-m="guru">Guru's mantra</button>
+          <button class="dd-mode" data-m="maun">Maun (silent)</button>
+        </div>
+        <div class="dd-spin">
+          <div class="m-dp-selrow" aria-hidden="true"></div>
+          <div class="m-dp-wheel dd-wheel"></div>
+          <div class="dd-spin-unit">minutes</div>
+        </div>
+        <div class="dd-note" data-note></div>
+        <div class="dd-sheet-btns">
+          <button class="btn" data-cancel>Cancel</button>
+          <button class="btn primary" data-begin>Begin</button>
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(ov);
+
+  const wheel = makeWheel(ov.querySelector(".dd-wheel"), {
+    values: DHYAN_MINUTES, value: mins, format: (v) => String(v),
+    onChange: (v) => { mins = v; },
+  });
+
+  const note = ov.querySelector("[data-note]");
+  async function paintMode() {
+    ov.querySelectorAll("[data-m]").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
+    if (mode !== "guru") {
+      note.textContent = "Silence throughout, then the closing dhun.";
+      wheel.setValues(DHYAN_MINUTES, mins);
+      return;
+    }
+    const m = await SIT_AUDIO.mantraReady();
+    if (!m.ok) {
+      // Honest rather than silently silent: guru mode with no file on the
+      // device would just be maun wearing the wrong name.
+      note.textContent = "Guru's mantra hasn't been added to the app yet — this sitting will be silent until it is.";
+      wheel.setValues(DHYAN_MINUTES, mins);
+      return;
+    }
+    // ⚠ The mantra is PART of the sitting and must never be cut off mid-word,
+    // so guru mode cannot be set shorter than the recitation itself (plan §5).
+    const floor = Math.ceil(m.sec / 60);
+    const allowed = DHYAN_MINUTES.filter((v) => v >= floor);
+    note.textContent = `Guru's mantra (${Math.round(m.sec / 60)} min) plays first, then silence.`;
+    wheel.setValues(allowed.length ? allowed : DHYAN_MINUTES, mins);
+  }
+  ov.querySelectorAll("[data-m]").forEach((b) => b.addEventListener("click", () => {
+    mode = b.dataset.m; hapticTickHook();
+    SADHANA.setSettings({ defaultMode: mode });
+    paintMode();
+  }));
+  paintMode();
+
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector("[data-cancel]").addEventListener("click", close);
+
+  ov.querySelector("[data-begin]").addEventListener("click", async () => {
+    const minutes = wheel.value();
+    SADHANA.setSettings({ targetMin: minutes });
+    const endAt = new Date(Date.now() + minutes * 60000).toISOString();
+    SADHANA.start({ kind: "dhyan", mode, targetMin: minutes, endAt });
+    // ⚠ armed from INSIDE the tap — see SIT_AUDIO.arm().
+    const armed = await SIT_AUDIO.arm(minutes * 60000, { mode });
+    close();
+    openSitScreen(armed);
+    if (onStarted) onStarted();
+  });
+}
+
+// ---- the sitting itself -----------------------------------------------------
+// Deliberately dark and near-empty. The expected flow is: begin, then lock the
+// phone (plan §6) — so this screen is what you glance at, not what you watch.
+function openSitScreen(armed) {
+  if (document.querySelector(".dd-sit")) return;
+  const live0 = SADHANA.activeState();
+  if (!live0 || live0.a.kind !== "dhyan") return;
+
+  const R = 104, C = 2 * Math.PI * R;
+  const ov = el(`
+    <div class="dd-sit">
+      <div class="dd-sit-mode"></div>
+      <div class="dd-ring">
+        <svg viewBox="0 0 240 240" aria-hidden="true">
+          <circle class="dd-ring-bg" cx="120" cy="120" r="${R}"></circle>
+          <circle class="dd-ring-fg" cx="120" cy="120" r="${R}"
+                  stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${C.toFixed(1)}"></circle>
+        </svg>
+        <div class="dd-sit-time"></div>
+      </div>
+      <div class="dd-sit-note"></div>
+      <button class="dd-sit-end">End sitting</button>
+    </div>`);
+  document.body.appendChild(ov);
+  document.body.classList.add("dd-sitting");
+
+  const modeEl = ov.querySelector(".dd-sit-mode");
+  const timeEl = ov.querySelector(".dd-sit-time");
+  const noteEl = ov.querySelector(".dd-sit-note");
+  const ring = ov.querySelector(".dd-ring-fg");
+  modeEl.textContent = live0.a.mode === "maun" ? "Maun · silent" : "With Guru's mantra";
+  // The same line either way — whether the closing sound is the supplied dhun
+  // or the synthesized bell is not the sitter's problem, and saying so would
+  // only invite them to check on it.
+  noteEl.textContent = "You may lock the phone. The screen can stay dark.";
+
+  let done = false, timer = null;
+  const two = (n) => (n < 10 ? "0" + n : "" + n);
+
+  function paint() {
+    const live = SADHANA.activeState();
+    if (!live) { finish(true); return; }
+    const total = Math.max(1, (live.a.targetMin || 1) * 60);
+    const left = Math.max(0, live.remainSec == null ? total : live.remainSec);
+    const m = Math.floor(left / 60), s = left % 60;
+    timeEl.textContent = `${m}:${two(s)}`;
+    ring.style.strokeDashoffset = String(C * (left / total));
+    if (live.finished && !done) complete();
+  }
+
+  // The bell has rung. Record the PLANNED length, not the wall-clock gap —
+  // the sitting ended when the dhun sounded, and someone who picks the phone
+  // up four minutes later did not sit for thirty-four minutes.
+  function complete() {
+    done = true;
+    const a = SADHANA.active();
+    const rec = SADHANA.stop({ actualSec: (a && a.targetMin ? a.targetMin : 0) * 60 });
+    ov.classList.add("dd-sit-done");
+    timeEl.textContent = "🙏";
+    modeEl.textContent = "Sitting complete";
+    noteEl.textContent = rec ? "Recorded in your diary." : "";
+    ov.querySelector(".dd-sit-end").textContent = "Done";
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  function finish(silent) {
+    if (timer) { clearInterval(timer); timer = null; }
+    SIT_AUDIO.disarm();
+    ov.remove();
+    document.body.classList.remove("dd-sitting");
+    if (!silent && typeof _ddRefresh === "function") _ddRefresh();
+  }
+
+  ov.querySelector(".dd-sit-end").addEventListener("click", () => {
+    if (done) { finish(); return; }
+    // A short sitting is a real sitting (plan §1) — this records what happened
+    // rather than discarding it, so the confirm is only against a stray tap.
+    if (!confirm("End this sitting now? The time you have already sat will be recorded.")) return;
+    SADHANA.stop();
+    finish();
+  });
+
+  paint();
+  timer = setInterval(paint, 1000);
+}
+
+// ---- the on-screen bead counter --------------------------------------------
+// Plan §1. Kept, and built properly, for a reason that cannot be derived from
+// the code: **while travelling, handling the mala is not always sacred** — and
+// that is exactly when someone still wants to keep their japa. The phone is
+// what is left. It is used very often, so it is built for the hand and not for
+// the screenshot.
+//
+// It is a variant of the timed japa flow, not a separate thing: the same
+// stopwatch runs, but the count is EXACT because the app tallied it — so no
+// "how many malas?" question at the end, only a chance to correct.
+//
+// ⚠ Miscounting is what decides whether this is trusted at all. A count the
+// user suspects is wrong is worse than no count. Four defences, all here:
+// undo, a debounce, single-touch only, and a tally that survives anything.
+function openBeadCounter() {
+  if (document.querySelector(".dd-beads")) return;
+  const live0 = SADHANA.activeState();
+  if (!live0 || live0.a.kind !== "japa") return;
+
+  const PER_MALA = SADHANA.BEADS_PER_MALA;      // 108, always, in this sampradaya
+  const TAP_MS = 150;                           // see onTap()
+  let count = live0.a.beads || 0;
+  let lastTap = 0, timer = null;
+
+  // ---- the ring ------------------------------------------------------------
+  // 108 beads laid on a circle, built ONCE. Every tap then toggles a single
+  // class on a single node — with hundreds of taps a session, rebuilding the
+  // ring per bead would be the difference between crisp and laggy on a cheap
+  // phone. The sumeru sits at the top, larger, and is never counted: it is the
+  // head bead you turn back at, not one you cross.
+  const CX = 130, CY = 130, RR = 108;
+  // ⚠ The beads span 346°, not 360°, leaving a gap at the top for the sumeru.
+  // Spread over a full circle the 108th bead lands on exactly the sumeru's
+  // point and disappears under it — hiding the very bead that completes the
+  // mala. Beads run clockwise from just after the sumeru to just before it.
+  const GAP = 14, SPAN = 360 - GAP, STEP = SPAN / (PER_MALA - 1);
+  let beadSvg = "";
+  for (let i = 0; i < PER_MALA; i++) {
+    const ang = (-90 + GAP / 2 + i * STEP) * Math.PI / 180;
+    const x = CX + RR * Math.cos(ang), y = CY + RR * Math.sin(ang);
+    beadSvg += `<circle class="dd-bead" data-i="${i}" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3.1"/>`;
+  }
+
+  const ov = el(`
+    <div class="dd-beads" role="application" aria-label="Bead counter">
+      <div class="dd-beads-top">
+        <div class="dd-beads-malas"></div>
+        <div class="dd-beads-elapsed"></div>
+      </div>
+      <div class="dd-mala">
+        <div class="dd-mala-glow"></div>
+        <svg viewBox="0 0 260 260" aria-hidden="true">
+          <circle class="dd-mala-track" cx="${CX}" cy="${CY}" r="${RR}"/>
+          ${beadSvg}
+          <circle class="dd-sumeru" cx="${CX}" cy="${CY - RR}" r="6.4"/>
+        </svg>
+        <div class="dd-mala-mid">
+          <div class="dd-mala-n">0</div>
+          <div class="dd-mala-of">of ${PER_MALA}</div>
+        </div>
+      </div>
+      <div class="dd-beads-hint">Tap anywhere to count</div>
+      <div class="dd-beads-bar">
+        <button class="dd-beads-btn" data-undo>Undo</button>
+        <button class="dd-beads-btn dd-beads-done" data-finish>Finish</button>
+      </div>
+      <div class="dd-beads-flash" aria-hidden="true"></div>
+    </div>`);
+  document.body.appendChild(ov);
+  document.body.classList.add("dd-sitting");
+
+  const beads = ov.querySelectorAll(".dd-bead");
+  const nEl = ov.querySelector(".dd-mala-n");
+  const malasEl = ov.querySelector(".dd-beads-malas");
+  const elapsedEl = ov.querySelector(".dd-beads-elapsed");
+  const glow = ov.querySelector(".dd-mala-glow");
+  const flash = ov.querySelector(".dd-beads-flash");
+
+  // A just-completed mala shows a FULL ring and "108" rather than snapping
+  // straight back to 0 — the completion is the moment worth feeling, and
+  // resetting through it would erase it. The next tap starts the new round.
+  const shownInMala = () => (count > 0 && count % PER_MALA === 0) ? PER_MALA : count % PER_MALA;
+
+  function paintRing() {
+    const lit = shownInMala();
+    for (let i = 0; i < PER_MALA; i++) beads[i].classList.toggle("on", i < lit);
+    nEl.textContent = String(lit);
+    const malas = Math.floor(count / PER_MALA);
+    malasEl.textContent = malas ? `${malas} mala${malas === 1 ? "" : "s"} complete` : "";
+    glow.style.opacity = String(0.06 + 0.34 * (lit / PER_MALA));
+  }
+
+  // O(1): light or unlight exactly the beads that changed.
+  function applyDelta(prevLit, nextLit) {
+    if (nextLit > prevLit) for (let i = prevLit; i < nextLit; i++) beads[i] && beads[i].classList.add("on");
+    else for (let i = nextLit; i < prevLit; i++) beads[i] && beads[i].classList.remove("on");
+  }
+
+  function bump() {
+    nEl.classList.remove("pulse");
+    void nEl.offsetWidth;                 // restart the animation
+    nEl.classList.add("pulse");
+  }
+
+  function celebrate() {
+    flash.classList.remove("go");
+    void flash.offsetWidth;
+    flash.classList.add("go");
+    // A different, heavier haptic than a bead — completing a mala should not
+    // feel like the 107 taps before it.
+    try { if (navigator.vibrate) navigator.vibrate([18, 45, 26]); } catch (_) {}
+    if (SADHANA.settings().soundOnMala) chime();
+  }
+
+  // Synthesized, so it needs no asset and no download. Off by default: japa
+  // while travelling happens among other people (plan §1).
+  function chime() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const c = new AC();
+      const t = c.currentTime;
+      for (const [f, a, d] of [[880, .18, 1.6], [1320, .09, 1.3]]) {
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = "sine"; o.frequency.value = f;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(a, t + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+        o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + d + 0.05);
+      }
+      setTimeout(() => { try { c.close(); } catch (_) {} }, 2200);
+    } catch (_) {}
+  }
+
+  function onTap() {
+    // ⚠ Debounce. A jolt in a moving vehicle, or a bouncing double-tap, must
+    // not add two beads. 150 ms still allows ~6 a second — far faster than
+    // anyone recites, so it can never hold a real japa back.
+    const now = Date.now();
+    if (now - lastTap < TAP_MS) return;
+    lastTap = now;
+
+    const prev = shownInMala();
+    count++;
+    const next = shownInMala();
+    // Crossing 108: the ring was full, now it starts again from one.
+    if (next < prev) { for (let i = 0; i < PER_MALA; i++) beads[i].classList.remove("on"); applyDelta(0, next); }
+    else applyDelta(prev, next);
+
+    nEl.textContent = String(next);
+    const malas = Math.floor(count / PER_MALA);
+    malasEl.textContent = malas ? `${malas} mala${malas === 1 ? "" : "s"} complete` : "";
+    glow.style.opacity = String(0.06 + 0.34 * (next / PER_MALA));
+    bump();
+
+    const boundary = count % PER_MALA === 0;
+    if (boundary) celebrate(); else hapticTickHook();
+    // ⚠ Persisted on EVERY bead so dying at 253 cannot cost 253; the durable
+    // SharedPreferences write happens only at a mala boundary and on finish.
+    SADHANA.setBeads(count, boundary);
+  }
+
+  function undo() {
+    if (count <= 0) return;
+    const prev = shownInMala();
+    count--;
+    const next = shownInMala();
+    if (next > prev) { applyDelta(0, next); }    // stepped back into a full ring
+    else applyDelta(prev, next);
+    paintRing();
+    bump();
+    hapticTickHook();
+    SADHANA.setBeads(count, true);               // corrections are always worth a durable write
+  }
+
+  // ⚠ Taps land on the OVERLAY, not on the buttons — the whole screen is the
+  // target because this is used in a moving vehicle, often without looking.
+  // pointerdown (not click + touchstart) fires exactly once per press on both
+  // touch and mouse, so nothing can double-count; !isPrimary drops every extra
+  // finger, so a palm resting on the screen counts nothing.
+  ov.addEventListener("pointerdown", (e) => {
+    if (!e.isPrimary) return;
+    if (e.target.closest(".dd-beads-bar")) return;
+    onTap();
+  });
+  ov.querySelector("[data-undo]").addEventListener("click", (e) => { e.stopPropagation(); undo(); });
+  ov.querySelector("[data-finish]").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (timer) { clearInterval(timer); timer = null; }
+    SADHANA.setBeads(count, true);
+    // tally:"beads" — the app counted these, so they are exact. That is a
+    // different fact from a number the user reported afterwards, and the two
+    // are kept apart on the record (plan §1).
+    SADHANA.stop({ count, tally: count > 0 ? "beads" : null });
+    ov.remove();
+    document.body.classList.remove("dd-sitting");
+    if (typeof _ddRefresh === "function") _ddRefresh();
+  });
+
+  function tickElapsed() {
+    const live = SADHANA.activeState();
+    if (!live) return;
+    const s = live.elapsedSec, m = Math.floor(s / 60);
+    elapsedEl.textContent = m ? `${m} min` : `${s}s`;
+  }
+
+  paintRing();
+  tickElapsed();
+  timer = setInterval(() => {
+    if (!ov.isConnected) { clearInterval(timer); timer = null; return; }
+    tickElapsed();
+  }, 1000);
+}
+
+// ---- what the diary knows about a practice ---------------------------------
+// Plan §1 §8. ⚠ Consistency, never a score. Nothing here ranks the user, and a
+// day without practice is neutral — the same instinct that replaced the old
+// scolding "Negativity Zone" screen with a welcoming gate. A tracker that
+// induces guilt about sadhana is worse than no tracker.
+//
+// ⚠ Streaks are DHYAN ONLY. Japa gets totals and patterns and no streak at
+// all, by explicit operator decision ("no targets please, whatever user does,
+// he should be able to record here"). Do not give japa one later.
+//
+// Pure function of the records so it can be checked on its own.
+function sadhanaStats(sessions, todayKey) {
+  const dayMs = 86400000;
+  const prevDay = (d) => new Date(Date.parse(d + "T00:00:00Z") - dayMs).toISOString().slice(0, 10);
+  const dhyan = sessions.filter((s) => s.kind === "dhyan");
+  const japa = sessions.filter((s) => s.kind === "japa");
+  const sum = (a, f) => a.reduce((n, s) => n + (f(s) || 0), 0);
+
+  // ---- streaks (dhyan) ----
+  const dhyanDays = new Set(dhyan.map((s) => s.day));
+  // ⚠ Today not being done yet must NOT read as a broken streak — the day is
+  // still going. Counting starts at today when there is a sitting, otherwise
+  // at yesterday; the streak only ends when a whole day has passed unused.
+  let current = 0;
+  let cur = dhyanDays.has(todayKey) ? todayKey : prevDay(todayKey);
+  while (dhyanDays.has(cur)) { current++; cur = prevDay(cur); }
+
+  let longest = 0, run = 0, prev = null;
+  for (const d of [...dhyanDays].sort()) {
+    run = (prev && prevDay(d) === prev) ? run + 1 : 1;
+    if (run > longest) longest = run;
+    prev = d;
+  }
+
+  // ---- the last 30 days ----
+  const since = (n) => {
+    const out = new Set();
+    let d = todayKey;
+    for (let i = 0; i < n; i++) { out.add(d); d = prevDay(d); }
+    return out;
+  };
+  const win30 = since(30);
+  const d30 = dhyan.filter((s) => win30.has(s.day));
+  const j30 = japa.filter((s) => win30.has(s.day));
+  const daysPractised30 = new Set(d30.map((s) => s.day)).size;
+
+  // ---- usual time of sitting ----
+  // The hour the user most often begins. Local time on purpose: "I sit at five"
+  // is a fact about their morning, not about UTC.
+  const hours = new Array(24).fill(0);
+  for (const s of dhyan) { const h = new Date(s.startedAt).getHours(); if (h >= 0 && h < 24) hours[h]++; }
+  let usualHour = -1, best = 0;
+  hours.forEach((n, h) => { if (n > best) { best = n; usualHour = h; } });
+
+  const beads = sum(japa, (s) => s.count);
+  return {
+    any: sessions.length > 0,
+    dhyan: {
+      sittings: dhyan.length,
+      totalSec: sum(dhyan, (s) => s.actualSec),
+      current, longest,
+      daysPractised30,
+      avgSecOnPractisedDay: daysPractised30 ? Math.round(sum(d30, (s) => s.actualSec) / daysPractised30) : 0,
+      usualHour, usualHourCount: best,
+      guru: dhyan.filter((s) => s.mode !== "maun").length,
+      maun: dhyan.filter((s) => s.mode === "maun").length,
+    },
+    japa: {
+      sittings: japa.length,
+      totalSec: sum(japa, (s) => s.actualSec),
+      beads, malas: Math.floor(beads / 108),
+      malas30: Math.floor(sum(j30, (s) => s.count) / 108),
+      // A japa whose count was never given still happened; it is shown, not
+      // hidden, so the mala total is never quietly wrong.
+      uncounted: japa.filter((s) => s.count == null).length,
+    },
+    prevDay,
+  };
+}
+
+// The heatmap's cells, newest week last. Intensity is TOTAL practice minutes,
+// dhyan and japa together — this square is about whether the day was used at
+// all, which is the only thing a calendar can honestly show.
+function sadhanaHeat(sessions, todayKey, days) {
+  const dayMs = 86400000;
+  const byDay = new Map();
+  for (const s of sessions) {
+    const e = byDay.get(s.day) || { min: 0, dhyan: false, japa: false };
+    e.min += (s.actualSec || 0) / 60;
+    if (s.kind === "dhyan") e.dhyan = true; else e.japa = true;
+    byDay.set(s.day, e);
+  }
+  // ⚠ The run must be WHOLE weeks, Monday-first and ending on the Sunday of
+  // the current week. The caller chops it into columns of seven, so a count
+  // that is not a multiple of seven silently shifts every day-of-week down the
+  // grid and the rows stop meaning anything.
+  const end = new Date(Date.parse(todayKey + "T00:00:00Z"));
+  const tail = 6 - ((end.getUTCDay() + 6) % 7);          // days to Sunday, week starting Monday
+  const endSunday = end.getTime() + tail * dayMs;
+  const total = Math.ceil(days / 7) * 7;
+  const cells = [];
+  for (let i = total - 1; i >= 0; i--) {
+    const d = new Date(endSunday - i * dayMs).toISOString().slice(0, 10);
+    const hit = byDay.get(d);
+    cells.push({
+      day: d,
+      future: d > todayKey,
+      min: hit ? hit.min : 0,
+      level: !hit ? 0 : hit.min >= 45 ? 4 : hit.min >= 25 ? 3 : hit.min >= 10 ? 2 : 1,
+      dhyan: !!(hit && hit.dhyan), japa: !!(hit && hit.japa),
+    });
+  }
+  return cells;
+}
+
+// ---- the Progress panel -----------------------------------------------------
+// ⚠ Read plan §1 before adding anything here. No goals, no grades, no red.
+// A missed day is drawn in the same neutral tone as any other empty square.
+function dhyanProgressEl(fmtMins, dayLabel) {
+  const all = SADHANA.all();
+  const today = SADHANA.today();
+  const st = sadhanaStats(all, today);
+
+  if (!st.any) {
+    return el(`<div class="dd-empty">Once you have sat a few times, this is where the shape of your practice will show.</div>`);
+  }
+
+  const hrs = (sec) => {
+    const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+    return h ? `${h}h ${m}m` : `${m}m`;
+  };
+  const hourBand = (h) => {
+    if (h < 0) return "—";
+    const to = (n) => { const ap = n < 12 ? "AM" : "PM"; return `${n % 12 || 12} ${ap}`; };
+    return `${to(h)}–${to((h + 1) % 24)}`;
+  };
+  const cells = sadhanaHeat(all, today, 91);
+
+  // 7 rows (Mon…Sun) x N weeks. Built column-major from the padded run so a
+  // week is a column, which is what makes a streak read as a horizontal line.
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+
+  const wrap = el(`
+    <div class="dd-st">
+      <div class="dd-st-block">
+        <h4>Samarpan Dhyan</h4>
+        <div class="dd-st-grid">
+          <div class="dd-st-cell"><b>${hrs(st.dhyan.totalSec)}</b><span>in all</span></div>
+          <div class="dd-st-cell"><b>${st.dhyan.sittings}</b><span>sittings</span></div>
+          <div class="dd-st-cell"><b>${st.dhyan.current}</b><span>day streak</span></div>
+          <div class="dd-st-cell"><b>${st.dhyan.longest}</b><span>longest</span></div>
+        </div>
+        <div class="dd-st-lines">
+          <div><span>Last 30 days</span><b>${st.dhyan.daysPractised30} day${st.dhyan.daysPractised30 === 1 ? "" : "s"}${
+            st.dhyan.avgSecOnPractisedDay ? `, ${fmtMins(st.dhyan.avgSecOnPractisedDay)} on average` : ""}</b></div>
+          <div><span>You usually sit at</span><b>${hourBand(st.dhyan.usualHour)}</b></div>
+          <div><span>Mantra / Maun</span><b>${st.dhyan.guru} / ${st.dhyan.maun}</b></div>
+        </div>
+      </div>
+
+      <div class="dd-st-block">
+        <h4>Naam Reciting</h4>
+        <div class="dd-st-grid">
+          <div class="dd-st-cell"><b>${st.japa.malas}</b><span>malas</span></div>
+          <div class="dd-st-cell"><b>${st.japa.beads.toLocaleString()}</b><span>beads</span></div>
+          <div class="dd-st-cell"><b>${hrs(st.japa.totalSec)}</b><span>in all</span></div>
+          <div class="dd-st-cell"><b>${st.japa.malas30}</b><span>this month</span></div>
+        </div>
+        ${st.japa.uncounted ? `<div class="dd-st-foot">${st.japa.uncounted} sitting${
+          st.japa.uncounted === 1 ? "" : "s"} recorded without a count — the time is kept, the malas aren't guessed.</div>` : ""}
+      </div>
+
+      <div class="dd-st-block">
+        <h4>Last three months</h4>
+        <div class="dd-heat"></div>
+        <div class="dd-heat-key"><span>less</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><span>more</span></div>
+      </div>
+    </div>`);
+
+  const heat = wrap.querySelector(".dd-heat");
+  heat.replaceChildren(...weeks.map((w) => {
+    const col = document.createElement("div");
+    col.className = "dd-heat-w";
+    for (const c of w) {
+      const d = document.createElement("i");
+      d.className = "dd-heat-d l" + c.level + (c.future ? " fut" : "") + (c.day === today ? " now" : "");
+      // Title, not a visible label — the grid should read as a shape first.
+      d.title = c.future ? "" : `${dayLabel(c.day)}${c.min ? ` · ${Math.round(c.min)} min` : " · no sitting"}`;
+      col.appendChild(d);
+    }
+    return col;
+  }));
+  return wrap;
+}
+
+// ---- manual entry -----------------------------------------------------------
+// Plan §1, "the secondary path". This covers sadhana done WITHOUT the phone at
+// all — japa on the road, dhyan in satsang — typed in afterwards. The timed
+// flows are always preferable because the app measures the time itself; this
+// exists so that a sitting the app could not see is still recordable.
+//
+// ⚠ Duration is OPTIONAL for japa. Someone recording yesterday's five malas
+// usually does not know it took 23 minutes, and a form that demands one just
+// collects invented numbers — which quietly poisons the very statistics the
+// diary exists to show. "—" is a real answer here.
+function openDhyanManual(onSaved) {
+  const DAYS_BACK = 365;
+  const dayMs = 86400000;
+  const todayKey = SADHANA.today();
+  const baseMs = Date.parse(todayKey + "T00:00:00Z");
+
+  let kind = "dhyan";
+  let mode = SADHANA.settings().defaultMode === "maun" ? "maun" : "guru";
+  let offset = 0;                 // days back from today
+  let quarter = 6 * 4;            // 6:00 AM, in quarter-hours
+  let mins = SADHANA.settings().targetMin || 30;
+  let malas = 1, beads = 0, japaMin = 0;   // japaMin 0 == "not recorded"
+
+  const dayKeyOf = (off) => new Date(baseMs - off * dayMs).toISOString().slice(0, 10);
+  const dayLabelOf = (off) => {
+    if (off === 0) return "Today";
+    if (off === 1) return "Yesterday";
+    return new Date(baseMs - off * dayMs).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  };
+  const timeLabel = (qh) => {
+    const h = Math.floor(qh / 4), m = (qh % 4) * 15, ap = h < 12 ? "AM" : "PM";
+    return `${h % 12 || 12}:${m < 10 ? "0" + m : m} ${ap}`;
+  };
+  // The instant the sitting began, built in LOCAL time from the chosen day and
+  // clock — the record's effective day is then derived from it like any other.
+  function startedAtOf() {
+    const d = new Date(baseMs - offset * dayMs);
+    const local = new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(),
+                           Math.floor(quarter / 4), (quarter % 4) * 15, 0, 0);
+    return local;
+  }
+
+  const DUR = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 75, 90, 105, 120, 150, 180];
+  const JDUR = [0].concat(DUR);
+  const OFFSETS = Array.from({ length: DAYS_BACK }, (_, i) => i);
+  const QUARTERS = Array.from({ length: 96 }, (_, i) => i);
+  const MALAS = Array.from({ length: 109 }, (_, i) => i);       // 0 allowed: beads only
+  const BEADS = Array.from({ length: 108 }, (_, i) => i);
+
+  const ov = el(`
+    <div class="dd-sheet-ov">
+      <div class="dd-sheet dd-man" role="dialog" aria-label="Add a past sitting">
+        <div class="dd-sheet-h">Add a sitting</div>
+        <div class="dd-modes" role="group" aria-label="What">
+          <button class="dd-mode" data-k="dhyan">Samarpan Dhyan</button>
+          <button class="dd-mode" data-k="japa">Naam Reciting</button>
+        </div>
+        <div class="dd-man-body"></div>
+        <div class="dd-man-when" data-when></div>
+        <div class="dd-sheet-btns">
+          <button class="btn" data-cancel>Cancel</button>
+          <button class="btn primary" data-save>Save</button>
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(ov);
+  const body = ov.querySelector(".dd-man-body");
+  const when = ov.querySelector("[data-when]");
+
+  const wheelBox = (label, cls) =>
+    `<div class="dd-man-w"><div class="dd-man-lab">${label}</div>
+       <div class="dd-spin"><div class="m-dp-selrow" aria-hidden="true"></div>
+         <div class="m-dp-wheel ${cls}"></div></div></div>`;
+
+  function refreshWhen() {
+    const at = startedAtOf();
+    const derived = SADHANA.dayOf(at);
+    const nice = new Date(derived + "T12:00:00Z").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
+    // ⚠ Shown because the two can honestly differ: the diary's day rolls at
+    // 3:30 AM (§3), so a 2 AM sitting belongs to the day before. Better to say
+    // where it will land than to let someone discover it in the list later.
+    when.textContent = at > new Date()
+      ? "That time hasn't happened yet."
+      : `Will be recorded under ${nice}.`;
+    when.classList.toggle("bad", at > new Date());
+  }
+
+  function paint() {
+    ov.querySelectorAll("[data-k]").forEach((b) => b.classList.toggle("on", b.dataset.k === kind));
+    body.innerHTML = kind === "dhyan"
+      ? `<div class="dd-man-row">${wheelBox("Day", "w-day")}</div>
+         <div class="dd-man-row">${wheelBox("Started", "w-time")}${wheelBox("Minutes", "w-dur")}</div>
+         <div class="dd-modes dd-man-modes" role="group" aria-label="Mode">
+           <button class="dd-mode${mode === "guru" ? " on" : ""}" data-m="guru">Guru's mantra</button>
+           <button class="dd-mode${mode === "maun" ? " on" : ""}" data-m="maun">Maun</button>
+         </div>`
+      : `<div class="dd-man-row">${wheelBox("Day", "w-day")}</div>
+         <div class="dd-man-row">${wheelBox("Malas", "w-mala")}${wheelBox("+ beads", "w-bead")}</div>
+         <div class="dd-man-row">${wheelBox("Started", "w-time")}${wheelBox("Minutes", "w-jdur")}</div>`;
+
+    makeWheel(body.querySelector(".w-day"), { values: OFFSETS, value: offset, format: dayLabelOf,
+      onChange: (v) => { offset = v; refreshWhen(); } });
+    makeWheel(body.querySelector(".w-time"), { values: QUARTERS, value: quarter, format: timeLabel,
+      onChange: (v) => { quarter = v; refreshWhen(); } });
+
+    if (kind === "dhyan") {
+      makeWheel(body.querySelector(".w-dur"), { values: DUR, value: DUR.includes(mins) ? mins : 30,
+        format: (v) => String(v), onChange: (v) => { mins = v; } });
+      body.querySelectorAll("[data-m]").forEach((b) => b.addEventListener("click", () => {
+        mode = b.dataset.m; hapticTickHook(); paint();
+      }));
+    } else {
+      makeWheel(body.querySelector(".w-mala"), { values: MALAS, value: malas, format: (v) => String(v),
+        onChange: (v) => { malas = v; } });
+      makeWheel(body.querySelector(".w-bead"), { values: BEADS, value: beads, format: (v) => String(v),
+        onChange: (v) => { beads = v; } });
+      makeWheel(body.querySelector(".w-jdur"), { values: JDUR, value: japaMin,
+        format: (v) => (v ? String(v) : "—"), onChange: (v) => { japaMin = v; } });
+    }
+    refreshWhen();
+  }
+
+  ov.querySelectorAll("[data-k]").forEach((b) => b.addEventListener("click", () => {
+    if (kind === b.dataset.k) return;
+    kind = b.dataset.k; hapticTickHook(); paint();
+  }));
+  paint();
+
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector("[data-cancel]").addEventListener("click", close);
+
+  ov.querySelector("[data-save]").addEventListener("click", () => {
+    const at = startedAtOf();
+    // The wheel cannot offer a future DAY, but it can offer a future hour on
+    // today. Storage would reject it anyway; saying so is kinder than a
+    // silently missing entry.
+    if (at > new Date()) { toast("That time hasn't happened yet."); return; }
+
+    let rec;
+    if (kind === "dhyan") {
+      rec = SADHANA.add({ kind: "dhyan", startedAt: at.toISOString(), actualSec: mins * 60,
+                          mode, targetMin: mins, source: "manual" });
+    } else {
+      const total = malas * SADHANA.BEADS_PER_MALA + beads;
+      if (!total) { toast("Set how many malas you did."); return; }
+      rec = SADHANA.add({ kind: "japa", startedAt: at.toISOString(),
+                          // ⚠ 0 means "not recorded", not "zero minutes" — the
+                          // stats must not read a blank as an instant sitting.
+                          actualSec: japaMin ? japaMin * 60 : 0,
+                          count: total, tally: "stated", source: "manual" });
+    }
+    close();
+    if (!rec) { toast("Couldn't save that entry."); return; }
+    toast("Added to your diary.");
+    if (onSaved) onSaved();
+  });
+}
+
+// The editor for one reminder. Wheels again, so the whole diary is set the
+// same way — nothing here needs a keyboard.
+function openReminderEditor(existing, onSave) {
+  let hour = existing ? existing.hour : 5;
+  let minute = existing ? existing.minute : 0;
+  let leadMin = existing ? existing.leadMin : 15;
+
+  const HOURS = Array.from({ length: 24 }, (_, i) => i);
+  const MINS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+  const LEADS = [5, 10, 15, 20, 30, 45, 60];
+  const hLabel = (h) => `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`;
+  const two = (n) => (n < 10 ? "0" + n : "" + n);
+
+  const ov = el(`
+    <div class="dd-sheet-ov">
+      <div class="dd-sheet dd-man" role="dialog" aria-label="Sitting reminder">
+        <div class="dd-sheet-h">${existing ? "Edit reminder" : "Remind me to sit"}</div>
+        <div class="dd-man-row">
+          <div class="dd-man-w"><div class="dd-man-lab">Hour</div>
+            <div class="dd-spin"><div class="m-dp-selrow"></div><div class="m-dp-wheel w-h"></div></div></div>
+          <div class="dd-man-w"><div class="dd-man-lab">Minute</div>
+            <div class="dd-spin"><div class="m-dp-selrow"></div><div class="m-dp-wheel w-m"></div></div></div>
+          <div class="dd-man-w"><div class="dd-man-lab">Warn me</div>
+            <div class="dd-spin"><div class="m-dp-selrow"></div><div class="m-dp-wheel w-l"></div></div></div>
+        </div>
+        <div class="dd-man-when" data-when></div>
+        <div class="dd-sheet-btns">
+          <button class="btn" data-cancel>Cancel</button>
+          <button class="btn primary" data-ok>Save</button>
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(ov);
+  const when = ov.querySelector("[data-when]");
+  const refresh = () => {
+    const n = DHYAN_REMIND.notifyAt({ hour, minute, leadMin });
+    when.textContent = `Sitting at ${hLabel(hour).replace(" ", ":" + two(minute) + " ")} — you'll be nudged at ${hLabel(n.hour).replace(" ", ":" + two(n.minute) + " ")}.`;
+  };
+  makeWheel(ov.querySelector(".w-h"), { values: HOURS, value: hour, format: hLabel, onChange: (v) => { hour = v; refresh(); } });
+  makeWheel(ov.querySelector(".w-m"), { values: MINS, value: MINS.includes(minute) ? minute : 0, format: two, onChange: (v) => { minute = v; refresh(); } });
+  makeWheel(ov.querySelector(".w-l"), { values: LEADS, value: LEADS.includes(leadMin) ? leadMin : 15, format: (v) => v + " min", onChange: (v) => { leadMin = v; refresh(); } });
+  refresh();
+
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector("[data-cancel]").addEventListener("click", close);
+  ov.querySelector("[data-ok]").addEventListener("click", () => {
+    close();
+    onSave({ hour, minute, leadMin, on: true });
+  });
+}
+
+function ddRemindersEl(onChanged) {
+  const two = (n) => (n < 10 ? "0" + n : "" + n);
+  const clock = (h, m) => `${h % 12 || 12}:${two(m)} ${h < 12 ? "AM" : "PM"}`;
+  const rs = DHYAN_REMIND.list();
+  const wrap = el(`
+    <div class="dd-backup dd-rem">
+      <div class="dd-backup-h">Sitting reminder</div>
+      <div class="dd-rem-list"></div>
+      ${rs.length < DHYAN_REMIND.MAX ? `<button class="btn dd-rem-add" data-add>+ Remind me to sit</button>` : ""}
+      <div class="dd-backup-note" data-note></div>
+    </div>`);
+  const list = wrap.querySelector(".dd-rem-list");
+
+  if (!rs.length) {
+    list.replaceChildren(el(`<div class="dd-rem-none">Set the time you mean to sit, and you'll be nudged a little before it — time enough to finish what you're doing.</div>`));
+  } else {
+    list.replaceChildren(...rs.map((r, i) => {
+      const n = DHYAN_REMIND.notifyAt(r);
+      const row = el(`
+        <div class="dd-rem-row${r.on ? "" : " off"}">
+          <button class="dd-rem-main" data-edit="${i}">
+            <div class="dd-rem-t">${clock(r.hour, r.minute)}</div>
+            <div class="dd-rem-s">nudge at ${clock(n.hour, n.minute)} · ${r.leadMin} min before</div>
+          </button>
+          <button class="dd-rem-tog" data-tog="${i}" aria-label="${r.on ? "Turn off" : "Turn on"}">${r.on ? "on" : "off"}</button>
+          <button class="dd-del" data-rem="${i}" aria-label="Remove">✕</button>
+        </div>`);
+      return row;
+    }));
+  }
+
+  const note = wrap.querySelector("[data-note]");
+  if (!DHYAN_REMIND.available()) {
+    note.textContent = "Reminders work in the phone app. On a computer this is only a setting.";
+  } else {
+    // ⚠ Said plainly rather than failing silently: someone who refused
+    // notifications has no reminder, and a switch that looks on while nothing
+    // ever arrives is worse than no switch.
+    DHYAN_REMIND.permission().then((p) => {
+      note.textContent = p === "granted"
+        ? "You'll be nudged each day at this time."
+        : "Notifications are switched off for this app, so no reminder can arrive. Turn them on in Android's app settings.";
+    });
+  }
+
+  const commit = async (rs2) => { await DHYAN_REMIND.save(rs2); onChanged(); };
+  wrap.querySelectorAll("[data-add]").forEach((b) => b.addEventListener("click", () =>
+    openReminderEditor(null, (r) => commit(rs.concat([r])))));
+  wrap.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => {
+    const i = +b.dataset.edit;
+    openReminderEditor(rs[i], (r) => { const c = rs.slice(); c[i] = Object.assign({}, r, { on: rs[i].on }); commit(c); });
+  }));
+  wrap.querySelectorAll("[data-tog]").forEach((b) => b.addEventListener("click", () => {
+    const i = +b.dataset.tog, c = rs.slice();
+    c[i] = Object.assign({}, c[i], { on: !c[i].on });
+    hapticTickHook(); commit(c);
+  }));
+  wrap.querySelectorAll("[data-rem]").forEach((b) => b.addEventListener("click", () => {
+    const i = +b.dataset.rem;
+    commit(rs.filter((_, k) => k !== i));
+  }));
+  return wrap;
+}
+
+// ---- the sitting reminder ---------------------------------------------------
+// Plan §7. The ONE notification this feature has, and the deliberate opposite
+// of §6: BEFORE a sitting the user has asked to be interrupted; during and at
+// the end of one, nothing at all. Keep that boundary — do not add a
+// notification anywhere near the sit itself.
+//
+// The lead time is the whole idea. A nudge AT seven o'clock interrupts you into
+// stillness; a nudge at a quarter to lets you wind down and arrive.
+const DHYAN_REMIND = (() => {
+  // Its own id range so nothing here can collide with another notification the
+  // app schedules later. Cancels are by explicit id for the same reason —
+  // cancelling "all" would be someone else's bug one day.
+  const BASE_ID = 41001, MAX = 3;
+
+  const LN = () => {
+    const P = window.Capacitor && window.Capacitor.Plugins;
+    return (P && P.LocalNotifications) || null;
+  };
+  const available = () => !!LN();
+
+  // ⚠ A notification's words are fixed when it is SCHEDULED, not when it is
+  // shown. Someone who switches the app to English would otherwise keep being
+  // reminded in Hindi until the reminder happened to be re-armed — which is
+  // one of the reasons sync() runs on every launch.
+  function words() {
+    let en = false;
+    try { en = HindiType.mode() === "en"; } catch (_) {}
+    return en
+      ? { title: "Dhyan time", body: "Wrap up things quickly for Dhyan time." }
+      : { title: "ध्यान का समय", body: "ध्यान के समय के लिए चीजों को जल्दी से समाप्त करें।" };
+  }
+
+  // The clock the notification fires at — the sitting time, less the lead.
+  function notifyAt(r) {
+    let m = r.hour * 60 + r.minute - (r.leadMin || 0);
+    m = ((m % 1440) + 1440) % 1440;              // wraps back across midnight
+    return { hour: Math.floor(m / 60), minute: m % 60 };
+  }
+
+  const list = () => (SADHANA.settings().reminders || []).slice(0, MAX);
+
+  async function permission() {
+    const ln = LN();
+    if (!ln) return "unavailable";
+    try {
+      let p = await ln.checkPermissions();
+      if (p && p.display === "prompt") p = await ln.requestPermissions();
+      return (p && p.display) || "unknown";
+    } catch (_) { return "unknown"; }
+  }
+
+  // ⚠ Re-armed on EVERY launch, not only when edited. Idempotent and cheap, and
+  // it is what covers a reboot, a timezone change, a language switch, and any
+  // shell whose pending notifications were cleared out from under it.
+  async function sync() {
+    const ln = LN();
+    if (!ln) return false;
+    const rs = list();
+    try {
+      await ln.cancel({ notifications: Array.from({ length: MAX }, (_, i) => ({ id: BASE_ID + i })) });
+    } catch (_) {}
+    const on = rs.filter((r) => r && r.on);
+    if (!on.length) return true;
+    if ((await permission()) !== "granted") return false;
+    const w = words();
+    try {
+      await ln.schedule({
+        notifications: rs.map((r, i) => (r && r.on ? {
+          id: BASE_ID + i,
+          title: w.title,
+          body: w.body,
+          // allowWhileIdle so Doze cannot swallow it outright. Exactness is not
+          // required and is deliberately not asked for — see §6/§7; a wind-down
+          // cue that drifts a few minutes is still a wind-down cue.
+          schedule: { on: notifyAt(r), repeats: true, allowWhileIdle: true },
+          extra: { route: "#/m/dhyan" },
+        } : null)).filter(Boolean),
+      });
+      return true;
+    } catch (_) { return false; }
+  }
+
+  // Tapping the reminder should land on the diary ready to begin, not on home.
+  function bindTap() {
+    const ln = LN();
+    if (!ln || !ln.addListener) return;
+    try {
+      ln.addListener("localNotificationActionPerformed", (a) => {
+        const id = a && a.notification && a.notification.id;
+        if (typeof id !== "number" || id < BASE_ID || id >= BASE_ID + MAX) return;
+        location.hash = MOBILE_UI.active ? "#/m/dhyan" : "#/dhyan";
+      });
+    } catch (_) {}
+  }
+
+  async function save(rs) {
+    SADHANA.setSettings({ reminders: rs.slice(0, MAX) });
+    return sync();
+  }
+
+  return { available, list, save, sync, bindTap, permission, notifyAt, MAX };
+})();
+
+// ---- the shareable report ---------------------------------------------------
+// Plan §9. Drawn on a <canvas> and exported as a PNG: zero new dependencies,
+// full control of the look, and an image is what this audience actually shares.
+// Deliberately NOT a screenshot — it carries the diary's own palette so it
+// reads as something the app made on purpose.
+//
+// ⚠ This is the ONE place a sadhana record is meant to leave the device, and
+// only ever because the user pressed the button. Nothing here uploads.
+const DD_REPORT_RANGES = [
+  { key: "month",  label: "This month" },
+  { key: "quarter", label: "Last 3 months" },
+  { key: "year",   label: "This year" },
+  { key: "all",    label: "Everything" },
+];
+
+function ddRangeBounds(key, todayKey) {
+  const dayMs = 86400000;
+  const back = (n) => new Date(Date.parse(todayKey + "T00:00:00Z") - n * dayMs).toISOString().slice(0, 10);
+  if (key === "month")   return { from: todayKey.slice(0, 8) + "01", to: todayKey };
+  if (key === "quarter") return { from: back(90), to: todayKey };
+  if (key === "year")    return { from: todayKey.slice(0, 4) + "-01-01", to: todayKey };
+  return { from: "0000-00-00", to: todayKey };
+}
+
+function ddRangeTitle(key, from, to) {
+  const nice = (d, o) => { try { return new Date(d + "T12:00:00Z").toLocaleDateString(undefined, o); } catch { return d; } };
+  if (key === "month")   return nice(to, { month: "long", year: "numeric" });
+  if (key === "year")    return to.slice(0, 4);
+  if (key === "all")     return "All of it";
+  return `${nice(from, { day: "numeric", month: "short" })} — ${nice(to, { day: "numeric", month: "short", year: "numeric" })}`;
+}
+
+// ⚠ Rounded rects are drawn by hand. ctx.roundRect() is recent and the APK's
+// WebView on an older phone may not have it — and a missing method here would
+// throw in the middle of drawing, losing the whole report rather than one
+// corner radius.
+function ddRR(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+// Does this engine actually shape Devanagari on a canvas? Plan §9 asks for this
+// to be checked rather than assumed: a conjunct that renders as boxes or as
+// broken matras would look worse than plain English. Measured, not guessed —
+// if the script is unsupported the glyphs collapse to a notdef width that does
+// not scale with the string.
+function ddCanDrawDevanagari() {
+  try {
+    const c = document.createElement("canvas").getContext("2d");
+    c.font = '40px system-ui, sans-serif';
+    const one = c.measureText("ध").width;
+    const many = c.measureText("ध्यान साधना").width;
+    return one > 4 && many > one * 2.2;
+  } catch (_) { return false; }
+}
+
+function drawDhyanReport(rangeKey) {
+  const W = 1080, H = 1500;
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d");
+
+  const INK = "#2a2730", MUTED = "#8b8794", ACCENT = "#d9662a", CREAM = "#fdf8f2", CARD = "#ffffff";
+  const F = (w, s) => `${w} ${s}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  const todayKey = SADHANA.today();
+  const { from, to } = ddRangeBounds(rangeKey, todayKey);
+  const all = SADHANA.all();
+  const inRange = all.filter((s) => s.day >= from && s.day <= to);
+  const life = sadhanaStats(all, todayKey);
+
+  const dhyan = inRange.filter((s) => s.kind === "dhyan");
+  const japa = inRange.filter((s) => s.kind === "japa");
+  const totalSec = dhyan.reduce((a, s) => a + (s.actualSec || 0), 0);
+  const beads = japa.reduce((a, s) => a + (s.count || 0), 0);
+  const daysPractised = new Set(dhyan.map((s) => s.day)).size;
+
+  // ---- ground ----
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#fffdf9"); g.addColorStop(1, CREAM);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "rgba(217,102,42,.07)";
+  ctx.beginPath(); ctx.arc(W - 60, -60, 300, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(20, H + 40, 240, 0, Math.PI * 2); ctx.fill();
+
+  ctx.textAlign = "center";
+  let y = 120;
+  ctx.fillStyle = MUTED; ctx.font = F(600, 26);
+  ctx.fillText("S A M A R P A N   U P A N I S H A D", W / 2, y);
+  y += 78;
+  ctx.fillStyle = INK; ctx.font = F(300, 62);
+  ctx.fillText("Personal Dhyan Diary", W / 2, y);
+  if (ddCanDrawDevanagari()) {
+    y += 64;
+    ctx.fillStyle = ACCENT; ctx.font = F(400, 40);
+    ctx.fillText("ध्यान साधना", W / 2, y);
+  }
+  y += 76;
+  ctx.fillStyle = ACCENT; ctx.font = F(600, 38);
+  ctx.fillText(ddRangeTitle(rangeKey, from, to), W / 2, y);
+
+  // ---- the three figures ----
+  const hrs = Math.floor(totalSec / 3600), mns = Math.round((totalSec % 3600) / 60);
+  const cards = [
+    { big: hrs ? `${hrs}h ${mns}m` : `${mns}m`, small: "IN DHYAN" },
+    { big: String(dhyan.length), small: dhyan.length === 1 ? "SITTING" : "SITTINGS" },
+    { big: String(daysPractised), small: daysPractised === 1 ? "DAY" : "DAYS" },
+  ];
+  y += 56;
+  const cw = 296, gap = 24, cx0 = (W - (cw * 3 + gap * 2)) / 2, ch = 168;
+  cards.forEach((c, i) => {
+    const x = cx0 + i * (cw + gap);
+    ctx.fillStyle = CARD; ddRR(ctx, x, y, cw, ch, 26); ctx.fill();
+    ctx.strokeStyle = "#f0ece4"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = INK; ctx.font = F(600, 54);
+    ctx.fillText(c.big, x + cw / 2, y + 92);
+    ctx.fillStyle = MUTED; ctx.font = F(600, 22);
+    ctx.fillText(c.small, x + cw / 2, y + 132);
+  });
+  y += ch + 66;
+
+  // ---- the calendar ----
+  // A month-shaped grid while the range is short enough to read, and weeks as
+  // columns once it is not — a year drawn as 52 rows would be unreadable.
+  const dayMs = 86400000;
+  const startMs = Date.parse((from === "0000-00-00" ? (all.length ? all[all.length - 1].day : todayKey) : from) + "T00:00:00Z");
+  const endMs = Date.parse(to + "T00:00:00Z");
+  const byDay = new Map();
+  for (const s of inRange) byDay.set(s.day, (byDay.get(s.day) || 0) + (s.actualSec || 0) / 60);
+  const shade = (m) => !m ? "#efe9e0" : m >= 45 ? "#c4551b" : m >= 25 ? "#e2823c" : m >= 10 ? "#f0ab72" : "#f6d3b4";
+
+  // ⚠ Worked out BEFORE the calendar is drawn, because the calendar's budget is
+  // whatever these leave behind. Deciding the grid size first and discovering
+  // the lines did not fit is how the drawing ran off the bottom of the canvas —
+  // and nothing clips a canvas, so it fails silently.
+  const hourBand = (h) => { if (h < 0) return null; const t = (n) => `${n % 12 || 12} ${n < 12 ? "AM" : "PM"}`; return `${t(h)} – ${t((h + 1) % 24)}`; };
+  const lines = [];
+  if (beads) lines.push(["Naam reciting", `${Math.floor(beads / 108)} malas`]);
+  if (life.dhyan.usualHour >= 0) lines.push(["You usually sit at", hourBand(life.dhyan.usualHour)]);
+  if (life.dhyan.current) lines.push(["Current streak", `${life.dhyan.current} day${life.dhyan.current === 1 ? "" : "s"}`]);
+  if (dhyan.length) lines.push(["Mantra / Maun", `${dhyan.filter((s) => s.mode !== "maun").length} / ${dhyan.filter((s) => s.mode === "maun").length}`]);
+  const LINE_H = 62, FOOT_TOP = H - 150;
+
+  ctx.fillStyle = MUTED; ctx.font = F(600, 24);
+  ctx.fillText("P R A C T I C E", W / 2, y);
+  y += 44;
+
+  const totalDays = Math.round((endMs - startMs) / dayMs) + 1;
+  const firstDow = (new Date(startMs).getUTCDay() + 6) % 7;         // Monday = 0
+  const weeks = Math.ceil((totalDays + firstDow) / 7);
+
+  // The calendar gets exactly the room the lines and footer leave it. The month
+  // grid is the nicer drawing, so it is kept while its cells stay legible; past
+  // that the weeks-as-columns strip takes over, which grows sideways instead of
+  // down and so fits any span at all.
+  const calTop = y;
+  const CAL_BUDGET = Math.max(120, FOOT_TOP - calTop - 30 - lines.length * LINE_H);
+  const pad = 14;
+  const cell = Math.min(96, Math.floor(CAL_BUDGET / weeks) - pad);
+  if (weeks <= 6 && cell >= 40) {
+    const gw = 7 * cell + 6 * pad;
+    const gx = (W - gw) / 2;
+    for (let i = 0; i < totalDays; i++) {
+      const d = new Date(startMs + i * dayMs).toISOString().slice(0, 10);
+      const idx = i + firstDow, col = idx % 7, row = Math.floor(idx / 7);
+      const x = gx + col * (cell + pad), yy = y + row * (cell + pad);
+      ctx.fillStyle = shade(byDay.get(d) || 0);
+      ddRR(ctx, x, yy, cell, cell, 20); ctx.fill();
+      ctx.fillStyle = (byDay.get(d) || 0) >= 25 ? "rgba(255,255,255,.92)" : "#a9a29a";
+      ctx.font = F(600, Math.round(cell * 0.31));
+      ctx.fillText(String(Number(d.slice(8, 10))), x + cell / 2, yy + cell / 2 + cell * 0.11);
+    }
+    y = calTop + weeks * (cell + pad) + 30;
+  } else {
+    const sPad = 4;
+    const sCell = Math.max(8, Math.min(20, Math.floor((W - 160) / weeks) - sPad));
+    const gw = weeks * (sCell + sPad), gx = (W - gw) / 2;
+    for (let i = 0; i < totalDays; i++) {
+      const d = new Date(startMs + i * dayMs).toISOString().slice(0, 10);
+      const idx = i + firstDow, col = Math.floor(idx / 7), row = idx % 7;
+      ctx.fillStyle = shade(byDay.get(d) || 0);
+      ddRR(ctx, gx + col * (sCell + sPad), y + row * (sCell + sPad), sCell, sCell, 4); ctx.fill();
+    }
+    y = calTop + 7 * (sCell + sPad) + 34;
+  }
+
+  // ---- the lines ----
+  const lx = 130, lw = W - 260;
+  for (const [k, v] of lines.slice(0, 4)) {
+    ctx.textAlign = "left";  ctx.fillStyle = MUTED; ctx.font = F(400, 30); ctx.fillText(k, lx, y);
+    ctx.textAlign = "right"; ctx.fillStyle = INK;   ctx.font = F(600, 30); ctx.fillText(v, lx + lw, y);
+    ctx.strokeStyle = "#efe9e0"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(lx, y + 22); ctx.lineTo(lx + lw, y + 22); ctx.stroke();
+    y += 62;
+  }
+
+  // ---- foot ----
+  ctx.textAlign = "center";
+  ctx.fillStyle = MUTED; ctx.font = F(400, 24);
+  ctx.fillText("Kept privately on this device", W / 2, H - 96);
+  ctx.fillStyle = "#c9c3bb"; ctx.font = F(400, 22);
+  ctx.fillText(new Date(todayKey + "T12:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }), W / 2, H - 58);
+  // Where the drawing actually ended, so a layout regression can be caught by
+  // measuring instead of by squinting at the picture.
+  cv.__endY = y;
+  return cv;
+}
+
+function ddReportName(rangeKey) {
+  return "samarpan-dhyan-" + (rangeKey === "all" ? "all" : rangeKey) + "-" + SADHANA.today() + ".png";
+}
+
+function ddCanvasToBlob(cv) {
+  return new Promise((res, rej) => {
+    if (cv.toBlob) cv.toBlob((b) => (b ? res(b) : rej(new Error("couldn't render the image"))), "image/png");
+    else { try { res(ddDataUriToBlob(cv.toDataURL("image/png"))); } catch (e) { rej(e); } }
+  });
+}
+function ddDataUriToBlob(uri) {
+  const [head, b64] = uri.split(",");
+  const bin = atob(b64), arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: (head.match(/:(.*?);/) || [])[1] || "image/png" });
+}
+
+// ⚠ Same split as the backup file: a plain <a download> does not work inside
+// the Android WebView. On a phone the PNG goes to the gallery AND the share
+// sheet, because a report is something you both keep and send.
+async function ddSaveReport(cv, filename) {
+  const blob = await ddCanvasToBlob(cv);
+  if (_ddNative()) {
+    const P = window.Capacitor.Plugins;
+    const dataUri = await new Promise((res, rej) => {
+      const r = new FileReader(); r.onloadend = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob);
+    });
+    const path = "wa-share/" + filename;
+    await P.Filesystem.writeFile({ path, data: String(dataUri).split(",")[1], directory: "CACHE", recursive: true });
+    const { uri } = await P.Filesystem.getUri({ path, directory: "CACHE" });
+    await P.Share.share({ title: "My sadhana", text: "Personal Dhyan Diary", files: [uri], dialogTitle: "Share your report" });
+    return "shared";
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return "downloaded";
+}
+
+function openDhyanReport() {
+  let range = "month";
+  const ov = el(`
+    <div class="dd-sheet-ov">
+      <div class="dd-sheet dd-rep" role="dialog" aria-label="Make a report">
+        <div class="dd-sheet-h">Report</div>
+        <div class="dd-rep-chips">${DD_REPORT_RANGES.map((r) =>
+          `<button class="dd-rep-chip" data-r="${r.key}">${escapeHtml(r.label)}</button>`).join("")}</div>
+        <div class="dd-rep-prev"><canvas></canvas></div>
+        <div class="dd-sheet-btns">
+          <button class="btn" data-cancel>Close</button>
+          <button class="btn primary" data-save>Save image</button>
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(ov);
+  const holder = ov.querySelector(".dd-rep-prev");
+
+  function paint() {
+    ov.querySelectorAll("[data-r]").forEach((b) => b.classList.toggle("on", b.dataset.r === range));
+    const cv = drawDhyanReport(range);
+    cv.style.width = "100%"; cv.style.height = "auto";
+    holder.replaceChildren(cv);
+  }
+  ov.querySelectorAll("[data-r]").forEach((b) => b.addEventListener("click", () => {
+    range = b.dataset.r; hapticTickHook(); paint();
+  }));
+  paint();
+
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector("[data-cancel]").addEventListener("click", close);
+  ov.querySelector("[data-save]").addEventListener("click", async () => {
+    const btn = ov.querySelector("[data-save]");
+    btn.disabled = true;
+    try {
+      const how = await ddSaveReport(drawDhyanReport(range), ddReportName(range));
+      close();
+      toast(how === "shared" ? "Your report is ready to share." : "Report saved.");
+    } catch (err) {
+      btn.disabled = false;
+      toast("Couldn't make the image: " + ((err && err.message) || "please try again."));
+    }
+  });
+}
+
+// ---- backup: getting the diary off the phone, and back on -------------------
+// Plan §9. ⚠ This ships WITH the first version, not after it. A tracker whose
+// restore path arrives in a later release exposes exactly the people with the
+// least to lose now and the most to lose in a year.
+//
+// The file is plain, readable, indented JSON by operator decision — "nothing to
+// hide here". It stays recoverable by hand years from now even if this app has
+// changed beyond recognition, which is the whole point of a backup.
+
+const _ddNative = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+
+// ⚠ A plain <a download> does not work inside the Android WebView — the same
+// reason the image viewer uses Share rather than the web APIs. On a phone the
+// file is staged in CACHE and handed to the system share sheet, which is what
+// lets someone put it in Drive, Files or a chat with themselves.
+async function dhyanSaveText(filename, text) {
+  if (_ddNative()) {
+    const P = window.Capacitor.Plugins;
+    if (!P || !P.Filesystem || !P.Share) throw new Error("sharing isn't available on this device");
+    const path = "wa-share/" + filename;
+    await P.Filesystem.writeFile({ path, data: text, directory: "CACHE", encoding: "utf8", recursive: true });
+    const { uri } = await P.Filesystem.getUri({ path, directory: "CACHE" });
+    await P.Share.share({ title: filename, text: "Personal Dhyan Diary backup", files: [uri], dialogTitle: "Save your diary" });
+    return "shared";
+  }
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return "downloaded";
+}
+
+async function dhyanExport() {
+  try {
+    const how = await dhyanSaveText(SADHANA.exportName(), SADHANA.exportText());
+    const n = SADHANA.all().length;
+    toast(how === "shared"
+      ? `${n} sitting${n === 1 ? "" : "s"} ready to save.`
+      : `Saved ${SADHANA.exportName()} — ${n} sitting${n === 1 ? "" : "s"}.`);
+  } catch (err) {
+    toast("Couldn't export: " + ((err && err.message) || "please try again."));
+  }
+}
+
+// ⚠ Always PREVIEWS before applying. The file is user-supplied, so picking the
+// wrong one must be a cancelled dialog and not a mystery.
+function openDhyanImportPreview(text, onDone) {
+  const res = SADHANA.inspectImport(text);
+  const fmtDay = (d) => { try { return new Date(d + "T12:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }); } catch { return d; } };
+
+  const body = res.ok ? (() => {
+    const s = res.summary;
+    return `
+      <div class="dd-imp-n">${s.total}</div>
+      <div class="dd-imp-sub">sitting${s.total === 1 ? "" : "s"} in this file</div>
+      <div class="dd-imp-range">${escapeHtml(fmtDay(s.from))} — ${escapeHtml(fmtDay(s.to))}</div>
+      <div class="dd-imp-lines">
+        <div><span>New to this diary</span><b>${s.fresh}</b></div>
+        <div><span>Updated</span><b>${s.updated}</b></div>
+        <div><span>Already here</span><b>${s.duplicate}</b></div>
+      </div>
+      <div class="dd-imp-note">Your existing sittings are kept — this only adds what is missing.</div>`;
+  })() : `<div class="dd-imp-err">${escapeHtml(res.error)}</div>`;
+
+  const ov = el(`
+    <div class="dd-sheet-ov">
+      <div class="dd-sheet" role="dialog" aria-label="Restore from a backup">
+        <div class="dd-sheet-h">Restore from backup</div>
+        <div class="dd-imp">${body}</div>
+        <div class="dd-sheet-btns">
+          <button class="btn" data-cancel>${res.ok ? "Cancel" : "Close"}</button>
+          ${res.ok ? `<button class="btn primary" data-merge>Merge into my diary</button>` : ""}
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector("[data-cancel]").addEventListener("click", close);
+  const go = ov.querySelector("[data-merge]");
+  if (go) go.addEventListener("click", async () => {
+    go.disabled = true;
+    const r = await SADHANA.applyImport(res.payload);
+    close();
+    toast(r && r.added ? `Restored ${r.added} sitting${r.added === 1 ? "" : "s"}.` : "Nothing new to add — your diary already had these.");
+    if (onDone) onDone();
+  });
+}
+
+// ⚠ A plain <input type="file"> on purpose: it is the same path the chat
+// attachments already use, it opens the system picker inside the WebView, and
+// it needs no plugin and no storage permission.
+function dhyanImportPick(onDone) {
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "application/json,.json";
+  inp.style.display = "none";
+  document.body.appendChild(inp);
+  inp.addEventListener("change", () => {
+    const f = inp.files && inp.files[0];
+    inp.remove();
+    if (!f) return;
+    // A diary backup is tens of KB; anything of this size is the wrong file and
+    // reading it would just freeze the phone before failing.
+    if (f.size > 8 * 1024 * 1024) { toast("That file is too large to be a diary backup."); return; }
+    const r = new FileReader();
+    r.onload = () => openDhyanImportPreview(String(r.result || ""), onDone);
+    r.onerror = () => toast("Couldn't read that file.");
+    r.readAsText(f);
+  });
+  inp.click();
+}
+
+// Set by the mounted diary page so the sit screen can refresh it on close
+// without either one holding a reference to the other.
+let _ddRefresh = null;
+
+async function mountDhyanDiary(node) {
+  let pendingJapaId = null;    // a japa just stopped, awaiting its mala count
+  let ticker = null;
+  let tab = "recent";          // the lower panel: "recent" | "progress"
+
+  const two = (n) => (n < 10 ? "0" + n : "" + n);
+  function fmtClock(sec) {
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return h ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
+  }
+  function fmtMins(sec) {
+    const m = Math.round(sec / 60);
+    return m >= 60 ? `${Math.floor(m / 60)}h ${two(m % 60)}m` : `${m} min`;
+  }
+  const timeOf = (iso) => {
+    const d = new Date(iso);
+    let h = d.getHours(); const ap = h < 12 ? "AM" : "PM";
+    h = h % 12 || 12;
+    return `${h}:${two(d.getMinutes())} ${ap}`;
+  };
+  // The effective day spelled out. Parsed as UTC noon so the label can never
+  // slip a day on a device behind Greenwich.
+  const dayLabel = (day) => new Date(day + "T12:00:00Z").toLocaleDateString(undefined,
+    { weekday: "long", day: "numeric", month: "long" });
+
+  function render() {
+    const st = SADHANA.settings();
+    const today = SADHANA.today();
+    const mine = SADHANA.byDay(today);
+    const dhyanSec = mine.filter((s) => s.kind === "dhyan").reduce((a, s) => a + (s.actualSec || 0), 0);
+    const beads = mine.filter((s) => s.kind === "japa").reduce((a, s) => a + (s.count || 0), 0);
+    const live = SADHANA.activeState();
+
+    node.replaceChildren(el(`
+      <div class="dd-wrap">
+        <div class="dd-today">
+          <div class="dd-today-day">${escapeHtml(dayLabel(today))}</div>
+          <div class="dd-figs">
+            <div class="dd-fig"><b>${dhyanSec ? fmtMins(dhyanSec) : "—"}</b><span>Dhyan</span></div>
+            <div class="dd-fig"><b>${beads ? Math.floor(beads / 108) : "—"}</b><span>Malas</span></div>
+            <div class="dd-fig"><b>${mine.length || "—"}</b><span>Sittings</span></div>
+          </div>
+        </div>
+
+        ${live ? `
+        <div class="dd-live dd-live-${live.a.kind}">
+          <div class="dd-live-what">${live.a.kind === "dhyan"
+            ? (live.a.mode === "maun" ? "Maun Dhyan" : "Dhyan with Guru's mantra")
+            : "Naam reciting"} in progress</div>
+          <div class="dd-live-clock" data-clock>${fmtClock(live.elapsedSec)}</div>
+          ${live.overdue ? `<div class="dd-warn">This has been running a long time — stop it and set the real duration if you forgot.</div>` : ""}
+          ${live.a.kind === "japa" && live.a.tally === "beads"
+            ? `<div class="dd-live-beads">${live.a.beads || 0} beads counted</div>` : ""}
+          <div class="dd-live-btns">
+            ${live.a.kind === "dhyan" ? `<button class="btn primary" data-resume>Return to sitting</button>` : ""}
+            ${live.a.tally === "beads" ? `<button class="btn primary" data-resume-beads>Return to counting</button>` : ""}
+            <button class="btn ${live.a.kind === "dhyan" || live.a.tally === "beads" ? "dd-ghost" : "primary"}" data-stop>Stop &amp; save</button>
+            <button class="btn dd-ghost" data-discard>Discard</button>
+          </div>
+        </div>` : `
+        <div class="dd-start">
+          <div class="dd-modes" role="group" aria-label="Dhyan mode">
+            <button class="dd-mode${st.defaultMode === "guru" ? " on" : ""}" data-mode="guru">Guru's mantra</button>
+            <button class="dd-mode${st.defaultMode === "maun" ? " on" : ""}" data-mode="maun">Maun (silent)</button>
+          </div>
+          <button class="dd-go dd-go-dhyan" data-start="dhyan">
+            <span class="dd-go-ico">🧘</span>
+            <span class="dd-go-t">Samarpan Dhyan</span>
+            <span class="dd-go-s">${st.targetMin} minutes</span>
+          </button>
+          <button class="dd-go dd-go-japa" data-start="japa">
+            <span class="dd-go-ico">📿</span>
+            <span class="dd-go-t">Naam Reciting</span>
+            <span class="dd-go-s">on your mala — the app keeps the time</span>
+          </button>
+          ${st.beadCounter ? `
+          <button class="dd-go dd-go-beads" data-start="beads">
+            <span class="dd-go-ico">🔵</span>
+            <span class="dd-go-t">Count on the Phone</span>
+            <span class="dd-go-s">for when the mala can't be handled</span>
+          </button>` : ""}
+        </div>`}
+
+        ${pendingJapaId ? `
+        <div class="dd-ask">
+          <div class="dd-ask-q">How many malas of 108 did you do?</div>
+          <div class="dd-ask-row">
+            <button class="dd-step" data-mala="-1" aria-label="one less">−</button>
+            <b data-malas>1</b>
+            <button class="dd-step" data-mala="1" aria-label="one more">+</button>
+          </div>
+          <div class="dd-ask-btns">
+            <button class="btn primary" data-mala-save>Save</button>
+            <button class="btn dd-ghost" data-mala-skip>Skip</button>
+          </div>
+          <div class="dd-ask-note">Skipping keeps the sitting and its time — only the count is left unknown.</div>
+        </div>` : ""}
+
+        <div class="dd-recent">
+          <div class="dd-tabs" role="tablist">
+            <button class="dd-tab${tab === "recent" ? " on" : ""}" data-tab="recent" role="tab">Recent</button>
+            <button class="dd-tab${tab === "progress" ? " on" : ""}" data-tab="progress" role="tab">Progress</button>
+            <button class="dd-add" data-manual title="Add a sitting you did away from the phone">+ Add</button>
+          </div>
+          <div class="dd-list"></div>
+        </div>
+
+        <div class="dd-rem-slot"></div>
+
+        <div class="dd-backup">
+          <div class="dd-backup-h">Backup</div>
+          <div class="dd-backup-btns">
+            <button class="btn" data-export>Export a copy</button>
+            <button class="btn" data-import>Restore…</button>
+          </div>
+          <div class="dd-backup-btns dd-backup-report">
+            <button class="btn" data-report>Make a picture of my sadhana</button>
+          </div>
+          <div class="dd-backup-note">Nothing leaves this device on its own. Keep a copy somewhere safe —
+            uninstalling the app, or a new phone, is the one thing that can lose your diary.</div>
+        </div>
+
+        <div class="dd-foot">These records stay on this device and are never uploaded.${
+          MOBILE_UI.active ? "" : " On a computer you are looking at this browser's own diary, not your phone's."}
+          <button class="dd-link" data-toggle-beads>${st.beadCounter ? "Hide" : "Show"} the on-screen bead counter</button>
+        </div>
+      </div>`));
+
+    // ---- the lower panel ---------------------------------------------------
+    const list = node.querySelector(".dd-list");
+    if (tab === "progress") { list.replaceChildren(dhyanProgressEl(fmtMins, dayLabel)); wire(); startTicker(); return; }
+
+    const rows = SADHANA.all().slice(0, 30);
+    if (!rows.length) {
+      list.replaceChildren(el(`<div class="dd-empty">No sittings recorded yet. Your first one will appear here.</div>`));
+    } else {
+      list.replaceChildren(...rows.map((s) => {
+        const what = s.kind === "dhyan"
+          ? (s.mode === "maun" ? "Maun Dhyan" : "Dhyan")
+          : "Naam reciting";
+        const detail = s.kind === "japa"
+          ? (s.count == null ? "count not given" : `${Math.floor(s.count / 108)} mala${Math.floor(s.count / 108) === 1 ? "" : "s"}`)
+          : "";
+        return el(`
+          <div class="dd-row" data-id="${escapeHtml(s.id)}">
+            <div class="dd-row-main">
+              <div class="dd-row-t">${what}${detail ? ` · <span class="dd-row-d">${escapeHtml(detail)}</span>` : ""}</div>
+              <div class="dd-row-s">${escapeHtml(dayLabel(s.day))} · ${escapeHtml(timeOf(s.startedAt))}${
+                s.source === "manual" ? " · entered by hand" : ""}</div>
+            </div>
+            <div class="dd-row-dur">${s.actualSec ? fmtMins(s.actualSec) : "—"}</div>
+            <button class="dd-del" data-del aria-label="Delete this sitting">✕</button>
+          </div>`);
+      }));
+    }
+
+    wire();
+    startTicker();
+  }
+
+  // ⚠ The clock is recomputed from the stored timestamp on every tick, never
+  // accumulated — an interval in a backgrounded WebView is throttled and would
+  // drift, then stop (plan §2). The interval only decides WHEN to repaint; it
+  // never decides what the number is. It also stops itself once the page is
+  // gone, since nothing else would.
+  function startTicker() {
+    if (ticker) { clearInterval(ticker); ticker = null; }
+    if (!SADHANA.active()) return;
+    ticker = setInterval(() => {
+      if (!node.isConnected) { clearInterval(ticker); ticker = null; return; }
+      const live = SADHANA.activeState();
+      const c = node.querySelector("[data-clock]");
+      if (!live || !c) { clearInterval(ticker); ticker = null; return; }
+      c.textContent = fmtClock(live.elapsedSec);
+    }, 1000);
+  }
+
+  function wire() {
+    node.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => {
+      hapticTickHook();   // module-scope handle; a no-op in the browser shell
+      SADHANA.setSettings({ defaultMode: b.dataset.mode });
+      render();
+    }));
+
+    node.querySelectorAll("[data-start]").forEach((b) => b.addEventListener("click", () => {
+      // Dhyan goes through the setup sheet (duration + mode, then the audio is
+      // armed inside that tap). Japa is an open-ended stopwatch — no duration
+      // to choose and no dhun, so it starts straight away (plan §1).
+      if (b.dataset.start === "dhyan") { openDhyanSetup(render); return; }
+      // Both japa paths are the SAME timed sitting; only the way the count is
+      // obtained differs — tallied by the app, or stated afterwards.
+      const beadsPath = b.dataset.start === "beads";
+      SADHANA.start(beadsPath ? { kind: "japa", tally: "beads" } : { kind: "japa" });
+      render();
+      if (beadsPath) openBeadCounter();
+    }));
+
+    node.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => {
+      if (tab === b.dataset.tab) return;
+      tab = b.dataset.tab; hapticTickHook(); render();
+    }));
+
+    const man = node.querySelector("[data-manual]");
+    if (man) man.addEventListener("click", () => openDhyanManual(() => { tab = "recent"; render(); }));
+
+    const slot = node.querySelector(".dd-rem-slot");
+    if (slot) slot.replaceChildren(ddRemindersEl(render));
+
+    const rp = node.querySelector("[data-report]");
+    if (rp) rp.addEventListener("click", () => openDhyanReport());
+
+    const ex = node.querySelector("[data-export]");
+    if (ex) ex.addEventListener("click", () => dhyanExport());
+    const im = node.querySelector("[data-import]");
+    if (im) im.addEventListener("click", () => dhyanImportPick(render));
+
+    const tb = node.querySelector("[data-toggle-beads]");
+    if (tb) tb.addEventListener("click", () => {
+      SADHANA.setSettings({ beadCounter: !SADHANA.settings().beadCounter });
+      render();
+    });
+
+    const resume = node.querySelector("[data-resume]");
+    // ⚠ Re-arms the audio for the REMAINING time. A reload or a return from
+    // another page loses the scheduled bell (the AudioContext died with the
+    // old page), while the sitting itself survives in storage — so the screen
+    // and the sound have to be rebuilt from the stored endAt, not assumed.
+    if (resume) resume.addEventListener("click", async () => {
+      const live = SADHANA.activeState();
+      if (!live) { render(); return; }
+      const armed = await SIT_AUDIO.arm(live.remainSec * 1000, { mode: live.a.mode });
+      openSitScreen(armed);
+    });
+
+    const rb = node.querySelector("[data-resume-beads]");
+    if (rb) rb.addEventListener("click", () => openBeadCounter());
+
+    const stop = node.querySelector("[data-stop]");
+    if (stop) stop.addEventListener("click", () => {
+      const was = SADHANA.active();
+      const rec = SADHANA.stop();
+      // A japa with no tallied beads is the "used a real mala" case — that is
+      // the only moment the count can be asked for (plan §1).
+      pendingJapaId = (rec && was && was.kind === "japa" && rec.count == null) ? rec.id : null;
+      render();
+    });
+    const disc = node.querySelector("[data-discard]");
+    if (disc) disc.addEventListener("click", () => {
+      if (!confirm("Discard this sitting without recording it?")) return;
+      SADHANA.discard();
+      render();
+    });
+
+    // ---- the mala question -------------------------------------------------
+    const malaEl = node.querySelector("[data-malas]");
+    node.querySelectorAll("[data-mala]").forEach((b) => b.addEventListener("click", () => {
+      const next = Math.max(1, Math.min(999, Number(malaEl.textContent || 1) + Number(b.dataset.mala)));
+      malaEl.textContent = String(next);
+      hapticTickHook();   // module-scope handle; a no-op in the browser shell
+    }));
+    const save = node.querySelector("[data-mala-save]");
+    if (save) save.addEventListener("click", () => {
+      // count is TOTAL BEADS; malas are the unit the user thinks in (plan §1).
+      SADHANA.update(pendingJapaId, { count: Number(malaEl.textContent || 1) * SADHANA.BEADS_PER_MALA, tally: "stated" });
+      pendingJapaId = null;
+      render();
+    });
+    const skip = node.querySelector("[data-mala-skip]");
+    if (skip) skip.addEventListener("click", () => { pendingJapaId = null; render(); });
+
+    node.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => {
+      const row = b.closest(".dd-row");
+      if (!row || !confirm("Delete this sitting from your diary?")) return;
+      SADHANA.remove(row.dataset.id);
+      render();
+    }));
+  }
+
+  // Lets the sit screen repaint this page when it closes, without either one
+  // holding a reference to the other. Cleared when the page goes away.
+  _ddRefresh = () => { if (node.isConnected) render(); else _ddRefresh = null; };
+
+  // Paint from the cache at once, then repaint once Preferences has been
+  // consulted — that reconcile is what restores a diary after a cache clear,
+  // and it must never hold up the first frame (plan §4).
+  render();
+  await SADHANA.ready();
+  if (node.isConnected) render();
+}
+
+async function renderDhyanDiary() {
+  const nav = _nav;
+  $view.innerHTML = `<div class="dd-page"></div>`;
+  if (!current(nav)) return;
+  await mountDhyanDiary($view.querySelector(".dd-page"));
+}
+
+// --------------------------------------------------------------------------
 // Init
 // --------------------------------------------------------------------------
 buildNav();
@@ -6187,6 +8127,482 @@ initAutohide();
 initCalNav();
 initIdNav();
 initQuickStats();
+// ==========================================================================
+// PERSONAL DHYAN DIARY — storage layer.   Plan: DHYAN_DIARY_PLAN.md §2 §3 §4
+//
+// A private, on-device record of daily Samarpan Dhyan and Naam reciting. No
+// server, no Supabase table, no account role — it works offline and works for
+// a `visitor` on first launch. Nothing here ever leaves the phone; the only
+// way out is the user's own export (§9).
+//
+// ⚠ Preferences is the SOURCE OF TRUTH; localStorage is a rebuildable cache.
+// This inverts every other client store in this file, deliberately: Android's
+// "Clear data" wipes localStorage, and ten years of someone's practice is not
+// a recoverable loss the way a cached message list is. Preferences is
+// SharedPreferences — it survives a cache clear and rides android:allowBackup
+// to a new phone. Reads are synchronous off localStorage so the UI can paint
+// immediately; ready() then reconciles against Preferences in the background
+// and unions anything the cache had lost.
+//
+// ⚠ Sessions are only ever UNIONED, never replaced, on that reconcile — a
+// failed write on either side must not be able to erase a sitting. Deletion
+// is therefore a tombstone (`deleted`), not an absence, or a union would
+// resurrect what the user removed on purpose.
+// ==========================================================================
+const SADHANA = (() => {
+  const KEY = "wa:sadhana:v1";       // same key both sides; only we read it
+  // Just the live bead tally of an in-progress japa. Tiny and rewritten per
+  // bead, so the cost of a tap never grows with the diary — see setBeads().
+  const LIVE_KEY = "wa:sadhana:live";
+  const SCHEMA = 1;
+
+  // Clamps. These exist to keep one bad record (a wrong device clock, a hand-
+  // edited export, a stopwatch left running overnight) from poisoning totals
+  // that are meant to be read years from now.
+  const MAX_SESSION_SEC = 12 * 3600;
+  const MAX_COUNT = 200000;          // ~1850 malas; far past any real day
+  const MAX_TOMBSTONES = 500;
+  const FUTURE_SKEW_MS = 36 * 3600_000;
+  // Past this, an open stopwatch means someone forgot to stop, not that they
+  // did nine hours of japa. Storage only reports it; the UI asks (plan §1).
+  const FORGOT_SEC = 6 * 3600;
+
+  // ---- the effective day ---------------------------------------------------
+  // ⚠ Mirrors `effectiveIstDate` in supabase/functions/reveal-pick/index.ts —
+  // IST, rolling over at 3:30 AM, NOT midnight. Dhyan happens in brahma-
+  // muhurta; under a midnight boundary a 4 AM sitting is fine but a late-night
+  // one files on the wrong day and silently breaks the record. Keep the two
+  // implementations identical so the diary can never disagree with the rest of
+  // the app about which day it is. IST is a fixed UTC+5:30 offset (no DST).
+  function dayOf(d) {
+    const istMs = d.getTime() + 5.5 * 3600_000;
+    return new Date(istMs - 3.5 * 3600_000).toISOString().slice(0, 10);
+  }
+  const today = () => dayOf(new Date());
+
+  // ---- shape ---------------------------------------------------------------
+  function defaults() {
+    return {
+      targetMin: 30,          // the prescription the UI presents, not enforces
+      defaultMode: "guru",    // "guru" | "maun" — the diary's opening mode
+      beadCounter: true,      // on-screen bead counter visible (plan §1)
+      dhunOn: true,
+      soundOnMala: false,     // haptic-only by default: japa happens in public
+      reminders: [],          // [{id, hour, minute, leadMin, on}]  (plan §7)
+    };
+  }
+  const blank = () => ({ v: SCHEMA, savedAt: 0, sessions: [], deleted: [], settings: defaults(), active: null });
+  // Forward compatibility: a setting added in a later version must appear with
+  // its default on a payload written before it existed.
+  const withDefaults = (s) => Object.assign(defaults(), (s && typeof s === "object") ? s : {});
+
+  let _seq = 0;
+  const newId = () => "s" + Date.now().toString(36) + (_seq++).toString(36) + Math.random().toString(36).slice(2, 6);
+  const num = (v, lo, hi, dflt) => {
+    const n = Number(v);
+    return isFinite(n) ? Math.max(lo, Math.min(hi, Math.round(n))) : dflt;
+  };
+
+  // ---- validation ----------------------------------------------------------
+  // Runs over EVERY record on the way in, from any source — cache, Preferences
+  // or a user-supplied import file. An import is untrusted input; treating it
+  // as trusted is how one hand-edited file corrupts a decade of history.
+  function cleanSession(s) {
+    if (!s || typeof s !== "object") return null;
+    const kind = (s.kind === "japa" || s.kind === "dhyan") ? s.kind : null;
+    if (!kind) return null;
+
+    const t = Date.parse(s.startedAt);
+    if (!isFinite(t)) return null;
+    if (t > Date.now() + FUTURE_SKEW_MS) return null;   // wrong clock, or edited
+
+    const out = {
+      id: (typeof s.id === "string" && s.id) ? s.id : newId(),
+      kind,
+      startedAt: new Date(t).toISOString(),
+      // ⚠ Always DERIVED, never trusted from the file: a `day` that disagrees
+      // with its own startedAt would put a sitting on a page it doesn't belong
+      // to, and nothing downstream could tell which of the two was right.
+      day: dayOf(new Date(t)),
+      actualSec: num(s.actualSec, 0, MAX_SESSION_SEC, 0),
+      source: s.source === "manual" ? "manual" : "timer",
+      createdAt: num(s.createdAt, 0, 8.64e15, t),
+      updatedAt: num(s.updatedAt, 0, 8.64e15, num(s.createdAt, 0, 8.64e15, t)),
+    };
+    if (typeof s.note === "string" && s.note.trim()) out.note = s.note.slice(0, 500);
+
+    if (kind === "dhyan") {
+      out.mode = s.mode === "maun" ? "maun" : "guru";
+      out.targetMin = num(s.targetMin, 0, 24 * 60, 0);
+    } else {
+      // ⚠ `count` is TOTAL BEADS and is the truth; malas are derived at 108 for
+      // display. Storing malas instead would make every past record depend on a
+      // bead-size constant, so changing it would silently rewrite history.
+      // null is a real, meaningful value: a japa whose count the user never
+      // supplied still happened, and must keep its time (plan §1).
+      out.count = (s.count === null || s.count === undefined) ? null : num(s.count, 0, MAX_COUNT, null);
+      out.tally = (s.tally === "beads" || s.tally === "stated") ? s.tally : null;
+    }
+    return out;
+  }
+
+  function normalise(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    if (raw.v !== undefined && Number(raw.v) > SCHEMA) return null;   // written by a newer app
+    const sessions = [];
+    const seen = new Set();
+    for (const s of (Array.isArray(raw.sessions) ? raw.sessions : [])) {
+      const c = cleanSession(s);
+      if (!c || seen.has(c.id)) continue;
+      seen.add(c.id);
+      sessions.push(c);
+    }
+    const deleted = (Array.isArray(raw.deleted) ? raw.deleted : [])
+      .filter((x) => typeof x === "string").slice(-MAX_TOMBSTONES);
+    return {
+      v: SCHEMA,
+      savedAt: num(raw.savedAt, 0, 8.64e15, 0),
+      sessions,
+      deleted,
+      settings: withDefaults(raw.settings),
+      active: cleanActive(raw.active),
+    };
+  }
+
+  function cleanActive(a) {
+    if (!a || typeof a !== "object") return null;
+    const t = Date.parse(a.startedAt);
+    if (!isFinite(t) || t > Date.now() + FUTURE_SKEW_MS) return null;
+    const kind = (a.kind === "japa" || a.kind === "dhyan") ? a.kind : null;
+    if (!kind) return null;
+    return {
+      kind,
+      startedAt: new Date(t).toISOString(),
+      mode: a.mode === "maun" ? "maun" : "guru",
+      targetMin: num(a.targetMin, 0, 24 * 60, 0),
+      // ⚠ null for japa — it is an open-ended stopwatch, not a countdown, and
+      // must not inherit the dhyan timer's endAt machinery (plan §1).
+      endAt: (kind === "dhyan" && isFinite(Date.parse(a.endAt))) ? new Date(Date.parse(a.endAt)).toISOString() : null,
+      beads: num(a.beads, 0, MAX_COUNT, 0),
+      // Which japa path this is. Carried on the marker because `beads: 0` is
+      // ambiguous at the start of a tallied sitting, and returning to the diary
+      // mid-japa has to know whether to offer the counter back or the mala
+      // question. Absent for dhyan.
+      tally: a.tally === "beads" ? "beads" : null,
+    };
+  }
+
+  // ---- merge ---------------------------------------------------------------
+  // Used by BOTH the boot reconcile and import, which is why it is written once.
+  // Sessions union (newer updatedAt wins a collision); tombstones from either
+  // side suppress; `settings` and `active` follow whichever payload is newer,
+  // because those are single-valued and a union of them is meaningless.
+  function merge(base, add) {
+    const dead = new Set([...(base.deleted || []), ...(add.deleted || [])]);
+    const byId = new Map();
+    for (const s of base.sessions) byId.set(s.id, s);
+    for (const s of add.sessions) {
+      const cur = byId.get(s.id);
+      if (!cur || (s.updatedAt || 0) > (cur.updatedAt || 0)) byId.set(s.id, s);
+    }
+    const newer = (add.savedAt || 0) > (base.savedAt || 0) ? add : base;
+    return {
+      v: SCHEMA,
+      savedAt: Math.max(base.savedAt || 0, add.savedAt || 0),
+      sessions: [...byId.values()].filter((s) => !dead.has(s.id)),
+      deleted: [...dead].slice(-MAX_TOMBSTONES),
+      settings: withDefaults(newer.settings),
+      active: newer.active,
+    };
+  }
+
+  // ---- load / persist ------------------------------------------------------
+  let state = (() => {
+    let s;
+    try { s = normalise(JSON.parse(localStorage.getItem(KEY) || "null")) || blank(); }
+    catch { return blank(); }
+    // Fold in any beads counted since the last full write. Guarded on
+    // startedAt so a stale marker from a previous sitting can never leak its
+    // count into a new one, and only ever ALLOWED TO GROW — the payload is
+    // authoritative if it somehow holds more.
+    try {
+      const live = JSON.parse(localStorage.getItem(LIVE_KEY) || "null");
+      if (live && s.active && live.startedAt === s.active.startedAt)
+        s.active.beads = Math.max(s.active.beads || 0, num(live.beads, 0, MAX_COUNT, 0));
+    } catch (_) {}
+    return s;
+  })();
+  let _lsOk = true;
+
+  function pushPrefs() {
+    const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
+    if (!P || !P.set) return Promise.resolve(false);   // desktop, or a pre-plugin shell
+    return P.set({ key: KEY, value: JSON.stringify(state) }).then(() => true, () => false);
+  }
+
+  // `durable: false` skips the Preferences write. The bead counter uses it: it
+  // persists every single bead so a crash at 253 doesn't cost 253, and a
+  // SharedPreferences write per bead would be hundreds of needless disk hits.
+  // It writes durably at each mala boundary and on stop.
+  function persist(durable) {
+    state.savedAt = Date.now();
+    try {
+      localStorage.setItem(KEY, JSON.stringify(state));
+      // The payload now contains any live beads, so the side marker is spent.
+      // Leaving it would be harmless (it is startedAt-guarded and can only
+      // raise the count) but it would outlive the sitting it belongs to.
+      localStorage.removeItem(LIVE_KEY);
+      _lsOk = true;
+    } catch { _lsOk = false; }      // quota — Preferences still has it
+    return (durable === false) ? Promise.resolve(true) : pushPrefs();
+  }
+
+  // ⚠ Call and await before trusting a read on a cold start. localStorage is
+  // read synchronously above so the UI paints without waiting, but only this
+  // sees what Preferences kept through a cache clear.
+  let _readyP = null;
+  function ready() {
+    if (!_readyP) _readyP = reconcile();
+    return _readyP;
+  }
+  async function reconcile() {
+    const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
+    if (!P || !P.get) return state;
+    let durable = null;
+    try {
+      const got = await P.get({ key: KEY });
+      durable = normalise(JSON.parse((got && got.value) || "null"));
+    } catch { return state; }        // unreadable: keep the cache, change nothing
+    if (!durable) {
+      // Nothing durable yet — first run, or an install that predates this
+      // feature. Seed it so the next cache clear has something to restore from.
+      if (state.sessions.length || state.active) await pushPrefs();
+      return state;
+    }
+    const before = state.sessions.length;
+    state = merge(state, durable);
+    // Only write back when the union actually changed something, so a normal
+    // launch costs one read and no write.
+    if (state.sessions.length !== before || (durable.savedAt || 0) < (state.savedAt || 0)) await persist();
+    return state;
+  }
+
+  // ---- reads ---------------------------------------------------------------
+  const sorted = () => state.sessions.slice().sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
+  const byDay = (day) => state.sessions.filter((s) => s.day === day);
+  const range = (fromDay, toDay) =>
+    sorted().filter((s) => s.day >= fromDay && s.day <= toDay);
+  const malasOf = (s) => (s && s.count != null) ? Math.floor(s.count / 108) : 0;
+
+  // ---- writes --------------------------------------------------------------
+  function add(rec) {
+    const c = cleanSession(Object.assign({ createdAt: Date.now(), updatedAt: Date.now() }, rec));
+    if (!c) return null;
+    state.sessions.push(c);
+    persist();
+    return c;
+  }
+  function update(id, patch) {
+    const i = state.sessions.findIndex((s) => s.id === id);
+    if (i < 0) return null;
+    const c = cleanSession(Object.assign({}, state.sessions[i], patch, { id, updatedAt: Date.now() }));
+    if (!c) return null;
+    state.sessions[i] = c;
+    persist();
+    return c;
+  }
+  function remove(id) {
+    const before = state.sessions.length;
+    state.sessions = state.sessions.filter((s) => s.id !== id);
+    if (state.sessions.length === before) return false;
+    // Tombstone, not just an absence — see the header note on union.
+    if (!state.deleted.includes(id)) state.deleted = [...state.deleted, id].slice(-MAX_TOMBSTONES);
+    persist();
+    return true;
+  }
+
+  // ---- settings ------------------------------------------------------------
+  const settings = () => Object.assign({}, state.settings);
+  function setSettings(patch) {
+    state.settings = withDefaults(Object.assign({}, state.settings, patch));
+    persist();
+    return settings();
+  }
+
+  // ---- the in-progress marker (plan §2) ------------------------------------
+  // ⚠ THE invariant of this feature: a sitting is recorded from a persisted
+  // start timestamp, never from the bell firing and never from a live JS timer.
+  // Written on start, so the session exists on disk before a locked screen,
+  // Doze, an OEM task-killer or a dead battery can intervene.
+  function start(a) {
+    state.active = cleanActive(Object.assign({ startedAt: new Date().toISOString() }, a));
+    persist();
+    return state.active;
+  }
+  const active = () => (state.active ? Object.assign({}, state.active) : null);
+  // ⚠ `durable` defaults to FALSE: this is called once per bead, and a
+  // SharedPreferences write per bead would be hundreds of needless disk hits.
+  // The caller passes true at each mala boundary and on stop.
+  //
+  // ⚠ A non-durable bead does NOT rewrite the whole payload. It used to, and
+  // that made the cost of one tap proportional to the length of the user's
+  // history: measured at 3.6 ms with 2,000 sittings (411 KB) on a desktop, so
+  // several times that on a cheap phone, growing every year forever. For the
+  // one screen that gets hundreds of taps a session that is the difference
+  // between crisp and laggy. The bead goes to its own tiny key instead —
+  // constant cost no matter how many years are in the diary — and is folded
+  // back into the payload by the next durable write (LIVE_KEY, adopted on
+  // load). The crash guarantee is unchanged: every single bead is still
+  // written somewhere before the next one can be counted.
+  function setBeads(n, durable) {
+    if (!state.active) return 0;
+    state.active.beads = num(n, 0, MAX_COUNT, 0);
+    if (durable === true) { persist(true); return state.active.beads; }
+    try {
+      localStorage.setItem(LIVE_KEY, JSON.stringify({
+        startedAt: state.active.startedAt,      // ties the marker to THIS sitting
+        beads: state.active.beads,
+      }));
+      _lsOk = true;
+    } catch { _lsOk = false; }
+    return state.active.beads;
+  }
+  // What the UI needs to decide, on boot or on resume, whether to show a
+  // running timer, close a finished sitting out, or ask what really happened.
+  function activeState(now) {
+    const a = state.active;
+    if (!a) return null;
+    const t = now || Date.now();
+    const elapsedSec = Math.max(0, Math.round((t - Date.parse(a.startedAt)) / 1000));
+    return {
+      a: Object.assign({}, a),
+      elapsedSec,
+      finished: !!(a.endAt && Date.parse(a.endAt) <= t),
+      remainSec: a.endAt ? Math.max(0, Math.round((Date.parse(a.endAt) - t) / 1000)) : null,
+      // Storage only reports this; the UI asks the user rather than silently
+      // recording a stopwatch someone forgot to stop (plan §1).
+      overdue: elapsedSec > FORGOT_SEC,
+    };
+  }
+  // Converts the marker into a real record. `extra` carries what only the user
+  // can supply — the stated mala count, a corrected duration.
+  function stop(extra) {
+    const a = state.active;
+    if (!a) return null;
+    const secs = Math.max(0, Math.round((Date.now() - Date.parse(a.startedAt)) / 1000));
+    const rec = Object.assign({
+      kind: a.kind,
+      startedAt: a.startedAt,
+      actualSec: secs,
+      source: "timer",
+    }, a.kind === "dhyan"
+      ? { mode: a.mode, targetMin: a.targetMin }
+      : { count: a.beads > 0 ? a.beads : null, tally: a.beads > 0 ? "beads" : null },
+      extra || {});
+    state.active = null;
+    const saved = add(rec);          // add() persists
+    if (!saved) persist();           // rec was unusable; at least clear `active`
+    return saved;
+  }
+  function discard() { state.active = null; persist(); }
+
+  // ---- export / import (plan §9) -------------------------------------------
+  // ⚠ Plain, readable, pretty-printed JSON by operator decision — "nothing to
+  // hide here". A readable file is still recoverable by hand years from now
+  // even if this app has changed beyond recognition, which is the whole point
+  // of a backup.
+  function exportPayload() {
+    return {
+      app: "Samarpan Upanishad — Personal Dhyan Diary",
+      v: SCHEMA,
+      exportedAt: new Date().toISOString(),
+      sessions: sorted(),
+      deleted: state.deleted.slice(),
+      settings: settings(),
+    };
+  }
+  const exportText = () => JSON.stringify(exportPayload(), null, 2);
+  const exportName = () => "samarpan-dhyan-diary-" + today() + ".json";
+
+  // Preview BEFORE applying: the file is user-supplied, and picking the wrong
+  // one should be a cancelled dialog, not a mystery. Returns what the UI needs
+  // to say "this file has 214 sittings from 3 Jan to 14 Aug. Merge?".
+  function inspectImport(text) {
+    let raw;
+    try { raw = JSON.parse(String(text || "")); }
+    catch { return { ok: false, error: "That file isn't valid JSON." }; }
+    const payload = normalise(raw);
+    if (!payload) return { ok: false, error: "That file isn't a Dhyan Diary backup, or it was written by a newer version of the app." };
+    if (!payload.sessions.length) return { ok: false, error: "That backup has no sittings in it." };
+
+    const mine = new Map(state.sessions.map((s) => [s.id, s]));
+    let fresh = 0, updated = 0, dhyanSec = 0, beads = 0;
+    let from = "9999-99-99", to = "";
+    for (const s of payload.sessions) {
+      const cur = mine.get(s.id);
+      if (!cur) fresh++;
+      else if ((s.updatedAt || 0) > (cur.updatedAt || 0)) updated++;
+      if (s.day < from) from = s.day;
+      if (s.day > to) to = s.day;
+      if (s.kind === "dhyan") dhyanSec += s.actualSec || 0;
+      else beads += s.count || 0;
+    }
+    return {
+      ok: true, payload,
+      summary: {
+        total: payload.sessions.length, fresh, updated,
+        duplicate: payload.sessions.length - fresh - updated,
+        from, to, dhyanMin: Math.round(dhyanSec / 60), malas: Math.floor(beads / 108),
+      },
+    };
+  }
+
+  // ⚠ MERGES, never replaces. Importing a three-month-old backup must not
+  // delete the sittings recorded since — that would turn the safety feature
+  // into the thing that destroys the data.
+  // ⚠ A restore ONLY EVER ADDS. It never deletes, and nothing may block it from
+  // adding. Two rules follow, and both were bugs before they were rules:
+  //
+  //  1. Local tombstones are LIFTED for the ids in the file. Tombstones exist
+  //     so the automatic boot reconcile cannot resurrect a deliberate deletion
+  //     (§4) — but an import is not automatic, it is the user explicitly asking
+  //     for this data back. Letting a tombstone silently veto that meant a
+  //     restore could complete, report success, and add nothing at all.
+  //  2. The file's OWN `deleted` list is ignored. Applying a backup's deletions
+  //     to the live diary would let restoring an old file delete sittings
+  //     recorded since — the exact thing this feature exists to prevent.
+  //
+  // Which is also what the dialog promises: "your existing sittings are kept —
+  // this only adds what is missing".
+  async function applyImport(payload) {
+    if (!payload || !Array.isArray(payload.sessions)) return null;
+    const before = state.sessions.length;
+    // Keep OUR settings and OUR active marker: a restore is about history, and
+    // adopting a backup's half-finished sitting from months ago would be wrong.
+    const keepSettings = state.settings, keepActive = state.active;
+    const incoming = new Set(payload.sessions.map((s) => s.id));
+    state.deleted = state.deleted.filter((id) => !incoming.has(id));      // rule 1
+    state = merge(state, { sessions: payload.sessions, deleted: [], savedAt: 0 });   // rule 2
+    state.settings = keepSettings;
+    state.active = keepActive;
+    await persist();
+    return { added: state.sessions.length - before, total: state.sessions.length };
+  }
+
+  return {
+    ready, dayOf, today,
+    all: sorted, byDay, range, malasOf, get: (id) => state.sessions.find((s) => s.id === id) || null,
+    add, update, remove,
+    settings, setSettings,
+    start, active, activeState, setBeads, stop, discard,
+    exportText, exportName, exportPayload, inspectImport, applyImport,
+    // Diagnostics — the cache write is the one that can fail silently (quota),
+    // and a Settings screen should be able to say so.
+    health: () => ({ cacheOk: _lsOk, count: state.sessions.length, savedAt: state.savedAt }),
+    FORGOT_SEC, BEADS_PER_MALA: 108,
+  };
+})();
+
 // ==========================================================================
 // MOBILE SHELL — image-first UI for the Android app (and ?waNativeTest=1).
 // Inactive on desktop: MOBILE_UI.active is false and nothing below runs.
@@ -6255,6 +8671,11 @@ const MOBILE_UI = (() => {
              sent. In the main list, not under More — a notification tap lands
              here thirteen times a day, so it must be findable without one. -->
         <a href="#/m/gyan"><span class="mi">📿</span> Upanishad Gyan</a>
+        <!-- Personal Dhyan Diary: private, on-device, and used daily — so it
+             belongs in the main list rather than under More, for the same
+             reason Upanishad Gyan does. It needs no role and no network, so
+             it is deliberately NOT gated like the community rows. -->
+        <a href="#/m/dhyan"><span class="mi">🧘</span> Personal Dhyan Diary</a>
         <!-- Moderator tools. The desktop nav has had these since the start; the
              phone had no entry point at all, which left a sutradhar (the sole
              owner) unable to approve anyone from the device they actually use.
@@ -8994,6 +11415,18 @@ const MOBILE_UI = (() => {
     await mountAdminTalks(node);
   }
 
+  // Personal Dhyan Diary — the whole page is mountDhyanDiary(); this supplies
+  // only the frame, so the diary cannot drift between phone and desktop.
+  //
+  // ⚠ No store.setLastViewed()/_stageId, for the same reason Admin Talks skips
+  // them: nothing here is an archive id, and writing one into wa:lastViewed
+  // would break the daily reader's resume.
+  async function dhyanPage() {
+    const node = el(`<div class="dd-page"></div>`);
+    pageFrame(DHYAN_TITLE, node);
+    await mountDhyanDiary(node);
+  }
+
   async function anubhutiChatPage(id) {
     const node = el(`<div class="m-community m-anubhuti"></div>`);
     pageFrame("Anubhuti Sharing", node);
@@ -9793,7 +12226,7 @@ const MOBILE_UI = (() => {
   return {
     active,
     openChatZoom,
-    handles(seg) { return !seg.length || seg[0] === "entry" || seg[0] === "m" || seg[0] === "favorites" || seg[0] === "special" || seg[0] === "letterpad" || seg[0] === "anubhuti" || seg[0] === "admintalks"; },
+    handles(seg) { return !seg.length || seg[0] === "entry" || seg[0] === "m" || seg[0] === "favorites" || seg[0] === "special" || seg[0] === "letterpad" || seg[0] === "anubhuti" || seg[0] === "admintalks" || seg[0] === "dhyan"; },
     async route(seg, params) {
       closeDrawer();
       exitZoom();
@@ -9819,6 +12252,7 @@ const MOBILE_UI = (() => {
       if (seg[0] === "anushthan") return msgIndexPage("anushthan", params);
       if (seg[0] === "anubhuti") return anubhutiRoute(params);   // desktop-style link → same pages
       if (seg[0] === "admintalks") return adminTalksPage();      // desktop-style link → same page
+      if (seg[0] === "dhyan") return dhyanPage();                // desktop-style link → same page
       const p = seg[1];
       if (p === "search") return searchPage(params);
       if (p === "nomsg") return renderDateMessage(params.get("d"));
@@ -9834,6 +12268,7 @@ const MOBILE_UI = (() => {
       // Guru's-message section that has no content yet. Don't merge these.
       if (p === "anubhuti") return anubhutiRoute(params);
       if (p === "admintalks") return adminTalksPage();
+      if (p === "dhyan") return dhyanPage();
       // #/m/<section>        → the index
       // #/m/<section>/<id>   → the full-screen reader, opened on that message
       //                        (also where a push-notification tap can land)
@@ -10403,4 +12838,11 @@ AUTH_GATE.boot(function startApp() {
   // …and honour a tap that arrived from a widget row. Bound here rather than at
   // module load so the gate has already routed; see WIDGET.bindLaunch.
   WIDGET.bindLaunch();
+
+  // Sitting reminders. ⚠ Re-armed on EVERY launch, not just when edited — that
+  // is what carries them across a reboot, a timezone change and a switch of the
+  // app's language (a notification's words are fixed when it is scheduled, not
+  // when it is shown). Idempotent, and a no-op off-device. See DHYAN_REMIND.
+  DHYAN_REMIND.bindTap();
+  DHYAN_REMIND.sync().catch(() => {});
 });

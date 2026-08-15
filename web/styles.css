@@ -2818,3 +2818,433 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 .pl-text[data-step="2"]::before { content: "कृपया अमृत बरसाइए।"; }
 .pl-text[data-step="3"]::before { content: "कृपया अमृत बरसाइए।"; }
 .pl-text[data-step="4"]::before { content: "Showering Guru's Msg... Thanks Gurudev for everything...!"; }
+
+/* ==========================================================================
+   PERSONAL DHYAN DIARY (dd-)   Plan: DHYAN_DIARY_PLAN.md §8
+   One stylesheet for BOTH shells — the page is a single builder
+   (mountDhyanDiary), so the desktop panel and the phone must not diverge.
+   Namespace is dd-; ax-/an-/at-/sx-/mx-/dp- are already taken.
+   ========================================================================== */
+.dd-page { padding: 0; }
+.dd-wrap { max-width: 640px; margin: 0 auto; padding: 14px 14px 28px; font-family: var(--sans); }
+
+/* ---- today ---- */
+.dd-today {
+  background: var(--accent-soft); border: 1px solid var(--border-soft);
+  border-radius: 18px; padding: 14px 16px 12px; text-align: center;
+}
+.dd-today-day { font-size: 13px; color: var(--accent); font-weight: 600; letter-spacing: .01em; }
+.dd-figs { display: flex; justify-content: space-around; margin-top: 10px; }
+.dd-fig { display: flex; flex-direction: column; gap: 2px; min-width: 72px; }
+.dd-fig b { font-size: 22px; font-weight: 650; color: var(--text); line-height: 1.1; }
+.dd-fig span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+
+/* ---- start ---- */
+.dd-start { margin-top: 16px; }
+.dd-modes { display: flex; gap: 8px; margin-bottom: 12px; }
+/* ⚠ appearance:none is REQUIRED, not tidiness. A button left at the native
+   appearance ignores background-COLOR in some engines (it honours a
+   background-image, which is why .btn.primary's gradient paints and a flat
+   colour silently does not). Caught on the selected mode chip rendering as
+   the UA grey. Android WebView is the real target here, so every custom
+   button below states it. */
+.dd-mode, .dd-go, .dd-step, .dd-del { -webkit-appearance: none; appearance: none; }
+.dd-mode {
+  flex: 1; padding: 9px 8px; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface);
+  font-family: inherit; font-size: 13px; color: var(--muted);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.dd-mode.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+.dd-go {
+  display: flex; align-items: center; gap: 12px; width: 100%; cursor: pointer;
+  margin-bottom: 10px; padding: 14px 16px; border-radius: 16px;
+  border: 1px solid var(--border); background: var(--surface);
+  box-shadow: var(--shadow); font-family: inherit; text-align: left;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.dd-go:active { transform: scale(.985); box-shadow: none; }
+.dd-go-ico { font-size: 26px; line-height: 1; flex: none; }
+.dd-go-t { font-size: 16px; font-weight: 600; color: var(--text); }
+.dd-go-s { font-size: 12px; color: var(--muted); }
+/* The label stacks under the title; the icon stays on its own column. */
+.dd-go { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 12px; }
+.dd-go-ico { grid-row: 1 / span 2; align-self: center; }
+.dd-soon {
+  margin-top: 4px; padding: 8px 12px; border-radius: 10px;
+  background: var(--border-soft); color: var(--muted); font-size: 11.5px; text-align: center;
+}
+
+/* ---- a sitting in progress ---- */
+.dd-live {
+  margin-top: 16px; padding: 22px 16px 16px; border-radius: 18px; text-align: center;
+  background: var(--accent-grad); color: #fff; box-shadow: var(--shadow-lg);
+}
+.dd-live-what { font-size: 13px; opacity: .92; }
+/* Tabular figures so the seconds ticking cannot shift the layout under it. */
+.dd-live-clock {
+  font-size: 46px; font-weight: 300; line-height: 1.15; margin: 6px 0 14px;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+.dd-live-btns { display: flex; gap: 8px; justify-content: center; }
+.dd-warn {
+  background: rgba(255,255,255,.18); border-radius: 10px;
+  padding: 7px 10px; font-size: 11.5px; margin-bottom: 12px;
+}
+.dd-ghost { background: transparent; border: 1px solid rgba(255,255,255,.55); color: #fff; }
+
+/* ---- the mala question ---- */
+.dd-ask {
+  margin-top: 14px; padding: 16px; border-radius: 16px; text-align: center;
+  background: var(--surface); border: 1px solid var(--accent); box-shadow: var(--shadow);
+}
+.dd-ask-q { font-size: 15px; font-weight: 600; color: var(--text); }
+.dd-ask-row { display: flex; align-items: center; justify-content: center; gap: 20px; margin: 12px 0; }
+.dd-ask-row b { font-size: 32px; font-weight: 650; min-width: 56px; font-variant-numeric: tabular-nums; }
+.dd-step {
+  width: 42px; height: 42px; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg);
+  font-size: 22px; line-height: 1; color: var(--accent); font-family: inherit;
+}
+.dd-ask-btns { display: flex; gap: 8px; justify-content: center; }
+.dd-ask .dd-ghost { border-color: var(--border); color: var(--muted); }
+.dd-ask-note { margin-top: 10px; font-size: 11px; color: var(--muted); }
+
+/* ---- recent ---- */
+.dd-recent { margin-top: 22px; }
+.dd-recent h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); font-weight: 600; margin: 0 0 8px 2px;
+}
+.dd-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 12px; border-radius: 12px; background: var(--surface);
+  border: 1px solid var(--border-soft); margin-bottom: 7px;
+}
+.dd-row-main { flex: 1; min-width: 0; }
+.dd-row-t { font-size: 14px; color: var(--text); font-weight: 550; }
+.dd-row-d { color: var(--accent); font-weight: 600; }
+.dd-row-s { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.dd-row-dur { font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; flex: none; }
+.dd-del {
+  flex: none; width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+  border: 0; background: transparent; color: var(--muted); font-size: 13px; line-height: 1;
+}
+.dd-del:hover { background: var(--border-soft); color: var(--text); }
+.dd-empty {
+  padding: 22px 16px; text-align: center; color: var(--muted); font-size: 13px;
+  background: var(--surface); border: 1px dashed var(--border); border-radius: 12px;
+}
+.dd-foot { margin-top: 20px; text-align: center; font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+/* ---- setup sheet: duration + mode ---- */
+.dd-sheet-ov {
+  position: fixed; inset: 0; z-index: 60; display: flex;
+  align-items: center; justify-content: center; padding: 18px;
+  background: rgba(30,20,10,.45);
+}
+.dd-sheet {
+  width: min(340px, 94vw); background: var(--surface); border-radius: 20px;
+  box-shadow: var(--shadow-lg); padding: 18px 16px 16px; font-family: var(--sans);
+}
+.dd-sheet-h { text-align: center; font-size: 16px; font-weight: 650; color: var(--text); margin-bottom: 14px; }
+.dd-sheet .dd-modes { margin-bottom: 8px; }
+/* Reuses the date picker's wheel classes, so the two spinners cannot drift
+   apart — see makeWheel(). Only the surrounding chrome is new. */
+.dd-spin {
+  --dp-pink: #fce4ec; --dp-pink-deep: #f7d6e4; --dp-dark: #c2185b;
+  position: relative; display: flex; align-items: center; justify-content: center;
+  gap: 10px; padding: 6px 0 2px;
+}
+.dd-spin .m-dp-wheel { flex: 0 0 88px; }
+.dd-spin-unit { font-size: 14px; color: var(--muted); }
+.dd-note {
+  min-height: 32px; margin: 6px 2px 12px; text-align: center;
+  font-size: 11.5px; line-height: 1.45; color: var(--muted);
+}
+.dd-sheet-btns { display: flex; gap: 8px; }
+.dd-sheet-btns .btn { flex: 1; justify-content: center; }
+
+/* ---- the sitting ----
+   Near-black on purpose: on an OLED panel #000 means the pixels are physically
+   off, so setting the phone down without locking it is nearly as dark as
+   locking it. The expected flow is still to lock it (plan §6). */
+.dd-sit {
+  position: fixed; inset: 0; z-index: 70; background: #05070a; color: #e8e4dc;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 22px; font-family: var(--sans); padding: 24px;
+}
+body.dd-sitting { overflow: hidden; }
+.dd-sit-mode { font-size: 13px; letter-spacing: .04em; color: #8d8a84; text-transform: uppercase; }
+.dd-ring { position: relative; width: 240px; height: 240px; max-width: 74vw; max-height: 74vw; }
+.dd-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.dd-ring circle { fill: none; stroke-width: 3; stroke-linecap: round; }
+.dd-ring-bg { stroke: #1a1f26; }
+/* No transition on the offset: it is recomputed from the stored timestamp every
+   second, and an animated tween would fight a correction after the WebView had
+   been throttled. */
+.dd-ring-fg { stroke: #d9662a; }
+.dd-sit-time {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 44px; font-weight: 200; letter-spacing: .01em;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; color: #f2eee6;
+}
+.dd-sit-note { font-size: 12px; color: #6f6c66; text-align: center; max-width: 260px; line-height: 1.5; }
+.dd-sit-end {
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  background: transparent; border: 1px solid #2a3038; color: #b9b4ab;
+  border-radius: 999px; padding: 10px 26px; font-size: 13px; font-family: inherit;
+}
+.dd-sit-done .dd-ring-fg { stroke: #6ba368; }
+.dd-sit-done .dd-sit-time { font-size: 56px; }
+
+/* ---- on-screen bead counter ----
+   Used very often and often in a moving vehicle, so: near-black (on OLED the
+   pixels are physically off), the whole screen is the tap target, and the
+   only two controls sit at the bottom out of the thumb's counting path.
+   ⚠ Per-bead effects are deliberately CHEAP — fill only, no per-node filter or
+   shadow. There are 108 of them and hundreds of taps a session; the ambience
+   comes from one shared glow behind the ring instead. */
+.dd-beads {
+  position: fixed; inset: 0; z-index: 70; background: #05070a; color: #e8e4dc;
+  display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+  padding: 22px 18px calc(22px + env(safe-area-inset-bottom)); font-family: var(--sans);
+  touch-action: manipulation;            /* no double-tap zoom stealing a bead */
+  user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
+}
+.dd-beads-top {
+  width: 100%; display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px; color: #7d7a74; letter-spacing: .03em;
+}
+.dd-beads-malas { color: #d9a05b; font-weight: 600; }
+
+.dd-mala { position: relative; width: 300px; height: 300px; max-width: 84vw; max-height: 84vw; }
+.dd-mala svg { width: 100%; height: 100%; display: block; position: relative; z-index: 1; }
+/* One shared radial glow that deepens as the mala fills — this is what makes
+   the ring feel alive without costing anything per bead. */
+.dd-mala-glow {
+  position: absolute; inset: -14%; border-radius: 50%; z-index: 0; opacity: .06;
+  background: radial-gradient(circle, #e8a13f 0%, rgba(232,161,63,.22) 42%, transparent 68%);
+  transition: opacity .5s var(--ease);
+}
+.dd-mala-track { fill: none; stroke: #12171d; stroke-width: 1; }
+.dd-bead { fill: #1d242c; transition: fill .18s var(--ease); }
+.dd-bead.on { fill: #e8a13f; }
+/* The sumeru: the head bead you turn back at, never counted. Always lit. */
+.dd-sumeru { fill: #b4442e; stroke: #d9662a; stroke-width: 1.4; }
+
+.dd-mala-mid {
+  position: absolute; inset: 0; z-index: 2; display: flex;
+  flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  pointer-events: none;
+}
+.dd-mala-n {
+  font-size: 66px; font-weight: 200; line-height: 1; color: #f7f2e8;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+.dd-mala-n.pulse { animation: dd-bead-pulse .16s var(--ease); }
+@keyframes dd-bead-pulse { 0% { transform: scale(1); } 45% { transform: scale(1.11); } 100% { transform: scale(1); } }
+.dd-mala-of { font-size: 12px; color: #6f6c66; letter-spacing: .06em; }
+
+.dd-beads-hint { font-size: 12px; color: #55524d; letter-spacing: .04em; }
+.dd-beads-bar { width: 100%; display: flex; gap: 10px; }
+.dd-beads-btn {
+  -webkit-appearance: none; appearance: none; cursor: pointer; flex: 1;
+  background: transparent; border: 1px solid #262c34; color: #b9b4ab;
+  border-radius: 999px; padding: 13px 0; font-size: 14px; font-family: inherit;
+}
+.dd-beads-done { border-color: #3a3027; color: #e8a13f; }
+
+/* Mala completed: one expanding ring of light. Purely additive and
+   pointer-events:none, so it can never swallow the next bead. */
+.dd-beads-flash {
+  position: absolute; left: 50%; top: 50%; width: 300px; height: 300px;
+  max-width: 84vw; max-height: 84vw; margin: -150px 0 0 -150px;
+  border-radius: 50%; pointer-events: none; opacity: 0;
+  border: 2px solid #e8a13f;
+}
+.dd-beads-flash.go { animation: dd-mala-done .9s var(--ease); }
+@keyframes dd-mala-done {
+  0%   { opacity: .85; transform: scale(.72); }
+  100% { opacity: 0;   transform: scale(1.5); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dd-mala-n.pulse, .dd-beads-flash.go { animation: none; }
+}
+
+/* Beads tallied so far, shown on the diary's in-progress card. */
+.dd-live-beads { font-size: 12px; opacity: .9; margin-bottom: 10px; }
+/* Inline settings affordance in the footer. ⚠ Temporary home — the plan puts
+   the diary's switches on the Settings page; this moves there with it. */
+.dd-link {
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  display: block; margin: 6px auto 0; padding: 0; background: none; border: 0;
+  color: var(--accent); font-family: inherit; font-size: 11px; text-decoration: underline;
+}
+
+/* ---- Recent / Progress tabs ---- */
+.dd-tabs { display: flex; gap: 6px; margin: 0 0 10px; }
+.dd-tab {
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  background: transparent; border: 0; padding: 6px 2px; margin-right: 12px;
+  font-family: inherit; font-size: 12px; font-weight: 600; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted); border-bottom: 2px solid transparent;
+}
+.dd-tab.on { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ---- Progress ----
+   ⚠ Deliberately no red, no grades and no goal rings anywhere in here. A day
+   without practice is the same neutral square as any other empty one. */
+.dd-st-block { margin-bottom: 20px; }
+.dd-st-block h4 {
+  margin: 0 0 8px 2px; font-size: 12px; font-weight: 600;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
+}
+.dd-st-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.dd-st-cell {
+  background: var(--surface); border: 1px solid var(--border-soft); border-radius: 12px;
+  padding: 11px 4px; text-align: center; display: flex; flex-direction: column; gap: 2px;
+}
+.dd-st-cell b { font-size: 17px; font-weight: 650; color: var(--text); line-height: 1.15; }
+.dd-st-cell span { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.dd-st-lines { margin-top: 9px; }
+.dd-st-lines > div {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border-soft); font-size: 13px;
+}
+.dd-st-lines > div:last-child { border-bottom: 0; }
+.dd-st-lines span { color: var(--muted); }
+.dd-st-lines b { font-weight: 600; color: var(--text); text-align: right; }
+.dd-st-foot { margin-top: 8px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+/* Heatmap: a week is a COLUMN, so a run of practice reads as a horizontal
+   line. Scrolls on its own if the phone is narrow — the page never does. */
+.dd-heat { display: flex; gap: 3px; overflow-x: auto; padding-bottom: 4px; }
+.dd-heat-w { display: flex; flex-direction: column; gap: 3px; flex: none; }
+.dd-heat-d { width: 13px; height: 13px; border-radius: 3px; background: var(--border-soft); }
+.dd-heat-d.l1 { background: #f6d3b4; }
+.dd-heat-d.l2 { background: #f0ab72; }
+.dd-heat-d.l3 { background: #e2823c; }
+.dd-heat-d.l4 { background: #c4551b; }
+/* Days that have not happened yet are absent, not empty — an unlived day must
+   not read as a day the user missed. */
+.dd-heat-d.fut { background: transparent; }
+.dd-heat-d.now { box-shadow: 0 0 0 1.5px var(--accent); }
+.dd-heat-key { display: flex; align-items: center; gap: 4px; margin-top: 7px; font-size: 10px; color: var(--muted); }
+.dd-heat-key i { width: 11px; height: 11px; border-radius: 3px; background: var(--border-soft); }
+.dd-heat-key i.l1 { background: #f6d3b4; }
+.dd-heat-key i.l2 { background: #f0ab72; }
+.dd-heat-key i.l3 { background: #e2823c; }
+.dd-heat-key i.l4 { background: #c4551b; }
+
+/* ---- backup ---- */
+.dd-backup {
+  margin-top: 24px; padding: 14px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--border-soft);
+}
+.dd-backup-h {
+  font-size: 12px; font-weight: 600; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+}
+.dd-backup-btns { display: flex; gap: 8px; }
+.dd-backup-btns .btn { flex: 1; justify-content: center; }
+.dd-backup-note { margin-top: 10px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+/* ---- restore preview ----
+   The file is user-supplied, so this always runs before anything is merged. */
+.dd-imp { text-align: center; padding: 4px 0 2px; }
+.dd-imp-n { font-size: 40px; font-weight: 250; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.dd-imp-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.dd-imp-range { font-size: 13px; color: var(--accent); font-weight: 600; margin-top: 8px; }
+.dd-imp-lines { margin: 14px 0 10px; text-align: left; }
+.dd-imp-lines > div {
+  display: flex; justify-content: space-between; gap: 10px;
+  padding: 7px 10px; border-bottom: 1px solid var(--border-soft); font-size: 13px;
+}
+.dd-imp-lines > div:last-child { border-bottom: 0; }
+.dd-imp-lines span { color: var(--muted); }
+.dd-imp-lines b { font-weight: 600; color: var(--text); }
+.dd-imp-note { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.dd-imp-err { font-size: 13px; color: var(--text); line-height: 1.55; padding: 8px 4px; }
+
+/* ---- manual entry ---- */
+.dd-add {
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  margin-left: auto; align-self: center;
+  background: transparent; border: 1px solid var(--border); border-radius: 999px;
+  padding: 4px 11px; font-family: inherit; font-size: 11px; font-weight: 600;
+  color: var(--accent); letter-spacing: .03em;
+}
+.dd-tabs { align-items: center; }
+/* ⚠ The sheet can hold four wheels plus two chip rows, which is taller than a
+   small phone. It scrolls inside itself; the page behind it never does. */
+.dd-man {
+  max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 40px);
+  overflow-y: auto; overflow-x: hidden;
+}
+.dd-man-row { display: flex; gap: 10px; }
+.dd-man-row .dd-man-w { flex: 1; min-width: 0; }
+.dd-man-lab {
+  text-align: center; font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: -2px;
+}
+.dd-man .dd-spin { padding: 2px 0 0; }
+.dd-man .dd-spin .m-dp-wheel { flex: 1 1 auto; }
+.dd-man-modes { margin-top: 10px; }
+.dd-man-when {
+  margin: 10px 2px 12px; text-align: center; font-size: 11.5px;
+  color: var(--muted); line-height: 1.45;
+}
+.dd-man-when.bad { color: #b4442e; }
+
+/* ---- shareable report ---- */
+.dd-backup-report { margin-top: 8px; }
+.dd-backup-report .btn { flex: 1; justify-content: center; }
+.dd-rep {
+  width: min(400px, 94vw);
+  max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 40px);
+  overflow-y: auto; overflow-x: hidden;
+}
+.dd-rep-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.dd-rep-chip {
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+  padding: 7px 13px; font-family: inherit; font-size: 12px; color: var(--muted);
+}
+.dd-rep-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+/* The preview is the real canvas, scaled down — what you see is exactly the
+   file that gets written, not an approximation of it. */
+.dd-rep-prev {
+  border-radius: 14px; overflow: hidden; border: 1px solid var(--border-soft);
+  background: var(--bg); margin-bottom: 14px; line-height: 0;
+}
+.dd-rep-prev canvas { display: block; width: 100%; height: auto; }
+
+/* ---- sitting reminder ---- */
+.dd-rem { margin-top: 20px; }
+.dd-rem-none { font-size: 12px; color: var(--muted); line-height: 1.55; }
+.dd-rem-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 4px 9px 10px; border-radius: 12px;
+  background: var(--bg); border: 1px solid var(--border-soft); margin-bottom: 7px;
+}
+.dd-rem-row.off { opacity: .55; }
+.dd-rem-main {
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  flex: 1; min-width: 0; text-align: left; background: none; border: 0;
+  padding: 0; font-family: inherit;
+}
+.dd-rem-t { font-size: 17px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.dd-rem-s { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.dd-rem-tog {
+  -webkit-appearance: none; appearance: none; cursor: pointer; flex: none;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  border-radius: 999px; padding: 4px 12px; font-family: inherit; font-size: 11px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+}
+.dd-rem-row:not(.off) .dd-rem-tog { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dd-rem-add { width: 100%; justify-content: center; margin-top: 4px; }
+/* Three wheels side by side need a little more room than two. */
+.dd-rem-editor .m-dp-wheel { flex: 1 1 auto; }
