@@ -201,6 +201,21 @@ function _specialMissing(error) {
 const _SPECIAL_COLS =
   "id,title_hi,title_en,body_hi,body_en,signature,place_hi,place_en,msg_date,posted_at,published,created_at,updated_at";
 
+// Friendly text when add_broadcast.sql hasn't been run. Matched on the RPC
+// names too: a missing FUNCTION reports "Could not find the function
+// public.approve_broadcast…" and never names the table.
+function _broadcastMissing(error) {
+  const m = (error && error.message) || "";
+  return /broadcast/i.test(m) && /does not exist|not find|schema cache/i.test(m)
+    ? "Important Updates aren't set up on the server yet. (Admin: run supabase/add_broadcast.sql.)"
+    : null;
+}
+// ⚠ ONE language, exactly as typed — no _hi/_en pair, deliberately unlike
+// _SPECIAL_COLS. See BROADCAST_PLAN.md §2.1; don't "fix" the missing pair.
+const _BROADCAST_COLS =
+  "id,title,body,attachments,author_id,author_name,approved_by,approver_name,approved_at," +
+  "published,posted_at,edited_at,notified_at,notified_devices,notified_sent,created_at,updated_at";
+
 async function _loadProfile(uid) {
   const { data, error } = await _sb.from("profiles").select("*").eq("id", uid).single();
   if (error) throw new Error(error.message);
@@ -587,6 +602,49 @@ function _firePush(payload) {
     console.warn("send-push failed:", e);
     _lastFire({ kind: payload && payload.kind, state: "threw", error: (e && e.message) || String(e) });
   }
+}
+
+// The AWAITED sibling of _firePush. Everything else in this app treats a
+// notification as fire-and-forget, on the principle that a push which fails to
+// send must not make a sent message look unsent. Important Updates is the one
+// place where the caller genuinely needs the answer:
+//
+//   • the delivery result ({devices, sent}) is written back onto the row, which
+//     is the only way to answer "did it actually go out?" afterwards;
+//   • the Resend button exists precisely for the case where this call FAILED
+//     while the row published — so the failure has to be visible, not swallowed.
+//
+// Still records wa:push:lastfire, so Settings → Notification diagnostics reads
+// this the same as every other push. Throws with the server's own reason text
+// rather than supabase-js's "non-2xx", which hides the body.
+async function _awaitPush(payload) {
+  _lastFire({ kind: payload && payload.kind, state: "sending" });
+  let r;
+  try {
+    r = await _sb.functions.invoke("send-push", { body: payload });
+  } catch (e) {
+    _lastFire({ kind: payload.kind, state: "threw", error: (e && e.message) || String(e) });
+    throw e;
+  }
+  if (r && r.error) {
+    let detail = r.error.message || String(r.error);
+    const ctx = r.error.context;
+    if (ctx && typeof ctx.text === "function") {
+      try {
+        const t = await ctx.text();
+        const j = JSON.parse(t);
+        if (j && j.error) detail = j.error;
+        _lastFire({ kind: payload.kind, state: "error", status: ctx.status, body: String(t).slice(0, 300) });
+      } catch (_) {
+        _lastFire({ kind: payload.kind, state: "error", error: detail });
+      }
+    } else {
+      _lastFire({ kind: payload.kind, state: "error", error: detail });
+    }
+    throw new Error(detail);
+  }
+  _lastFire({ kind: payload.kind, state: "ok", reply: r && r.data });
+  return (r && r.data) || {};
 }
 
 const WA = {
@@ -1410,6 +1468,236 @@ const WA = {
     const { error } = await _sb.from("special_messages").delete().eq("id", id);
     if (error) throw new Error(error.message);
     return { ok: true };
+  },
+
+  // ----- Important Updates ("broadcast") ---------------------------------
+  // Table: broadcasts (see supabase/add_broadcast.sql + BROADCAST_PLAN.md).
+  //
+  // ⚠ THE NAME IS NOT THE IDENTIFIER. Displayed as "Important Updates"
+  // (महत्वपूर्ण सूचना); every identifier stays `broadcast`, because "update" in
+  // this repo already means the OTA update machinery.
+  //
+  // ⚠ Published rows are readable by AUTHENTICATED ONLY — unlike Special
+  // Messages, which are world-readable. The audience is signed-in accounts, and
+  // the anon key is sitting in this very file.
+  //
+  // The two-person rule is in Postgres, not here. Nothing in this file can
+  // approve an update, and nothing here should try to pre-judge whether a
+  // button will be accepted — call the RPC and show its error.
+
+  async listBroadcasts(limit) {
+    const n = Math.max(1, Math.min(parseInt(limit, 10) || 300, 1000));
+    const { data, error } = await _sb.from("broadcasts").select(_BROADCAST_COLS)
+      .eq("published", true)
+      .order("posted_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .limit(n);
+    if (error) throw new Error(_broadcastMissing(error) || error.message);
+    return { messages: data || [] };
+  },
+
+  // Delta fetch for the offline cache: published rows changed since `sinceIso`
+  // (pass ""/null for everything), PLUS the full list of live ids so the cache
+  // can drop rows retracted on the server.
+  //
+  // ⚠ Delta on updated_at, NOT id. An edit — and a retraction — is an UPDATE to
+  // an existing row, and an id-based delta would never see it.
+  async syncBroadcasts(sinceIso) {
+    const PAGE = 1000, msgs = [];
+    for (let off = 0; off < 10000; off += PAGE) {
+      let q = _sb.from("broadcasts").select(_BROADCAST_COLS)
+        .eq("published", true).order("updated_at", { ascending: true })
+        .order("id", { ascending: true }).range(off, off + PAGE - 1);
+      if (sinceIso) q = q.gt("updated_at", sinceIso);
+      const { data, error } = await q;
+      if (error) throw new Error(_broadcastMissing(error) || error.message);
+      msgs.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    const ids = [];
+    for (let off = 0; off < 20000; off += PAGE) {
+      const { data, error } = await _sb.from("broadcasts")
+        .select("id").eq("published", true).order("id", { ascending: true })
+        .range(off, off + PAGE - 1);
+      if (error) throw new Error(error.message);
+      ids.push(...(data || []).map((r) => r.id));
+      if (!data || data.length < PAGE) break;
+    }
+    return { messages: msgs, ids, lastSync: msgs.length ? msgs[msgs.length - 1].updated_at : "" };
+  },
+
+  // The approval queue. Drafts are invisible to everyone but moderators — that
+  // is the `published or wa_is_mod()` half of the select policy, not a filter
+  // applied here. A member calling this gets an empty list from Postgres.
+  async listPendingBroadcasts() {
+    const { data, error } = await _sb.from("broadcasts").select(_BROADCAST_COLS)
+      .eq("published", false).order("created_at", { ascending: false }).limit(100);
+    if (error) throw new Error(_broadcastMissing(error) || error.message);
+    return { messages: data || [] };
+  },
+
+  // Write a draft. author_id / author_name are stamped by the before-insert
+  // trigger, and every approval + delivery field is force-blanked there — the
+  // client sends only the three things it is allowed to choose.
+  //
+  // ⚠ Upload attachments FIRST, insert second (the caller does this): a row
+  // pointing at a missing object is unrecoverable, an orphaned object is just
+  // garbage a sweep can collect.
+  async postBroadcast({ title, body, attachments }) {
+    const { data, error } = await _sb.from("broadcasts")
+      .insert({ title: title || null, body: String(body || ""),
+                attachments: attachments || [] })
+      .select(_BROADCAST_COLS).single();
+    if (error) throw new Error(_broadcastMissing(error) || error.message);
+    return { message: data };
+  },
+
+  // ⚠ Editing the text of an unsent update SILENTLY TEARS UP ITS APPROVAL — the
+  // row returns to the queue and a second admin must read it again. That is the
+  // whole point (BROADCAST_PLAN.md §4.3: write something benign, get it
+  // approved, edit it, send). The trigger does it; callers must TELL THE USER it
+  // is about to happen rather than being surprised by the row reappearing in
+  // "Awaiting approval".
+  async updateBroadcast(id, fields) {
+    const { data, error } = await _sb.from("broadcasts")
+      .update(fields).eq("id", id).select(_BROADCAST_COLS).single();
+    if (error) throw new Error(_broadcastMissing(error) || error.message);
+    return { message: data };
+  },
+
+  // Approve AND publish, in one indivisible step. There is deliberately no
+  // "approved but not yet sent" state — that window is where a second,
+  // unreviewed edit would live.
+  //
+  // ⚠ An RPC, never a plain UPDATE: approved_by is stamped from auth.uid()
+  // server-side, which the caller cannot forge. If this were an UPDATE the
+  // author could set it to a colleague's id and self-approve.
+  async approveBroadcast(id) {
+    const { data, error } = await _sb.rpc("approve_broadcast", { bid: id });
+    if (error) throw new Error(_broadcastMissing(error) || error.message);
+    return { message: data };
+  },
+
+  // Retract (sutradhar only, enforced by the update trigger). The cache's `ids`
+  // reconciliation makes it vanish from every phone on the next sync. Prefer
+  // this to deleteBroadcast — deletion leaves no trace and drops read receipts.
+  async retractBroadcast(id) {
+    return WA.updateBroadcast(id, { published: false });
+  },
+  async deleteBroadcast(id) {
+    const { error } = await _sb.from("broadcasts").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  },
+
+  // ---- the send itself --------------------------------------------------
+  // AWAITED, unlike every other push in this file, because the answer is the
+  // delivery result the confirm screen and the admin list both need, and
+  // because a silent failure here is an update that is live in the app with
+  // nobody told. Returns {devices, sent, pruned} or {skipped:"already sent"}.
+  async sendBroadcastPush(id) {
+    return _awaitPush({ kind: "broadcast", id: id });
+  },
+  // The approval ping to the OTHER admins. Fire-and-forget: a draft that fails
+  // to ping is still a draft sitting in the queue, and re-submitting pings
+  // again.
+  notifyBroadcastPending(id) {
+    _firePush({ kind: "broadcast_pending", id: id });
+  },
+  // How many devices the send would reach — counted the same way send-push
+  // resolves the audience, so the confirm screen's number is the real one.
+  async broadcastAudienceCount() {
+    const { data, error } = await _sb.rpc("broadcast_audience_count");
+    if (error) return null;              // a missing RPC must not block the send
+    return typeof data === "number" ? data : null;
+  },
+  // Record what actually happened. The only delivery field the client may
+  // write, and only once — the trigger refuses to let it be cleared, because
+  // clearing it would unlock editing an update that people have already read.
+  async recordBroadcastDelivery(id, devices, sent) {
+    return WA.updateBroadcast(id, {
+      notified_at: new Date().toISOString(),
+      notified_devices: typeof devices === "number" ? devices : null,
+      notified_sent: typeof sent === "number" ? sent : null,
+    });
+  },
+  // ⚠ A DELIBERATE ADMIN ACTION, never a side effect of pressing Resend. The
+  // sent key is the only thing between a double-tap and hundreds of duplicate
+  // notifications; the normal Resend path re-invokes WITHOUT clearing it, so a
+  // push that really went out is skipped rather than repeated.
+  async clearBroadcastSentKey(id) {
+    const { error } = await _sb.rpc("clear_broadcast_sent_key", { bid: id });
+    if (error) throw new Error(_broadcastMissing(error) || error.message);
+    return { ok: true };
+  },
+
+  // ---- read receipts ----------------------------------------------------
+  // user_id is stamped by the trigger. A duplicate is the primary key doing its
+  // job — swallowed exactly as addReaction() does. Fire-and-forget by contract:
+  // never block a render on recording that it happened.
+  async markBroadcastRead(id) {
+    const { error } = await _sb.from("broadcast_reads").insert({ broadcast_id: id });
+    if (error && !/duplicate key|23505/i.test(error.message || "")) throw new Error(error.message);
+    return { ok: true };
+  },
+  // {"<id>": count} for the admin list. An RPC rather than a select so the list
+  // doesn't pull one row per reader per update.
+  async broadcastReadCounts() {
+    const { data, error } = await _sb.rpc("broadcast_read_counts");
+    if (error) return {};
+    return data || {};
+  },
+
+  // ---- attachments ------------------------------------------------------
+  // The Satsang picker path pointed at a DIFFERENT bucket. satsang-media's read
+  // policy is wa_member_ok(), and an Important Update reaches every signed-in
+  // account including visitors — who would be locked out of an attachment on an
+  // announcement addressed to them.
+  //
+  // ⚠ Same three gates as everywhere else: MEDIA_MIMES here, the extension
+  // check in app.js, and the bucket's allowed_mime_types. Audio and video are
+  // never allowed. Don't widen any of them.
+  async uploadBroadcastMedia(blob, name, extra) {
+    const mime = blob.type || "application/octet-stream";
+    if (!WA.MEDIA_MIMES.includes(mime)) {
+      throw new Error("Only images and PDF files can be attached to an update.");
+    }
+    const ext = (mime === "application/pdf") ? "pdf" : (mime.split("/")[1] || "bin");
+    const rand = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+    const path = `${rand}.${ext}`;
+    const { error } = await _sb.storage.from("broadcast-media")
+      .upload(path, blob, { contentType: mime, upsert: false });
+    if (error) {
+      if (/Bucket not found|not found/i.test(error.message || "")) {
+        throw new Error("Attachments aren't set up yet. (Admin: run section 9 of supabase/add_broadcast.sql.)");
+      }
+      throw new Error(error.message);
+    }
+    return Object.assign({ path, mime, bytes: blob.size, name: name || "" }, extra || {});
+  },
+
+  // The bucket is PRIVATE, so rendering needs signed URLs. ⚠ Batched — sign
+  // every image in the update in ONE call before the first paint, or it is a
+  // round trip per picture. Returns {path: url}.
+  async signedBroadcastUrls(paths, seconds) {
+    if (!paths || !paths.length) return {};
+    const { data, error } = await _sb.storage.from("broadcast-media")
+      .createSignedUrls(paths, seconds || 3600);
+    if (error) throw new Error(error.message);
+    const out = {};
+    (data || []).forEach((d) => { if (d && d.path && d.signedUrl) out[d.path] = d.signedUrl; });
+    return out;
+  },
+
+  // Live updates while the Important Updates screen is open (foreground only).
+  // Can't filter UPDATE events server-side by `published`, so this just signals
+  // "something changed" and the caller re-runs the cheap delta sync.
+  subscribeBroadcasts({ onChange }) {
+    const ch = _sb.channel("wa-broadcast")
+      .on("postgres_changes", { event: "*", schema: "public", table: "broadcasts" },
+          () => { if (onChange) onChange(); })
+      .subscribe();
+    return { close() { try { _sb.removeChannel(ch); } catch (_) {} } };
   },
 
   // ----- Personal data backup (favourites + notes) ------------------------

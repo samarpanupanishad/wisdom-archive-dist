@@ -3248,3 +3248,161 @@ body.dd-sitting { overflow: hidden; }
 .dd-rem-add { width: 100%; justify-content: center; margin-top: 4px; }
 /* Three wheels side by side need a little more room than two. */
 .dd-rem-editor .m-dp-wheel { flex: 1 1 auto; }
+
+/* ==========================================================================
+   IMPORTANT UPDATES ("broadcast") — BROADCAST_PLAN.md §6
+   Composer, approval strip, attachment strip, confirm screen.
+
+   ⚠ Namespace `bc-`. `ax-` (accessBox), `an-` (Anubhuti), `at-` (Admin Talks),
+   `sx-`, `mx-` (message index) and `dv-` (device box) are all taken.
+   ========================================================================== */
+
+/* ---- attachments (reader + review + desktop card) ---- */
+.bc-atts { display: flex; flex-direction: column; gap: 5px; padding: 6px 12px 0; flex: none; }
+.bc-atts-grid { display: grid; grid-template-columns: 1fr 1fr; }
+.bc-att-img {
+  border: none; padding: 0; background: var(--border-soft); border-radius: 10px;
+  overflow: hidden; cursor: pointer; display: block; width: 100%; max-height: 220px;
+}
+.bc-atts-grid .bc-att-img { aspect-ratio: 1 !important; max-height: none; }
+.bc-att-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* A PDF is a tappable ROW, never rendered inline — the WebView has no viewer
+   and would navigate away from the app. */
+.bc-att-doc {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  border: 1px solid var(--border-soft); background: var(--surface);
+  border-radius: 10px; padding: 8px 10px; cursor: pointer; font-family: inherit;
+}
+.bc-att-doc:hover { border-color: var(--accent); }
+.bc-att-ico { font-size: 18px; flex: 0 0 auto; }
+.bc-att-name { font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.bc-att-size { font-size: 11px; color: var(--muted); flex: none; }
+
+/* A link in an update body. Opened through the system browser (see
+   openExternalLink) — never followed by the WebView, which would replace the
+   SPA and strand the user outside the app with no way back in. */
+.bc-link { color: var(--accent); text-decoration: underline; word-break: break-word; }
+
+/* ---- the overlay shell shared by composer / review / confirm ---- */
+.bc-ov {
+  position: fixed; inset: 0; z-index: 1400; background: rgba(20, 16, 28, .5);
+  display: flex; align-items: flex-end; justify-content: center; padding: 0;
+}
+@media (min-width: 720px) { .bc-ov { align-items: center; padding: 24px; } }
+.bc-sheet {
+  background: var(--surface); width: 100%; max-width: 560px; max-height: 92vh;
+  border-radius: 16px 16px 0 0; display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, .22);
+}
+@media (min-width: 720px) { .bc-sheet { border-radius: 16px; } }
+.bc-sheet-head {
+  display: flex; align-items: center; gap: 10px; padding: 13px 14px;
+  border-bottom: 1px solid var(--border-soft); flex: none;
+}
+.bc-sheet-title { font: 600 15px var(--serif); color: var(--accent); flex: 1; min-width: 0; }
+.bc-x {
+  -webkit-appearance: none; appearance: none; border: 0; background: none; cursor: pointer;
+  font-size: 17px; color: var(--muted); padding: 2px 6px; line-height: 1;
+}
+.bc-sheet-body { padding: 14px; overflow-y: auto; flex: 1; min-height: 0; }
+.bc-sheet-bar { padding: 10px 14px; border-top: 1px solid var(--border-soft); flex: none; }
+.bc-bar-inner { display: flex; gap: 8px; }
+.bc-btn {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600;
+}
+.bc-btn:disabled { opacity: .55; cursor: default; }
+.bc-primary { background: var(--accent); border-color: var(--accent); color: #fff; margin-left: auto; }
+.bc-danger { color: #b23c3c; border-color: #e6c7c7; }
+.bc-sm { padding: 6px 10px; font-size: 12px; margin-left: 0; }
+
+/* ---- composer ---- */
+.bc-form { display: flex; flex-direction: column; gap: 9px; }
+.bc-f-title, .bc-f-body {
+  width: 100%; font-family: inherit; font-size: 14px; color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px;
+  background: var(--bg); resize: vertical;
+}
+.bc-f-title:focus, .bc-f-body:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.bc-f-body { min-height: 150px; line-height: 1.55; }
+.bc-f-meta { display: flex; justify-content: flex-end; }
+.bc-f-count { font-size: 11px; color: var(--muted); }
+.bc-f-atts { display: flex; flex-direction: column; gap: 5px; }
+.bc-f-att {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 10px;
+  border: 1px solid var(--border-soft); border-radius: 9px; background: var(--bg);
+}
+.bc-f-att-n { flex: 1; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-f-att-x {
+  -webkit-appearance: none; appearance: none; border: 0; background: none; cursor: pointer;
+  color: var(--muted); font-size: 13px; padding: 2px 5px; line-height: 1;
+}
+/* The composer's most important sentence: an edit tears up the approval. */
+.bc-f-warn {
+  font-size: 12px; line-height: 1.5; color: #8a5a20; background: #fdf4e6;
+  border: 1px solid #f0dcbc; border-radius: 9px; padding: 8px 10px;
+}
+.bc-f-err {
+  font-size: 12.5px; line-height: 1.5; color: #a33; background: #fdf0f0;
+  border: 1px solid #f0d4d4; border-radius: 9px; padding: 8px 10px;
+}
+
+/* ---- review ---- */
+.bc-review { display: flex; flex-direction: column; gap: 9px; }
+.bc-r-by { font-size: 12px; color: var(--muted); }
+.bc-r-title { font: 700 16px var(--serif); color: var(--accent); }
+.bc-r-body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.bc-review .bc-atts { padding: 4px 0 0; }
+
+/* ---- confirm ---- */
+.bc-confirm { display: flex; flex-direction: column; gap: 11px; }
+.bc-c-lead { font-size: 13.5px; line-height: 1.55; }
+.bc-c-n { font-weight: 700; color: var(--accent); }
+.bc-c-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+/* Deliberately styled as a NOTIFICATION, not as a quote block: the approver is
+   being shown the actual artefact that will land on hundreds of phones, and it
+   has to read as one. */
+.bc-c-tray {
+  border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px;
+  background: var(--bg);
+}
+.bc-c-tray-app { font-size: 10.5px; color: var(--muted); margin-bottom: 3px; }
+.bc-c-tray-t { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.bc-c-tray-b { font-size: 13px; color: var(--text); margin-top: 1px; line-height: 1.45; }
+.bc-c-by { font-size: 12.5px; color: var(--muted); }
+
+/* ---- approval strip (top of the Important Updates list, moderators only) ---- */
+.bc-admin { margin: 0 0 10px; }
+.bc-admin-head {
+  display: flex; align-items: center; gap: 7px; padding: 9px 12px 5px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+}
+.bc-admin-warn { color: #b23c3c; }
+.bc-admin-n {
+  background: var(--accent); color: #fff; border-radius: 999px;
+  padding: 1px 7px; font-size: 10.5px; letter-spacing: 0;
+}
+.bc-admin-err { padding: 10px 12px; font-size: 12.5px; color: #a33; }
+.bc-queue { display: flex; flex-direction: column; gap: 6px; padding: 0 12px; }
+.bc-q-row {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+  border: 1px solid var(--border-soft); border-radius: 11px; background: var(--surface);
+}
+.bc-q-unsent { border-color: #f0d4d4; background: #fdf7f7; }
+.bc-q-meta { flex: 1; min-width: 0; }
+.bc-q-by { font-size: 11px; color: var(--muted); }
+.bc-q-t { font-size: 13.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-q-p { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-q-acts { display: flex; align-items: center; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+/* Your OWN draft gets this line and no approve button — the database would
+   refuse it (broadcasts_two_person), and an offered-then-rejected button reads
+   as a bug rather than as the rule. */
+.bc-q-wait { font-size: 11.5px; color: var(--muted); font-style: italic; }
+
+/* ---- desktop page ---- */
+.bc-newbar { padding: 0 0 12px; }
+.bc-card .bc-c-title { font: 700 16px var(--serif); color: var(--accent); margin-bottom: 4px; }
+.bc-card .bc-c-body { white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+.bc-card .bc-c-foot { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+.bc-card .bc-atts { padding: 8px 0 0; }

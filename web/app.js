@@ -244,6 +244,10 @@ async function initAuthState() {
 async function signOutToGate() {
   try { await WA.logout(); } catch {}
   store.setToken(""); try { localStorage.removeItem("wa:user"); } catch {}
+  // Important Updates are addressed to an ACCOUNT, not to a device (the rows
+  // are readable by `authenticated` only). Leaving them cached would show one
+  // person's announcements to whoever signs in next on this phone.
+  try { BROADCAST.forget(); } catch {}
   refreshModNav();
   toast("Signed out");
   AUTH_GATE.reopen();
@@ -536,6 +540,7 @@ const NAV = [
   { route: "dhyan", label: "Personal Dhyan Diary", hash: "#/dhyan", icon: "dhyan" },
   { route: "browse-date", label: "Browse by Date", hash: "#/browse/date", icon: "calendar" },
   { route: "random", label: "Your Lucky Msg for Today", hash: "#/random", icon: "shuffle" },
+  { route: "broadcast", label: "Important Updates", hash: "#/broadcast", icon: "spark" },
   { route: "special", label: "Special Telegram Messages", hash: "#/special", icon: "spark" },
   { route: "letterpad", label: "Guru's Letterpad Messages", hash: "#/letterpad", icon: "letter" },
   { route: "anubhuti", label: "Anubhuti Sharing", hash: "#/anubhuti", icon: "lotus" },
@@ -553,6 +558,7 @@ function buildNav() {
   NAV.forEach((it) => {
     if (it.divider) { nav.appendChild(el(`<div class="divider"></div>`)); return; }
     const badge = it.route === "special" ? `<span class="nav-badge" data-special-badge hidden></span>`
+      : it.route === "broadcast" ? `<span class="nav-badge" data-broadcast-badge hidden></span>`
       : it.route === "letterpad" ? `<span class="nav-badge" data-letterpad-badge hidden></span>`
       : it.route === "anubhuti" ? `<span class="nav-badge" data-anubhuti-badge hidden></span>`
       : it.route === "admintalks" ? `<span class="nav-badge" data-admintalk-badge hidden></span>` : "";
@@ -1693,6 +1699,125 @@ async function mediaUrls(paths) {
 }
 
 function isImageAtt(a) { return a && a.mime && a.mime.indexOf("image/") === 0; }
+
+// ---- Important Updates: the same two helpers, pointed at the other bucket ---
+// `broadcast-media` is separate from `satsang-media` because the two have
+// different readers: satsang's SELECT policy is wa_member_ok(), while an
+// Important Update reaches EVERY signed-in account including visitors — who
+// would otherwise be locked out of an attachment on an announcement addressed
+// to them. Same shape, same caching, different bucket. See BROADCAST_PLAN §3.5.
+const BC_MEDIA_URLS = new Map();       // path -> {url, exp}
+async function bcMediaUrls(paths) {
+  const now = Date.now();
+  const need = paths.filter((p) => { const e = BC_MEDIA_URLS.get(p); return !e || e.exp < now + 60000; });
+  if (need.length) {
+    const got = await WA.signedBroadcastUrls(need, 3600);
+    Object.keys(got).forEach((p) => BC_MEDIA_URLS.set(p, { url: got[p], exp: now + 3300000 }));
+  }
+  const out = {};
+  paths.forEach((p) => { const e = BC_MEDIA_URLS.get(p); if (e) out[p] = e.url; });
+  return out;
+}
+
+// ⚠ An external link must NOT be followed by the WebView. Inside the Capacitor
+// shell that REPLACES THE SPA — the whole app is gone and there is no way back
+// to it short of force-quitting. @capacitor/browser opens a real system browser
+// chrome over the app instead, which the user dismisses back into it.
+// On desktop this is an ordinary new tab.
+function openExternalLink(url) {
+  const B = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser;
+  if (B && B.open) { B.open({ url }).catch(() => window.open(url, "_blank", "noopener")); return; }
+  window.open(url, "_blank", "noopener");
+}
+
+// Escape first, THEN linkify — never the other way round, or the URL's own
+// characters get mangled and, worse, text between links stops being escaped.
+// Internal "#/…" links are left alone: they are SPA routes and the normal
+// anchor handling already carries them.
+const BC_URL_RE = /\bhttps?:\/\/[^\s<>"')]+/g;
+function bcLinkify(text) {
+  return escapeHtml(String(text || "")).replace(BC_URL_RE, (u) => {
+    // A trailing . or , is almost always sentence punctuation, not URL.
+    const trail = /[.,;:!?]+$/.exec(u);
+    const href = trail ? u.slice(0, -trail[0].length) : u;
+    return `<a class="bc-link" href="${href}" data-ext="1">${href}</a>` + (trail ? trail[0] : "");
+  });
+}
+
+function bcAttachmentsHtml(atts) {
+  if (!atts || !atts.length) return "";
+  const cells = atts.map((a, i) => {
+    if (isImageAtt(a)) {
+      // ⚠ w/h are stored at upload so the layout reserves the aspect ratio here
+      // and nothing jumps when the signed URL lands a beat later.
+      const ratio = (a.w && a.h) ? ` style="aspect-ratio:${a.w}/${a.h}"` : "";
+      return `<button type="button" class="bc-att-img" data-att="${i}"${ratio}><img alt="" loading="lazy" decoding="async"></button>`;
+    }
+    // ⚠ PDFs are a tappable ROW opened through the system browser, never
+    // rendered inline — the WebView has no PDF viewer and would download or
+    // navigate away from the app.
+    return `<button type="button" class="bc-att-doc" data-att="${i}">
+        <span class="bc-att-ico">📄</span>
+        <span class="bc-att-name">${escapeHtml(a.name || "File")}</span>
+        <span class="bc-att-size">${a.bytes ? Math.max(1, Math.round(a.bytes / 1024)) + " KB" : ""}</span>
+      </button>`;
+  }).join("");
+  return `<div class="bc-atts${atts.length > 1 ? " bc-atts-grid" : ""}">${cells}</div>`;
+}
+
+// One BATCH sign for every image in the message before the first paint — one
+// round trip, not one per picture — then fill the srcs in.
+async function bcPaintAttachments(root, atts) {
+  const imgs = (atts || []).filter(isImageAtt);
+  if (!imgs.length) return;
+  let urls;
+  try { urls = await bcMediaUrls(imgs.map((a) => a.path)); } catch { return; }
+  const wn = window.WA_NATIVE;
+  for (let i = 0; i < atts.length; i++) {
+    if (!isImageAtt(atts[i])) continue;
+    const img = root.querySelector(`.bc-att-img[data-att="${i}"] img`);
+    if (!img || !urls[atts[i].path]) continue;
+    let src = urls[atts[i].path];
+    // Keep it readable offline. ⚠ Guarded: app.js ships OTA to shells whose
+    // bundled wa-native.js predates cacheMedia().
+    if (wn && wn.isNative && wn.cacheMedia) {
+      try { const c = await wn.cacheMedia(src); if (c) src = c; } catch (_) {}
+    }
+    img.src = src;
+  }
+}
+
+// Open one attachment. Images go to the same zoom shell a shared photo uses;
+// a PDF goes to the system browser (see openExternalLink).
+async function bcOpenAttachment(atts, index) {
+  const att = atts[index];
+  if (!att) return;
+  let url;
+  try { url = (await bcMediaUrls([att.path]))[att.path]; } catch { url = null; }
+  if (!url) { toast("Couldn't open that file."); return; }
+  if (!isImageAtt(att)) { openExternalLink(url); return; }
+  if (typeof MOBILE_UI !== "undefined" && MOBILE_UI.active) {
+    const imgAtts = atts.filter(isImageAtt);
+    let urls;
+    try { urls = await bcMediaUrls(imgAtts.map((a) => a.path)); } catch { urls = { [att.path]: url }; }
+    MOBILE_UI.openChatZoom(imgAtts.map((a) => urls[a.path]).filter(Boolean), imgAtts.indexOf(att));
+    return;
+  }
+  const box = el(`<div class="wc-lightbox"><img alt=""><button class="wc-lb-x" aria-label="Close">✕</button></div>`);
+  box.querySelector("img").src = url;
+  box.addEventListener("click", (e) => { if (e.target !== box.querySelector("img")) box.remove(); });
+  document.body.appendChild(box);
+}
+
+// Read receipts. Once per id per session — the reader re-focuses a message
+// every time it scrolls back into view, and each of those is not a new read.
+const _bcRead = new Set();
+function bcNoteRead(id) {
+  const key = String(id);
+  if (!key || _bcRead.has(key)) return;
+  _bcRead.add(key);
+  if (window.WA && WA.markBroadcastRead) WA.markBroadcastRead(id).catch(() => {});
+}
 
 // A media-only message still needs words: `text` is NOT NULL, and the thread
 // index, the push preview and any un-updated shell all read it.
@@ -3834,6 +3959,7 @@ async function route() {
   if (seg[0] === "favorites") { setActiveNav("favorites"); return renderFavorites(); }
   if (seg[0] === "browse") { const mode = ["date", "month", "year"].includes(seg[1]) ? seg[1] : "month"; setActiveNav("browse-" + mode); return renderBrowse(mode, params); }
   if (seg[0] === "random") { setActiveNav("random"); return renderRandom(); }
+  if (seg[0] === "broadcast") { setActiveNav("broadcast"); return renderBroadcast(); }
   if (seg[0] === "special") { setActiveNav("special"); return renderSpecial(); }
   if (seg[0] === "letterpad") { setActiveNav("letterpad"); return renderLetterpad(); }
   if (seg[0] === "anubhuti") { setActiveNav("anubhuti"); return renderAnubhuti(params); }
@@ -4732,6 +4858,7 @@ const SPECIAL = (() => {
 function refreshAnyMsgDot() {
   const n = (typeof SPECIAL !== "undefined" ? SPECIAL.unread() : 0) +
             (typeof LETTERPAD !== "undefined" ? LETTERPAD.unread() : 0) +
+            (typeof BROADCAST !== "undefined" ? BROADCAST.unread() : 0) +
             (typeof SATSANG !== "undefined" ? SATSANG.unread() : 0) +
             (typeof ANUBHUTI !== "undefined" ? ANUBHUTI.unread() : 0) +
             // Only ever non-zero for a moderator — ADMINTALK zeroes itself for
@@ -5496,6 +5623,104 @@ const LETTERPAD = (() => {
 })();
 
 // ==========================================================================
+// IMPORTANT UPDATES ("broadcast") — the operator's announcement channel.
+//
+// ⚠ THE NAME IS NOT THE IDENTIFIER. Shown to users as "Important Updates"
+// (महत्वपूर्ण सूचना); every identifier stays `broadcast`, because "update" in
+// this repo already means the OTA update machinery (updateBase, min_shell,
+// wa:update*). See BROADCAST_PLAN.md §0.
+//
+// Same badge/cache contract as SPECIAL — cached / sync / unread / markSeen /
+// refreshBadges / lastSeen — so refreshAnyMsgDot() treats it like the others.
+//
+// ⚠ Rows are readable by SIGNED-IN accounts only (the table's select policy is
+// `to authenticated`), unlike Special Messages which are world-readable. A
+// signed-out device therefore syncs nothing and correctly shows an empty
+// section rather than an error.
+//
+// ⚠ NO APK snapshot.json seed, deliberately — unlike SPECIAL, which bundles ~900
+// backfilled messages. There is no history to bundle: the first Important
+// Update will be written after this ships. Don't "fix" the missing seed().
+// ==========================================================================
+const BROADCAST = (() => {
+  const CACHE_KEY = "wa:broadcast:cache", SYNC_KEY = "wa:broadcast:lastSync",
+        SEEN_KEY = "wa:broadcast:lastSeen";
+  // Feed order: when it was approved+published, newest first; id breaks ties.
+  // String compare is safe for ISO timestamps.
+  const sortKey = (r) => (r.posted_at || r.created_at || "") + "|" + String(r.id).padStart(12, "0");
+  function cached() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "[]"); } catch { return []; } }
+  function save(rows) {
+    rows.sort((a, b) => sortKey(b) < sortKey(a) ? -1 : sortKey(b) > sortKey(a) ? 1 : 0);
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(rows)); } catch {}
+  }
+  function lastSeenId() { try { return parseInt(localStorage.getItem(SEEN_KEY) || "0", 10) || 0; } catch { return 0; } }
+  // ⚠ Counts MESSAGES, not threads — like SPECIAL and ADMINTALK, unlike SATSANG.
+  function unread() { const seen = lastSeenId(); return cached().filter((r) => r.id > seen).length; }
+  function markSeen() {
+    const top = cached().reduce((m, r) => Math.max(m, r.id), 0);
+    try { localStorage.setItem(SEEN_KEY, String(top)); } catch {}
+    refreshBadges();
+  }
+  function merge(rows) {
+    if (!rows || !rows.length) return cached();
+    const byId = new Map(cached().map((r) => [r.id, r]));
+    rows.forEach((r) => byId.set(r.id, r));
+    const all = [...byId.values()];
+    save(all);
+    return all;
+  }
+  // Pull changes from Supabase into the cache. Never throws into a badge/boot
+  // path unawaited — callers that only want freshness use .catch(()=>{}).
+  let _inflight = null;
+  function sync() {
+    if (!window.WA || !WA.syncBroadcasts) return Promise.resolve(cached());
+    if (_inflight) return _inflight;
+    _inflight = (async () => {
+      // A fresh install must not be greeted with a badge for announcements it
+      // was never around for.
+      const firstRun = !localStorage.getItem(SEEN_KEY) && !cached().length;
+      const since = localStorage.getItem(SYNC_KEY) || "";
+      const d = await WA.syncBroadcasts(since);
+      let rows = merge(d.messages);
+      if (firstRun && rows.length) {
+        const top = rows.reduce((m, r) => Math.max(m, r.id), 0);
+        try { localStorage.setItem(SEEN_KEY, String(top)); } catch {}
+      }
+      // ⚠ Reconcile retractions: drop cached rows the server no longer
+      // publishes. This is what makes a retracted update actually disappear
+      // from a phone — without it, `published = false` would be invisible to
+      // every device that had already synced the row.
+      const live = new Set(d.ids || []);
+      if (d.ids && rows.some((r) => !live.has(r.id))) {
+        rows = rows.filter((r) => live.has(r.id));
+        save(rows);
+      }
+      if (d.lastSync) try { localStorage.setItem(SYNC_KEY, d.lastSync); } catch {}
+      refreshBadges();
+      return rows;
+    })();
+    return _inflight.finally(() => { _inflight = null; });
+  }
+  function refreshBadges() {
+    const n = unread(), txt = n > 99 ? "99+" : String(n);
+    document.querySelectorAll("[data-broadcast-badge]").forEach((b) => { b.hidden = !n; b.textContent = txt; });
+    refreshAnyMsgDot();
+  }
+  // Signing out is not "these were read" — it is a different person's device
+  // from here on. Clearing the cache keeps one account's announcements out of
+  // the next account's list, the same way a wiped install starts clean.
+  function forget() {
+    try {
+      localStorage.removeItem(CACHE_KEY);
+      localStorage.removeItem(SYNC_KEY);
+      localStorage.removeItem(SEEN_KEY);
+    } catch {}
+    refreshBadges();
+  }
+  return { cached, sync, unread, markSeen, refreshBadges, forget, lastSeen: lastSeenId };
+})();
+
+// ==========================================================================
 // MSG_CORPUS — the ONE place that knows what TEXT a non-daily message carries
 // ==========================================================================
 // Special / Letterpad / Anushthan live in client caches, never in wisdom.db, so
@@ -5538,13 +5763,14 @@ const MSG_CORPUS = (() => {
     return ANUSHTHAN_MESSAGES.concat(borrowed);
   }
 
-  const KEYS = ["special", "letterpad", "anushthan"];
+  const KEYS = ["special", "letterpad", "anushthan", "broadcast"];
   // `typeof` guards: HindiType.load() can be kicked off from the desktop top-bar
   // wiring, which evaluates ABOVE these consts — reached before they initialise
   // it would be a TDZ throw, not an undefined.
   function rowsOf(key) {
     if (key === "special") return (typeof SPECIAL !== "undefined" && SPECIAL.cached()) || [];
     if (key === "letterpad") return (typeof LETTERPAD !== "undefined" && LETTERPAD.items()) || [];
+    if (key === "broadcast") return (typeof BROADCAST !== "undefined" && BROADCAST.cached()) || [];
     return anushthanRows();
   }
   // One row flattened to {id, date, title, body, foot} in ONE language. Mirrors
@@ -5567,6 +5793,24 @@ const MSG_CORPUS = (() => {
         title: pick("title_en", "title_hi"),
         body: pick("body_en", "body_hi"),
         foot: [r.signature || "", pick("place_en", "place_hi")].filter(Boolean).join(" · "),
+      };
+    }
+    // ⚠ Important Updates have ONE body, exactly as typed — no _hi/_en pair to
+    // pick between (BROADCAST_PLAN.md §2.1). So the SAME text is returned for
+    // both languages, and `lang` is ignored entirely.
+    //
+    // The consequence is deliberate: a Devanagari word matches while the UI is
+    // in English mode. That is correct — the message genuinely contains that
+    // word — and it keeps the search chip counts honest, since a chip count is
+    // a promise that that many messages come back. Do NOT try to guess the
+    // language of the body.
+    if (key === "broadcast") {
+      return {
+        id,
+        date: ((r.posted_at || r.created_at || "").slice(0, 10)),
+        title: r.title || "",
+        body: r.body || "",
+        foot: r.author_name ? "— " + r.author_name : "",
       };
     }
     // Letterpad + BORROWED anushthan rows share the letterpad shape; literal
@@ -6178,6 +6422,490 @@ async function renderAdminTalks() {
   $view.innerHTML = `<div class="an-page at-page"></div>`;
   if (!current(nav)) return;
   await mountAdminTalks($view.querySelector(".at-page"));
+}
+
+// --------------------------------------------------------------------------
+// IMPORTANT UPDATES — the composer, the approval queue and the confirm screen.
+//   #/broadcast (desktop)      #/m/broadcast (mobile)
+//
+// One set of builders for both shells — the arrangement mountAdminTalks() uses.
+// The composer is deliberately on DESKTOP as well as the phone: long
+// announcements are miserable to type on a phone, and the desktop SPA is where
+// the operator works.
+//
+// ⚠ Nothing here is a security control. It decides what to OFFER; Postgres
+// decides what to allow. The two-person rule is a CHECK constraint and a
+// SECURITY DEFINER RPC (supabase/add_broadcast.sql), because the anon key ships
+// inside wa-supabase.js and anyone can call PostgREST without loading this file.
+//
+// ⚠ CSS namespace is `bc-`. `ax-`, `an-`, `at-`, `sx-`, `mx-` and `dv-` are all
+// taken and would collide.
+// --------------------------------------------------------------------------
+
+// The tray preview truncations. ⚠ THESE MUST MATCH send-push's `broadcast`
+// branch exactly (supabase/functions/send-push/index.ts). The confirm screen's
+// whole purpose is showing the approver what will actually appear on 400
+// phones — an approximation would be worse than showing nothing, because it
+// would be believed. Change one, change both.
+const BC_TITLE_MAX = 80, BC_BODY_MAX = 140;
+const BC_FALLBACK_TITLE = "महत्वपूर्ण सूचना";
+const BC_FALLBACK_BODY = "एक नई महत्वपूर्ण सूचना आई है";
+function bcTrayPreview(row) {
+  const title = String(row.title || "").replace(/\s+/g, " ").trim();
+  const body = String(row.body || "").replace(/\s+/g, " ").trim();
+  return {
+    title: ("📢 " + (title || BC_FALLBACK_TITLE)).slice(0, BC_TITLE_MAX),
+    body: body.slice(0, BC_BODY_MAX) || BC_FALLBACK_BODY,
+  };
+}
+
+// A small overlay shell the three screens below share.
+function bcSheet(titleText, bodyNode, barNode) {
+  const ov = el(`<div class="bc-ov" role="dialog" aria-modal="true">
+      <div class="bc-sheet">
+        <div class="bc-sheet-head">
+          <div class="bc-sheet-title">${escapeHtml(titleText)}</div>
+          <button type="button" class="bc-x" aria-label="Close">✕</button>
+        </div>
+        <div class="bc-sheet-body"></div>
+        <div class="bc-sheet-bar"></div>
+      </div>
+    </div>`);
+  ov.querySelector(".bc-sheet-body").appendChild(bodyNode);
+  ov.querySelector(".bc-sheet-bar").appendChild(barNode);
+  const close = () => ov.remove();
+  ov.querySelector(".bc-x").addEventListener("click", close);
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  document.body.appendChild(ov);
+  return { ov, close };
+}
+
+// ---- the composer ----------------------------------------------------------
+// `row` = an existing draft being edited; omit to write a new one. `onDone` is
+// called after a successful save so the caller can repaint its list.
+//
+// ⚠ Attachments UPLOAD FIRST and the row is written second. A row pointing at a
+// missing object is unrecoverable; an orphaned object is just garbage a sweep
+// can collect.
+function openBroadcastComposer(row, onDone) {
+  const editing = !!row;
+  const existing = (row && row.attachments) || [];
+  // Already-sent rows are the sutradhar's to correct; the trigger enforces it,
+  // this only avoids offering a button that will be refused.
+  const afterSend = !!(row && row.notified_at);
+  let picked = [];                    // {file, blob, w, h, name}
+
+  const body = el(`<div class="bc-form">
+      <input type="text" class="bc-f-title" maxlength="200" placeholder="Title (optional)">
+      <textarea class="bc-f-body" maxlength="8000" rows="8" placeholder="Write the update — a paragraph or two. Links open in the phone's browser."></textarea>
+      <div class="bc-f-meta"><span class="bc-f-count"></span></div>
+      <div class="bc-f-atts"></div>
+      <input type="file" class="bc-f-file" accept="${MEDIA_ACCEPT}" multiple hidden>
+      <div class="bc-f-warn" hidden></div>
+      <div class="bc-f-err" hidden></div>
+    </div>`);
+  const bar = el(`<div class="bc-bar-inner">
+      <button type="button" class="bc-btn bc-attach">📎 Attach</button>
+      <button type="button" class="bc-btn bc-primary bc-save">${editing ? "Save changes" : "Submit for approval"}</button>
+    </div>`);
+
+  const tEl = body.querySelector(".bc-f-title"), bEl = body.querySelector(".bc-f-body");
+  const attsEl = body.querySelector(".bc-f-atts"), fileEl = body.querySelector(".bc-f-file");
+  const warnEl = body.querySelector(".bc-f-warn"), errEl = body.querySelector(".bc-f-err");
+  const countEl = body.querySelector(".bc-f-count");
+  const saveBtn = bar.querySelector(".bc-save");
+  if (editing) { tEl.value = row.title || ""; bEl.value = row.body || ""; }
+
+  // ⚠ The single most important thing this screen says. An edit to an
+  // unsent-but-approved update silently tears up its approval (the DB trigger
+  // does it), and an author who is not told simply sees their update vanish
+  // back into the queue and reads it as a bug.
+  if (editing && row.published && !row.notified_at) {
+    warnEl.hidden = false;
+    warnEl.textContent = "This update is approved but the notification has not gone out. " +
+      "Changing the words will return it to the approval queue — another admin will have to approve it again.";
+  } else if (afterSend) {
+    warnEl.hidden = false;
+    warnEl.textContent = "This update has already been sent. A correction will show as “edited” " +
+      "on everyone's copy, and no second notification goes out — the one in people's trays cannot be recalled.";
+  }
+
+  const paintCount = () => {
+    const n = bEl.value.length;
+    countEl.textContent = n + " / 8000" + (n > 600 ? " · updates are usually a paragraph or two" : "");
+  };
+  bEl.addEventListener("input", paintCount);
+  paintCount();
+
+  const paintAtts = () => {
+    const rows0 = existing.map((a, i) =>
+      `<div class="bc-f-att"><span class="bc-f-att-n">${escapeHtml(a.name || (isImageAtt(a) ? "Image" : "File"))}</span>` +
+      `<button type="button" class="bc-f-att-x" data-drop-existing="${i}" aria-label="Remove">✕</button></div>`);
+    const rows1 = picked.map((p, i) =>
+      `<div class="bc-f-att"><span class="bc-f-att-n">${escapeHtml(p.name)}</span>` +
+      `<button type="button" class="bc-f-att-x" data-drop-new="${i}" aria-label="Remove">✕</button></div>`);
+    attsEl.innerHTML = rows0.concat(rows1).join("");
+  };
+  attsEl.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-drop-existing], [data-drop-new]");
+    if (!b) return;
+    if (b.dataset.dropExisting !== undefined) existing.splice(parseInt(b.dataset.dropExisting, 10), 1);
+    else picked.splice(parseInt(b.dataset.dropNew, 10), 1);
+    paintAtts();
+  });
+  paintAtts();
+
+  bar.querySelector(".bc-attach").addEventListener("click", () => fileEl.click());
+  fileEl.addEventListener("change", async () => {
+    const files = [...(fileEl.files || [])];
+    fileEl.value = "";
+    for (const f of files) {
+      if (existing.length + picked.length >= MEDIA_MAX) { toast("Up to " + MEDIA_MAX + " attachments."); break; }
+      // ⚠ MIME *and* extension, so a renamed .mp4 fails here as well as at the
+      // bucket. Audio and video are never allowed — three independent gates.
+      if (!isMediaOk(f)) { toast("Only images and PDF files can be attached."); continue; }
+      if (f.size > MEDIA_MAX_BYTES) { toast((f.name || "That file") + " is too large (max 10 MB)."); continue; }
+      const { blob, w, h } = await downscaleImage(f);
+      picked.push({ blob, w, h, name: f.name || "" });
+    }
+    paintAtts();
+  });
+
+  const { close } = bcSheet(editing ? "Edit update" : "New Important Update", body, bar);
+
+  saveBtn.addEventListener("click", async () => {
+    const text = bEl.value.trim();
+    errEl.hidden = true;
+    if (!text) { errEl.hidden = false; errEl.textContent = "An update needs some words."; return; }
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+    try {
+      // Upload first — see the header note.
+      const uploaded = [];
+      for (const p of picked) {
+        uploaded.push(await WA.uploadBroadcastMedia(p.blob, p.name, { w: p.w, h: p.h }));
+      }
+      const attachments = existing.concat(uploaded);
+      const fields = { title: tEl.value.trim() || null, body: text, attachments };
+      let saved;
+      if (editing) saved = (await WA.updateBroadcast(row.id, fields)).message;
+      else saved = (await WA.postBroadcast(fields)).message;
+      close();
+      // A draft nobody notices is a draft that never sends. Fire-and-forget:
+      // the row exists either way, and re-submitting pings again.
+      if (saved && !saved.published) WA.notifyBroadcastPending(saved.id);
+      toast(editing ? "Saved." : "Sent for approval. Another admin has been notified.");
+      BROADCAST.sync().catch(() => {});
+      if (onDone) onDone();
+    } catch (e) {
+      errEl.hidden = false;
+      errEl.textContent = (e && e.message) || "Could not save this update.";
+      saveBtn.disabled = false;
+      saveBtn.textContent = editing ? "Save changes" : "Submit for approval";
+    }
+  });
+}
+
+// ---- the confirm screen (mandatory) ----------------------------------------
+// One tap between a typo and 400 phones is not enough. Shows, before anything
+// is sent: the EXACT tray preview, the audience as a number, and whose words
+// are being endorsed.
+function bcConfirmSend(row, onDone) {
+  const tray = bcTrayPreview(row);
+  const body = el(`<div class="bc-confirm">
+      <div class="bc-c-lead">This will notify <span class="bc-c-n">…</span> and cannot be undone.</div>
+      <div class="bc-c-label">Exactly how it will appear in the notification tray</div>
+      <div class="bc-c-tray">
+        <div class="bc-c-tray-app">Samarpan Upanishad · Important Updates</div>
+        <div class="bc-c-tray-t">${escapeHtml(tray.title)}</div>
+        <div class="bc-c-tray-b">${escapeHtml(tray.body)}</div>
+      </div>
+      <div class="bc-c-by">Written by <b>${escapeHtml(row.author_name || "another admin")}</b></div>
+      <div class="bc-f-err" hidden></div>
+    </div>`);
+  const bar = el(`<div class="bc-bar-inner">
+      <button type="button" class="bc-btn bc-cancel">Cancel</button>
+      <button type="button" class="bc-btn bc-primary bc-go">Approve &amp; Send</button>
+    </div>`);
+  const { ov, close } = bcSheet("Send this update?", body, bar);
+  const errEl = body.querySelector(".bc-f-err"), goBtn = bar.querySelector(".bc-go");
+  bar.querySelector(".bc-cancel").addEventListener("click", close);
+
+  // The real number, counted the way send-push resolves the audience. Left as
+  // a vague phrase rather than a wrong figure if the RPC isn't there yet.
+  WA.broadcastAudienceCount().then((n) => {
+    const t = ov.querySelector(".bc-c-n");
+    if (t) t.textContent = (typeof n === "number") ? (n + " device" + (n === 1 ? "" : "s")) : "every signed-in member";
+  }).catch(() => {});
+
+  goBtn.addEventListener("click", async () => {
+    goBtn.disabled = true;
+    goBtn.textContent = "Sending…";
+    errEl.hidden = true;
+    let approved;
+    try {
+      // Approval and publication are ONE step — there is deliberately no
+      // "approved but not yet sent" state for an unreviewed edit to live in.
+      approved = (await WA.approveBroadcast(row.id)).message;
+    } catch (e) {
+      errEl.hidden = false;
+      errEl.textContent = (e && e.message) || "Could not approve this update.";
+      goBtn.disabled = false;
+      goBtn.textContent = "Approve & Send";
+      return;
+    }
+    // ⚠ Past this point the update IS LIVE in the app. A push failure must be
+    // reported loudly, not swallowed: the alternative is an announcement
+    // everyone can see and nobody was told about. That is what Resend is for.
+    try {
+      const r = await WA.sendBroadcastPush(row.id);
+      if (r && r.skipped) {
+        toast("Published. A notification for this update had already been sent.");
+      } else {
+        await WA.recordBroadcastDelivery(row.id, r && r.devices, r && r.sent)
+          .catch(() => {});
+        toast("Sent to " + ((r && r.sent) || 0) + " device" + (((r && r.sent) || 0) === 1 ? "" : "s") + ".");
+      }
+    } catch (e) {
+      toast("Published, but the notification failed: " + ((e && e.message) || "unknown error") +
+            " — use Resend on the update.", { red: true });
+    }
+    close();
+    BROADCAST.sync().catch(() => {});
+    if (onDone) onDone(approved);
+  });
+}
+
+// ---- the review view -------------------------------------------------------
+// Read the whole thing, see whose it is, THEN reach the confirm screen. The
+// approver is endorsing someone else's words; showing them a preview alone
+// would not be a review.
+function bcReview(row, onDone) {
+  const body = el(`<div class="bc-review">
+      <div class="bc-r-by">From <b>${escapeHtml(row.author_name || "another admin")}</b>
+        · ${escapeHtml(row.created_at ? fmtDate(String(row.created_at).slice(0, 10)) : "")}</div>
+      ${row.title ? `<div class="bc-r-title">${escapeHtml(row.title)}</div>` : ""}
+      <div class="bc-r-body">${bcLinkify(row.body || "")}</div>
+      ${bcAttachmentsHtml(row.attachments)}
+    </div>`);
+  const bar = el(`<div class="bc-bar-inner">
+      <button type="button" class="bc-btn bc-cancel">Not yet</button>
+      <button type="button" class="bc-btn bc-primary bc-next">Approve &amp; Send…</button>
+    </div>`);
+  const { close } = bcSheet("Review this update", body, bar);
+  bcPaintAttachments(body, row.attachments || []);
+  body.addEventListener("click", (ev) => {
+    const b = ev.target.closest(".bc-att-img, .bc-att-doc");
+    if (b) { ev.preventDefault(); bcOpenAttachment(row.attachments || [], parseInt(b.dataset.att, 10) || 0); return; }
+    const a = ev.target.closest("a.bc-link[data-ext]");
+    if (a) { ev.preventDefault(); openExternalLink(a.getAttribute("href")); }
+  });
+  bar.querySelector(".bc-cancel").addEventListener("click", close);
+  bar.querySelector(".bc-next").addEventListener("click", () => { close(); bcConfirmSend(row, onDone); });
+}
+
+// ---- resend ----------------------------------------------------------------
+// For the case the whole delivery-result column exists to make visible: the row
+// published, the invoke failed (network, or the CORS/JWT gateway regression),
+// and the update is live in the app with NOBODY TOLD.
+//
+// ⚠ Plain Resend does NOT clear the dedupe key. If send-push says it already
+// went out, that is the honest answer and the notification is not repeated —
+// clearing the key is a second, explicit decision behind its own confirm.
+// ⚠ Never auto-retry in a loop.
+async function bcResend(row, onDone) {
+  try {
+    const r = await WA.sendBroadcastPush(row.id);
+    if (r && r.skipped) {
+      if (!confirm("The server says a notification for this update has already been sent.\n\n" +
+                   "Send it AGAIN to every signed-in device? Everyone who received the first one will get a second.")) {
+        if (onDone) onDone();
+        return;
+      }
+      await WA.clearBroadcastSentKey(row.id);
+      const r2 = await WA.sendBroadcastPush(row.id);
+      await WA.recordBroadcastDelivery(row.id, r2 && r2.devices, r2 && r2.sent).catch(() => {});
+      toast("Sent to " + ((r2 && r2.sent) || 0) + " devices.");
+    } else {
+      await WA.recordBroadcastDelivery(row.id, r && r.devices, r && r.sent).catch(() => {});
+      toast("Sent to " + ((r && r.sent) || 0) + " devices.");
+    }
+  } catch (e) {
+    toast("Still could not send: " + ((e && e.message) || "unknown error"), { red: true });
+  }
+  BROADCAST.sync().catch(() => {});
+  if (onDone) onDone();
+}
+
+// ---- the admin strip -------------------------------------------------------
+// Mounted at the top of the Important Updates list, for moderators only. Two
+// things live here: drafts awaiting approval, and published updates whose
+// notification never went out.
+//
+// ⚠ Hiding this from a member is courtesy, not a lock — draft rows are
+// invisible to them in Postgres (`published or wa_is_mod()`), which is what
+// actually protects them.
+async function mountBroadcastAdmin(node, onChanged) {
+  if (!isModerator()) { node.innerHTML = ""; return; }
+  const me = currentUser() || {};
+  const repaint = () => mountBroadcastAdmin(node, onChanged);
+  const after = () => { repaint(); if (onChanged) onChanged(); };
+
+  let pending = [];
+  try { pending = (await WA.listPendingBroadcasts()).messages || []; }
+  catch (e) {
+    node.innerHTML = `<div class="bc-admin"><div class="bc-admin-err">${escapeHtml(e.message || "")}</div></div>`;
+    return;
+  }
+  // Published, but the notification never landed. Read from the cache — these
+  // are published rows, so they are already synced.
+  const unsent = BROADCAST.cached().filter((r) => r.published && !r.notified_at);
+  if (!pending.length && !unsent.length) { node.innerHTML = ""; return; }
+
+  const draftRow = (r) => {
+    const mine = r.author_id && me.id && r.author_id === me.id;
+    const prev = String(r.body || "").replace(/\s+/g, " ").slice(0, 110);
+    return `<div class="bc-q-row" data-id="${r.id}">
+        <div class="bc-q-meta">
+          <div class="bc-q-by">${escapeHtml(r.author_name || "—")}</div>
+          <div class="bc-q-t">${escapeHtml(r.title || prev || "—")}</div>
+          ${r.title ? `<div class="bc-q-p">${escapeHtml(prev)}</div>` : ""}
+        </div>
+        <div class="bc-q-acts">${mine
+          // ⚠ Your own draft offers NO approve button. The database would refuse
+          // it anyway (broadcasts_two_person), but a button that is offered and
+          // then rejected reads as a bug rather than as the rule.
+          ? `<span class="bc-q-wait">Waiting for another admin</span>
+             <button type="button" class="bc-btn bc-sm" data-act="edit">Edit</button>
+             <button type="button" class="bc-btn bc-sm bc-danger" data-act="drop">Delete</button>`
+          : `<button type="button" class="bc-btn bc-sm bc-primary" data-act="review">Review &amp; approve</button>`}
+        </div>
+      </div>`;
+  };
+  const unsentRow = (r) => `<div class="bc-q-row bc-q-unsent" data-id="${r.id}">
+      <div class="bc-q-meta">
+        <div class="bc-q-by">Published, but nobody was notified</div>
+        <div class="bc-q-t">${escapeHtml(r.title || String(r.body || "").slice(0, 80) || "—")}</div>
+      </div>
+      <div class="bc-q-acts">
+        <button type="button" class="bc-btn bc-sm bc-primary" data-act="resend">Resend notification</button>
+      </div>
+    </div>`;
+
+  node.innerHTML = `<div class="bc-admin">
+      ${pending.length ? `<div class="bc-admin-head">Awaiting approval <span class="bc-admin-n">${pending.length}</span></div>
+      <div class="bc-queue">${pending.map(draftRow).join("")}</div>` : ""}
+      ${unsent.length ? `<div class="bc-admin-head bc-admin-warn">Not yet notified</div>
+      <div class="bc-queue">${unsent.map(unsentRow).join("")}</div>` : ""}
+    </div>`;
+
+  // ⚠ Assigned, not addEventListener'd. This function repaints itself by
+  // rewriting node.innerHTML and running again, so an added listener would
+  // stack a fresh copy on every repaint and fire N times on the Nth click.
+  // Assigning replaces the previous handler.
+  node.onclick = async (ev) => {
+    const b = ev.target.closest("[data-act]");
+    if (!b) return;
+    const holder = b.closest(".bc-q-row");
+    const id = holder && parseInt(holder.dataset.id, 10);
+    const row = pending.find((r) => r.id === id) || unsent.find((r) => r.id === id);
+    if (!row) return;
+    const act = b.dataset.act;
+    if (act === "review") return bcReview(row, after);
+    if (act === "edit") return openBroadcastComposer(row, after);
+    if (act === "resend") { b.disabled = true; return bcResend(row, after); }
+    if (act === "drop") {
+      if (!confirm("Delete this draft? This cannot be undone.")) return;
+      try { await WA.deleteBroadcast(row.id); toast("Draft deleted."); after(); }
+      catch (e) { toast(e.message || "Could not delete this draft."); }
+    }
+  };
+}
+
+// The desktop page. Same list the phone shows, same admin strip; only the frame
+// differs — the arrangement mountAdminTalks() uses.
+async function renderBroadcast() {
+  const nav = _nav;
+  $view.innerHTML = `<div class="sp-page bc-page">
+      <h2 class="sp-head">📢 Important Updates</h2>
+      <div class="bc-admin-slot"></div>
+      <div class="bc-newbar" hidden></div>
+      <div class="sp-list bc-list"></div>
+    </div>`;
+  if (!current(nav)) return;
+  const listEl = $view.querySelector(".bc-list");
+  const slot = $view.querySelector(".bc-admin-slot");
+  const newbar = $view.querySelector(".bc-newbar");
+
+  // "read by 187 / 412" — moderators only, and an RPC rather than a select so
+  // the list doesn't pull one row per reader per update. Never blocks a paint:
+  // it lands late and fills in, and an empty map just means the footer says how
+  // many were notified and nothing more.
+  let readCounts = {};
+  if (isModerator()) {
+    WA.broadcastReadCounts().then((m) => { readCounts = m || {}; paintReads(); }).catch(() => {});
+  }
+  const paintReads = () => {
+    listEl.querySelectorAll(".bc-card").forEach((card) => {
+      const slot2 = card.querySelector(".bc-c-reads");
+      if (!slot2) return;
+      const n = readCounts[card.dataset.id];
+      slot2.textContent = (n == null) ? "" : " · read by " + n;
+    });
+  };
+
+  const paint = (rows) => {
+    if (!current(nav)) return;
+    if (!rows.length) {
+      listEl.innerHTML = `<div class="empty">No important updates yet. Announcements from the admin will appear here.</div>`;
+      return;
+    }
+    listEl.innerHTML = rows.map((r) => `<article class="sp-card bc-card" data-id="${r.id}">
+        <div class="sp-when">${escapeHtml(fmtDate((r.posted_at || r.created_at || "").slice(0, 10)))}${r.edited_at ? " · edited" : ""}</div>
+        ${r.title ? `<div class="sp-title bc-c-title">${escapeHtml(r.title)}</div>` : ""}
+        <div class="sp-body bc-c-body">${bcLinkify(r.body || "")}</div>
+        ${bcAttachmentsHtml(r.attachments)}
+        <div class="bc-c-foot">${escapeHtml(r.author_name ? "— " + r.author_name : "")}${
+          isModerator() && r.notified_devices != null
+            ? ` · sent to ${r.notified_devices} device${r.notified_devices === 1 ? "" : "s"}` : ""
+          }<span class="bc-c-reads"></span></div>
+      </article>`).join("");
+    // ⚠ Scoped to each card, not to the whole list: data-att indexes are
+    // per-message, so signing them against the list would cross the wires
+    // between two updates' attachments.
+    listEl.querySelectorAll(".bc-card").forEach((card, i) =>
+      bcPaintAttachments(card, (rows[i] && rows[i].attachments) || []));
+    // Desktop shows every update in full, so the newest one has genuinely been
+    // put in front of the reader.
+    if (rows[0]) bcNoteRead(rows[0].id);
+    paintReads();
+  };
+  listEl.addEventListener("click", (ev) => {
+    const a = ev.target.closest("a.bc-link[data-ext]");
+    if (a) { ev.preventDefault(); openExternalLink(a.getAttribute("href")); return; }
+    const card = ev.target.closest(".bc-card");
+    const b = ev.target.closest(".bc-att-img, .bc-att-doc");
+    if (!card || !b) return;
+    // By id, not by DOM position — the list repaints as syncs land.
+    const row = (BROADCAST.cached() || []).find((r) => String(r.id) === card.dataset.id);
+    if (row) bcOpenAttachment(row.attachments || [], parseInt(b.dataset.att, 10) || 0);
+  });
+
+  if (isModerator()) {
+    newbar.hidden = false;
+    newbar.innerHTML = `<button type="button" class="bc-btn bc-primary bc-new">📢 Write an update</button>`;
+    newbar.querySelector(".bc-new").addEventListener("click", () =>
+      openBroadcastComposer(null, () => mountBroadcastAdmin(slot, () => BROADCAST.sync().then(paint).catch(() => {}))));
+  }
+  paint(BROADCAST.cached());
+  mountBroadcastAdmin(slot, () => BROADCAST.sync().then(paint).catch(() => {}));
+  try { paint(await BROADCAST.sync()); }
+  catch (e) {
+    if (current(nav) && !BROADCAST.cached().length) {
+      listEl.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+    }
+  }
+  BROADCAST.markSeen();
 }
 
 // --------------------------------------------------------------------------
@@ -8662,6 +9390,13 @@ const MOBILE_UI = (() => {
       <a class="m-account" id="m-account-row" href="#/m/account"></a>
       <nav class="m-menu">
         <a href="#/m/search"><span class="mi">🔍</span> Search By</a>
+        <!-- Important Updates — the operator's announcement channel. ⚠ Placed
+             HIGH, above the discussion sections, on purpose: it is an
+             announcement channel, not a conversation. The identifier stays
+             "broadcast" everywhere (BROADCAST_PLAN.md §0) — and note this is
+             inside a TEMPLATE LITERAL, so a backtick here would end the
+             string and take the whole app down. -->
+        <a href="#/m/broadcast"><span class="mi">📢</span> Important Updates <span class="m-badge" data-broadcast-badge hidden></span></a>
         <a href="#/m/community"><span class="mi">💬</span> Samuhik Satsang <span class="m-badge" data-satsang-badge hidden></span></a>
         <a href="#/m/anubhuti"><span class="mi">🪷</span> Anubhuti Sharing <span class="m-badge" data-anubhuti-badge hidden></span></a>
         <a href="#/m/special"><span class="mi">✨</span> Special Telegram Msg <span class="m-badge" data-special-badge hidden></span></a>
@@ -9040,6 +9775,29 @@ const MOBILE_UI = (() => {
         });
         _pdiag({ channelGyan: "created" });
       } catch (e) { _pdiag({ channelGyan: "createChannel failed: " + (e && e.message || e) }); }
+      // Important Updates. Importance 5 (announcement, like Special) — not 3:
+      // an operator writes these rarely and only when something matters.
+      //
+      // ⚠⚠ THIS LINE IS THE GATE ON THE WHOLE FEATURE, and it fails in the worst
+      // possible way. A push naming a channel the device has NOT created is
+      // dropped SILENTLY on Android 8+: no error, no log line, and send-push
+      // still reports `sent: 412`. FCM accepted it; Android threw it away on
+      // arrival. So this must be published OTA and left to LAND ON PHONES
+      // BEFORE the first update is ever sent. Two publishes, in that order —
+      // see BROADCAST_PLAN.md §7.
+      //
+      // Its own channel (rather than reusing special_messages) is also what
+      // gives users Android's per-channel mute: they can silence announcements
+      // without silencing Baba Swami's Telegram messages, and the app needs no
+      // settings switch of its own for it.
+      try {
+        await Push.createChannel({
+          id: "broadcast_messages", name: "Important Updates",
+          description: "Announcements from the Samarpan Upanishad admin",
+          importance: 5, visibility: 1,
+        });
+        _pdiag({ channelBroadcast: "created" });
+      } catch (e) { _pdiag({ channelBroadcast: "createChannel failed: " + (e && e.message || e) }); }
       Push.addListener("registration", async (t) => {
         _pdiag({ token: (t && t.value || "").slice(0, 18) + "…", registeredAt: Date.now() });
         // The language goes up at registration so a device that never opens
@@ -9077,6 +9835,19 @@ const MOBILE_UI = (() => {
           ANUBHUTI.noteIncoming(m);
           ADMINTALK.noteIncoming(m);
         }
+        // An Important Update that arrived while the app was open isn't in the
+        // cache yet, so the badge would stay dark until the next launch — on the
+        // one kind of message the operator most needs people to notice. Pull it
+        // now; the sync is a cheap delta.
+        if (d.kind === "broadcast") BROADCAST.sync().catch(() => {});
+        // The approval ping — a DIFFERENT refresh. ⚠ BROADCAST.sync() would not
+        // do: it fetches PUBLISHED rows, and a draft awaiting approval is by
+        // definition unpublished, so the queue is a separate read. Signalled as
+        // an event because only the Important Updates page can act on it, and
+        // only while it happens to be open.
+        if (d.kind === "broadcast_pending") {
+          try { window.dispatchEvent(new CustomEvent("wa:broadcast-pending")); } catch (_) {}
+        }
       });
       // Routes by the notification's own data payload (send-push sets
       // data.route per kind) instead of a single hardcoded destination, now
@@ -9103,6 +9874,15 @@ const MOBILE_UI = (() => {
         // data.route already.
         if (data.kind === "special" && data.msg_id && /^#\/m\/special\/?$/.test(route)) {
           route = "#/m/special/" + encodeURIComponent(data.msg_id);
+        }
+        // Same repair for Important Updates. Its ids ARE the reader's ids (one
+        // table, no dist slug in the way — the reason letterpad can't have
+        // this), so a payload that only reached the section index can always be
+        // pointed at the right message. Worth having from the very first send:
+        // this handler is the one thing here that can never be fixed for a
+        // notification already sitting in someone's tray.
+        if (data.kind === "broadcast" && data.msg_id && /^#\/m\/broadcast\/?$/.test(route)) {
+          route = "#/m/broadcast/" + encodeURIComponent(data.msg_id);
         }
         try {
           if (data.kind === "daily" || AT_HOME_RE.test(route)) goFresh(route, data.cv || "");
@@ -11600,6 +12380,99 @@ const MOBILE_UI = (() => {
         };
       },
     },
+    // ---- Important Updates -------------------------------------------------
+    // A fifth message section, not a new subsystem: the index page, reader page,
+    // back behaviour, date filter and search rows all come from this registry.
+    //
+    // ⚠ Displayed as "Important Updates"; the key stays `broadcast`. See
+    // BROADCAST_PLAN.md §0 — "update" already means the OTA machinery here.
+    broadcast: {
+      key: "broadcast", icon: "📢",
+      title: "Important Update", listTitle: "Important Updates", hindi: "महत्वपूर्ण सूचना",
+      barTitle: "Important Updates",
+      emptyMsg: "No important updates yet. Announcements from the admin will appear here.",
+      idOf: (r) => String(r.id),
+      cached: () => BROADCAST.cached(),
+      refresh: () => BROADCAST.sync(),
+      markSeen: () => BROADCAST.markSeen(),
+      lastSeen: () => BROADCAST.lastSeen(),
+      isNew: (r, seen) => r.id > (seen || 0),
+      subscribe: (fn) => (window.WA && WA.subscribeBroadcasts ? WA.subscribeBroadcasts({ onChange: fn }) : null),
+      // An update the sutradhar corrected after it was sent says so, rather
+      // than quietly differing from the notification people already read.
+      rowNote: (r) => (r.edited_at ? "· edited" : ""),
+      // ⚠ `lang` is IGNORED. One body, exactly as typed — this is the only
+      // message section without a language pair, and that is deliberate: these
+      // are operator-written announcements, not translated teachings.
+      // `hasEn: false` is what keeps the reader's English toggle from appearing
+      // on a section that has no translation to toggle to.
+      norm(r, lang) {
+        const foot = [
+          r.author_name ? "— " + r.author_name : "",
+          r.edited_at ? "(edited)" : "",
+        ].filter(Boolean).join(" ");
+        return {
+          id: String(r.id),
+          date: (r.posted_at || r.created_at || "").slice(0, 10),
+          title: r.title || "",
+          pages: null,               // text only; the reader paginates with CSS columns
+          text: [r.body || "", foot].filter(Boolean).join("\n\n"),
+          hasEn: false,
+          hiTag: false,
+          shareCaption: [r.title, r.body].filter(Boolean).join("\n\n"),
+        };
+      },
+      // http(s) links become real anchors. Escaped first, then linkified — see
+      // bcLinkify. The only section that renders its body as HTML.
+      textHtml: (v) => bcLinkify(v.text || ""),
+      extraHtml: (r) => bcAttachmentsHtml(r.attachments),
+      onMountMsg(art, r) {
+        const atts = (r && r.attachments) || [];
+        if (atts.length) {
+          bcPaintAttachments(art, atts);
+          art.addEventListener("click", (ev) => {
+            const b = ev.target.closest(".bc-att-img, .bc-att-doc");
+            if (!b) return;
+            ev.preventDefault();
+            bcOpenAttachment(atts, parseInt(b.dataset.att, 10) || 0);
+          });
+        }
+        // ⚠ The link must never be followed by the WebView — that replaces the
+        // SPA and strands the user outside the app with no way back in.
+        art.addEventListener("click", (ev) => {
+          const a = ev.target.closest("a.bc-link[data-ext]");
+          if (!a) return;
+          ev.preventDefault();
+          openExternalLink(a.getAttribute("href"));
+        });
+      },
+      onFocus: (r) => bcNoteRead(r && r.id),
+      // Moderator surface: the "+" in the top bar and the approval strip above
+      // the list. Both no-op for everyone else — and hiding them is courtesy
+      // only, since a draft is invisible to a member in Postgres.
+      adminMount(node, refresh) {
+        if (!isModerator()) return;
+        const slot = el(`<div class="bc-admin-slot"></div>`);
+        node.insertBefore(slot, node.querySelector(".mx-rows"));
+        const reload = () => { mountBroadcastAdmin(slot, refresh); };
+        setTopAction({
+          label: "+", title: "Write an important update",
+          onClick: () => openBroadcastComposer(null, reload),
+        });
+        reload();
+        // A draft submitted by another admin while this page is open should
+        // appear in the queue without a manual reload (the foreground push
+        // handler fires this). ⚠ Self-unbinding: the SPA replaces $view rather
+        // than tearing pages down, so there is no unmount callback to hang this
+        // on — the listener has to notice its own node has gone or it leaks one
+        // copy per visit to this section.
+        const onPending = () => {
+          if (!slot.isConnected) { window.removeEventListener("wa:broadcast-pending", onPending); return; }
+          reload();
+        };
+        window.addEventListener("wa:broadcast-pending", onPending);
+      },
+    },
   };
 
   const msgHolderHtml = (sec) => `<div class="m-holder">
@@ -11772,6 +12645,12 @@ const MOBILE_UI = (() => {
       .then(paint).catch(() => paint(sec.cached()));
     refresh();
     if (sec.subscribe) _specialStream = sec.subscribe(refresh);
+    // A section's own admin surface (Important Updates: the "+" and the
+    // approval queue). ⚠ CALLED AFTER pageFrame(), never before — setChrome()
+    // clears the top action on EVERY route, so a setTopAction() made earlier is
+    // wiped, and one made from the wrong place leaks a "+" onto Settings and
+    // Favorites.
+    if (sec.adminMount) sec.adminMount(node, refresh);
   }
 
   // ---- the READER (#/m/<key>/<id>) -----------------------------------------
@@ -11822,10 +12701,15 @@ const MOBILE_UI = (() => {
 
     function build(row) {
       const v = sec.norm(row, prefLang);
+      // `sec.textHtml` lets a section render its body as HTML rather than as
+      // escaped plain text — currently only Important Updates, which turns
+      // http(s) links into anchors. ⚠ A section that supplies this is
+      // responsible for its own escaping; the default path escapes for you.
+      const bodyHtml = sec.textHtml ? sec.textHtml(v, row) : escapeHtml(v.text || "");
       const track = v.pages && v.pages.length
         ? `<div class="pc-track">${v.pages.map((u, i) =>
             `<div class="pc-page"><img src="${u}" loading="${i ? "lazy" : "eager"}" decoding="async" alt="page ${i + 1}"></div>`).join("")}</div>`
-        : `<div class="pc-track pc-text">${escapeHtml(v.text || "")}</div>`;
+        : `<div class="pc-track pc-text">${bodyHtml}</div>`;
       // .mr-textmsg pins the message to exactly one band tall. That has to be
       // in place BEFORE the carousel measures: text pagination is `column-fill:
       // auto` against a definite height, and a message free to grow would just
@@ -11843,9 +12727,13 @@ const MOBILE_UI = (() => {
             <div class="pc-count" hidden></div>
           </div>
           <div class="pc">${track}</div>
+          ${sec.extraHtml ? sec.extraHtml(row, v) : ""}
           <div class="pc-dots" hidden></div>
         </article>`);
       art._view = v;
+      // The SOURCE row, not just the normalised view: a section hook may need
+      // fields norm() deliberately drops (attachments, for one).
+      art._row = row;
       return art;
     }
     // Carousels must be wired AFTER the node is in the document — both the page
@@ -11870,12 +12758,20 @@ const MOBILE_UI = (() => {
       } else if (v.text) {
         wireDoubleTap(track, () => enterTextZoom(v.title, v.text));
       }
+      // Anything a section needs to wire on its own markup (attachment taps,
+      // external links). Called here, not in build(), for the same reason the
+      // carousel is: the node is in the document and can be measured.
+      if (sec.onMountMsg) { try { sec.onMountMsg(art, art._row, v); } catch (_) {} }
     }
 
     // The top panel always describes the message you're actually looking at,
     // and its share/download act on the page currently framed by the carousel.
     function wirePanel(art) {
       const v = art._view;
+      // "This message is now the one being read." Important Updates records a
+      // read receipt from here — fire-and-forget by contract, never blocking a
+      // render on it (see MSG_SECTIONS.broadcast.onFocus).
+      if (sec.onFocus) { try { sec.onFocus(art._row, v); } catch (_) {} }
       const page = () => (v.pages && v.pages.length
         ? v.pages[Math.min(v.pages.length - 1, art._car ? art._car.page() : 0)] : null);
       const pageNo = () => (art._car ? art._car.page() + 1 : 1);
@@ -12249,6 +13145,7 @@ const MOBILE_UI = (() => {
       if (seg[0] === "favorites") return favoritesPage();
       if (seg[0] === "special") return msgIndexPage("special", params);   // desktop-style link → same page
       if (seg[0] === "letterpad") return msgIndexPage("letterpad", params);
+      if (seg[0] === "broadcast") return msgIndexPage("broadcast", params);
       if (seg[0] === "anushthan") return msgIndexPage("anushthan", params);
       if (seg[0] === "anubhuti") return anubhutiRoute(params);   // desktop-style link → same pages
       if (seg[0] === "admintalks") return adminTalksPage();      // desktop-style link → same page
@@ -12272,7 +13169,7 @@ const MOBILE_UI = (() => {
       // #/m/<section>        → the index
       // #/m/<section>/<id>   → the full-screen reader, opened on that message
       //                        (also where a push-notification tap can land)
-      if (p === "special" || p === "letterpad") {
+      if (p === "special" || p === "letterpad" || p === "broadcast") {
         return seg[2] ? msgReaderPage(p, decodeURIComponent(seg[2]), params) : msgIndexPage(p, params);
       }
       if (p === "gyan") return gyanPage(params);   // also where a thought notification lands
@@ -12815,6 +13712,11 @@ AUTH_GATE.boot(function startApp() {
   // badge once the live index.json fetch resolves (see LETTERPAD.loadIndex()).
   LETTERPAD.refreshBadges();
   LETTERPAD.loadIndex().catch(() => {});
+  // Important Updates: same cache-first contract. The sync is a no-op for a
+  // signed-out device — the rows are `to authenticated` only — so this costs
+  // nothing before the startup gate is passed.
+  BROADCAST.refreshBadges();
+  BROADCAST.sync().catch(() => {});
   // Samuhik Satsang: same cache-first paint from the stored count, then a live
   // recount. Skipped for non-members by SATSANG.refresh() itself.
   SATSANG.refreshBadges();
