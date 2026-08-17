@@ -1562,6 +1562,11 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
   white-space: nowrap; cursor: pointer;
 }
 .m-datepill::after { content: "▾"; font-size: 11px; opacity: .7; }
+/* Display-only (Important Updates). The pill still SAYS the date — that is the
+   one place it is wanted — but there is no calendar behind it, so it must not
+   look like there is: no chevron, no pointer, no press state. */
+.m-datepill-flat { cursor: default; }
+.m-datepill-flat::after { content: none; }
 .m-dp-scrim {
   position: fixed; inset: 0; z-index: 6000;
   /* Start BELOW the 52px top panel; max-height (below) keeps the bottom clear of
@@ -3284,17 +3289,25 @@ body.dd-sitting { overflow: hidden; }
 .bc-link { color: var(--accent); text-decoration: underline; word-break: break-word; }
 
 /* ---- the overlay shell shared by composer / review / confirm ---- */
+/* ⚠ The sheet does NOT sit on the bottom edge of the screen (2026-08-18). It
+   used to, and its action bar — carrying "Approve & Send", the one button in
+   this app that notifies several hundred phones — landed underneath the
+   phone's gesture bar: awkward to reach deliberately and easy to brush by
+   accident. The overlay's bottom padding lifts the whole sheet clear of the
+   inset; the desktop rule below still overrides it with its own padding. */
 .bc-ov {
   position: fixed; inset: 0; z-index: 1400; background: rgba(20, 16, 28, .5);
-  display: flex; align-items: flex-end; justify-content: center; padding: 0;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding: 0 0 calc(env(safe-area-inset-bottom, 0px) + 22px);
 }
 @media (min-width: 720px) { .bc-ov { align-items: center; padding: 24px; } }
 .bc-sheet {
-  background: var(--surface); width: 100%; max-width: 560px; max-height: 92vh;
-  border-radius: 16px 16px 0 0; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--surface); width: 100%; max-width: 560px; max-height: 86vh;
+  /* Rounded on all four corners: it is a floating card now, not something
+     attached to the bottom of the screen. */
+  border-radius: 16px; display: flex; flex-direction: column; overflow: hidden;
   box-shadow: 0 -8px 40px rgba(0, 0, 0, .22);
 }
-@media (min-width: 720px) { .bc-sheet { border-radius: 16px; } }
 .bc-sheet-head {
   display: flex; align-items: center; gap: 10px; padding: 13px 14px;
   border-bottom: 1px solid var(--border-soft); flex: none;
@@ -3305,7 +3318,7 @@ body.dd-sitting { overflow: hidden; }
   font-size: 17px; color: var(--muted); padding: 2px 6px; line-height: 1;
 }
 .bc-sheet-body { padding: 14px; overflow-y: auto; flex: 1; min-height: 0; }
-.bc-sheet-bar { padding: 10px 14px; border-top: 1px solid var(--border-soft); flex: none; }
+.bc-sheet-bar { padding: 12px 14px 14px; border-top: 1px solid var(--border-soft); flex: none; }
 .bc-bar-inner { display: flex; gap: 8px; }
 .bc-btn {
   -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
@@ -3338,6 +3351,37 @@ body.dd-sitting { overflow: hidden; }
   -webkit-appearance: none; appearance: none; border: 0; background: none; cursor: pointer;
   color: var(--muted); font-size: 13px; padding: 2px 5px; line-height: 1;
 }
+/* ---- the expiry field (Title -> Expires on -> the words) ----
+   A button, not an <input type="date">: it opens the SAME calendar as the daily
+   message (wheels + month grid), which the browser's own date control could
+   never match, and which the operator asked for by name. */
+.bc-f-exprow { display: flex; align-items: stretch; gap: 6px; }
+.bc-f-exp-x {
+  -webkit-appearance: none; appearance: none; cursor: pointer; flex: none;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg);
+  color: var(--muted); font-size: 13px; padding: 0 11px; line-height: 1;
+}
+.bc-f-expnative {
+  width: 100%; font-family: inherit; font-size: 14px; color: var(--text);
+  border: 1px solid var(--accent); border-radius: 10px; padding: 9px 11px; background: var(--bg);
+}
+.bc-f-exp {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex: 1; min-width: 0; text-align: left; color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px;
+  background: var(--bg); font-size: 14px;
+}
+.bc-f-exp:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.bc-f-exp-l { color: var(--muted); font-size: 13px; }
+.bc-f-exp-v { font-weight: 600; color: var(--muted); }
+.bc-f-exp-v::after { content: " ▾"; font-size: 11px; opacity: .7; font-weight: 400; }
+/* A date that has actually been set is the exceptional state — the update will
+   delete itself — so it is the one that is coloured. */
+.bc-f-exp-set { border-color: var(--accent); }
+.bc-f-exp-set .bc-f-exp-v { color: var(--accent); }
+.bc-f-exp-h { font-size: 11.5px; line-height: 1.5; color: var(--muted); margin: -3px 2px 0; }
+
 /* The composer's most important sentence: an edit tears up the approval. */
 .bc-f-warn {
   font-size: 12px; line-height: 1.5; color: #8a5a20; background: #fdf4e6;
@@ -3354,6 +3398,20 @@ body.dd-sitting { overflow: hidden; }
 .bc-r-title { font: 700 16px var(--serif); color: var(--accent); }
 .bc-r-body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .bc-review .bc-atts { padding: 4px 0 0; }
+/* Reading one update on the desktop, lifted out of the list (bcOpenUpdate).
+   Same shell as the review sheet — the difference is who is looking. */
+.bc-r-when { font-size: 12px; color: var(--muted); }
+.bc-read .bc-r-by { padding-top: 4px; }
+
+/* ---- decline ---- */
+.bc-decline-form { display: flex; flex-direction: column; gap: 9px; }
+.bc-d-lead { font-size: 13.5px; line-height: 1.55; }
+.bc-d-why {
+  width: 100%; font-family: inherit; font-size: 14px; color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px;
+  background: var(--bg); resize: vertical; min-height: 84px; line-height: 1.55;
+}
+.bc-d-why:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 
 /* ---- confirm ---- */
 .bc-confirm { display: flex; flex-direction: column; gap: 11px; }
@@ -3399,6 +3457,11 @@ body.dd-sitting { overflow: hidden; }
    refuse it (broadcasts_two_person), and an offered-then-rejected button reads
    as a bug rather than as the rule. */
 .bc-q-wait { font-size: 11.5px; color: var(--muted); font-style: italic; }
+/* A draft a reviewer sent back, shown to its author alone. Amber rather than
+   red: nothing is broken and nothing was lost — it needs rewriting. */
+.bc-q-returned { border-color: #f0dcbc; background: #fdf8f0; }
+.bc-q-why { font-size: 12px; line-height: 1.45; color: #8a5a20; margin-top: 2px; }
+.bc-q-exp { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
 /* ---- desktop page ---- */
 .bc-newbar { padding: 0 0 12px; }
@@ -3406,3 +3469,10 @@ body.dd-sitting { overflow: hidden; }
 .bc-card .bc-c-body { white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
 .bc-card .bc-c-foot { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
 .bc-card .bc-atts { padding: 8px 0 0; }
+/* The whole card opens the update (2026-08-18) — it was inert markup before,
+   so the only thing that answered a click was an attached picture. */
+.bc-card { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
+.bc-card:hover { border-color: var(--accent); }
+.bc-card:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+/* …but a link and an attachment inside it still go where they always went. */
+.bc-card a, .bc-card .bc-att-img, .bc-card .bc-att-doc { cursor: pointer; }

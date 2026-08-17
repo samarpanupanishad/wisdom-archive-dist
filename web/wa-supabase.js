@@ -214,7 +214,22 @@ function _broadcastMissing(error) {
 // _SPECIAL_COLS. See BROADCAST_PLAN.md §2.1; don't "fix" the missing pair.
 const _BROADCAST_COLS =
   "id,title,body,attachments,author_id,author_name,approved_by,approver_name,approved_at," +
-  "published,posted_at,edited_at,notified_at,notified_devices,notified_sent,created_at,updated_at";
+  "published,posted_at,edited_at,notified_at,notified_devices,notified_sent,created_at,updated_at," +
+  "expires_on,declined_at,declined_by,decliner_name,decline_reason";
+
+// Today in IST as YYYY-MM-DD. India is a fixed UTC+5:30 with no DST, so the
+// offset is a constant and not worth a timezone library.
+//
+// ⚠ Used ONLY to ask the server for updates that have not expired. It is a
+// coarse, day-level filter: an update expiring today is still delivered, and
+// dies at 23:59 IST by the client's own clock (bcExpired in app.js) and by the
+// nightly sweep (§11 of add_broadcast.sql). Three cuts of the same moment, and
+// the day-level one is deliberately the loosest — a phone whose clock is a few
+// hours out must not lose an update a day early.
+function _istToday() {
+  return new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
+}
+const _NOT_EXPIRED = () => "expires_on.is.null,expires_on.gte." + _istToday();
 
 async function _loadProfile(uid) {
   const { data, error } = await _sb.from("profiles").select("*").eq("id", uid).single();
@@ -1488,7 +1503,7 @@ const WA = {
   async listBroadcasts(limit) {
     const n = Math.max(1, Math.min(parseInt(limit, 10) || 300, 1000));
     const { data, error } = await _sb.from("broadcasts").select(_BROADCAST_COLS)
-      .eq("published", true)
+      .eq("published", true).or(_NOT_EXPIRED())
       .order("posted_at", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
       .limit(n);
@@ -1502,11 +1517,16 @@ const WA = {
   //
   // ⚠ Delta on updated_at, NOT id. An edit — and a retraction — is an UPDATE to
   // an existing row, and an id-based delta would never see it.
+  // ⚠ Both halves filter out EXPIRED updates, and the `ids` half is the load-
+  // bearing one: it is what makes an expired update disappear from a phone that
+  // already has it cached, by the same reconciliation that handles a retraction.
+  // Filter the rows but not the ids and an expired update would live on every
+  // device that had already synced it, forever.
   async syncBroadcasts(sinceIso) {
     const PAGE = 1000, msgs = [];
     for (let off = 0; off < 10000; off += PAGE) {
       let q = _sb.from("broadcasts").select(_BROADCAST_COLS)
-        .eq("published", true).order("updated_at", { ascending: true })
+        .eq("published", true).or(_NOT_EXPIRED()).order("updated_at", { ascending: true })
         .order("id", { ascending: true }).range(off, off + PAGE - 1);
       if (sinceIso) q = q.gt("updated_at", sinceIso);
       const { data, error } = await q;
@@ -1517,7 +1537,8 @@ const WA = {
     const ids = [];
     for (let off = 0; off < 20000; off += PAGE) {
       const { data, error } = await _sb.from("broadcasts")
-        .select("id").eq("published", true).order("id", { ascending: true })
+        .select("id").eq("published", true).or(_NOT_EXPIRED())
+        .order("id", { ascending: true })
         .range(off, off + PAGE - 1);
       if (error) throw new Error(error.message);
       ids.push(...(data || []).map((r) => r.id));
@@ -1543,10 +1564,13 @@ const WA = {
   // ⚠ Upload attachments FIRST, insert second (the caller does this): a row
   // pointing at a missing object is unrecoverable, an orphaned object is just
   // garbage a sweep can collect.
-  async postBroadcast({ title, body, attachments }) {
+  // `expiresOn` = "YYYY-MM-DD" or null (never expires — the default). The
+  // trigger refuses a date that is already past.
+  async postBroadcast({ title, body, attachments, expiresOn }) {
     const { data, error } = await _sb.from("broadcasts")
       .insert({ title: title || null, body: String(body || ""),
-                attachments: attachments || [] })
+                attachments: attachments || [],
+                expires_on: expiresOn || null })
       .select(_BROADCAST_COLS).single();
     if (error) throw new Error(_broadcastMissing(error) || error.message);
     return { message: data };
@@ -1578,15 +1602,42 @@ const WA = {
     return { message: data };
   },
 
+  // Send a draft back to its author with a reason. The mirror of approve, and
+  // an RPC for the same reason: declined_by is stamped from auth.uid().
+  //
+  // ⚠ Declining DESTROYS NOTHING — the draft returns to its author, who edits
+  // and resubmits (any edit clears the decline, in the trigger) or deletes it
+  // themselves. Don't "simplify" this into a delete.
+  async declineBroadcast(id, reason) {
+    const { data, error } = await _sb.rpc("decline_broadcast",
+      { bid: id, reason: reason || null });
+    if (error) throw new Error(_broadcastMissing(error) || error.message);
+    return { message: data };
+  },
+  // Tell the author. Fire-and-forget like the approval ping: the decline is
+  // already recorded, and a lost notification only means they see it next time
+  // they open Important Updates rather than immediately.
+  notifyBroadcastDeclined(id) {
+    _firePush({ kind: "broadcast_declined", id: id });
+  },
+
   // Retract (sutradhar only, enforced by the update trigger). The cache's `ids`
   // reconciliation makes it vanish from every phone on the next sync. Prefer
   // this to deleteBroadcast — deletion leaves no trace and drops read receipts.
   async retractBroadcast(id) {
     return WA.updateBroadcast(id, { published: false });
   },
+  // ⚠ `.select()` is load-bearing, not decoration. RLS turns a forbidden delete
+  // into a delete that matches NO ROWS, which PostgREST reports as success —
+  // so without asking for the deleted rows back this said "Draft deleted." over
+  // a draft that is still there. Deletable: your own unpublished draft, or
+  // anything at all if you are the sutradhar (add_broadcast.sql §7).
   async deleteBroadcast(id) {
-    const { error } = await _sb.from("broadcasts").delete().eq("id", id);
+    const { data, error } = await _sb.from("broadcasts").delete().eq("id", id).select("id");
     if (error) throw new Error(error.message);
+    if (!data || !data.length) {
+      throw new Error("You can only delete your own draft — ask the sutradhar to remove this one.");
+    }
     return { ok: true };
   },
 

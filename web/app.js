@@ -5642,13 +5642,55 @@ const LETTERPAD = (() => {
 // backfilled messages. There is no history to bundle: the first Important
 // Update will be written after this ships. Don't "fix" the missing seed().
 // ==========================================================================
+
+// ---- the expiry clock ------------------------------------------------------
+// An Important Update may carry an `expires_on` DATE, and it dies at 23:59 IST
+// that night — "gone after the 15th" means gone when the 15th ends, not when it
+// begins. India is a fixed UTC+5:30 with no DST, so the offset is a constant;
+// this is the same idiom SADHANA.dayOf uses, on a plain midnight boundary
+// rather than the diary's 3:30 AM one.
+//
+// ⚠ There are THREE cuts of this same moment and they must agree:
+//   • here, on the device — the only one that is exact to the minute, and the
+//     only one that works with no signal;
+//   • the server-side day filter in wa-supabase.js (_NOT_EXPIRED), which stops
+//     an expired update being handed to a phone at all;
+//   • the nightly sweep in add_broadcast.sql §11, which deletes the row.
+// The device cut is what the user actually experiences, because the row is
+// already in their cache — the sweep and the filter only keep it from coming
+// back. Change the rule here and change it in both other places.
+function bcIstStamp() {
+  return new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 16);
+}
+function bcExpired(r) {
+  const d = r && r.expires_on ? String(r.expires_on).slice(0, 10) : "";
+  // Lexicographic on "YYYY-MM-DDTHH:MM" — both sides are zero-padded ISO, so
+  // string order IS chronological order. No Date parsing, no local timezone.
+  return !!d && bcIstStamp() >= d + "T23:59";
+}
+
 const BROADCAST = (() => {
   const CACHE_KEY = "wa:broadcast:cache", SYNC_KEY = "wa:broadcast:lastSync",
         SEEN_KEY = "wa:broadcast:lastSeen";
   // Feed order: when it was approved+published, newest first; id breaks ties.
   // String compare is safe for ISO timestamps.
   const sortKey = (r) => (r.posted_at || r.created_at || "") + "|" + String(r.id).padStart(12, "0");
-  function cached() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "[]"); } catch { return []; } }
+  // ⚠ Expired updates are filtered out HERE, at the single point every screen
+  // reads through — the list, the reader, the badge, the search corpus. Doing
+  // it in each caller would mean an update that had vanished from the list but
+  // still answered a search, or still counted toward the badge. The row is
+  // dropped from storage as it goes, so an expired update is read past exactly
+  // once rather than accumulating.
+  function cached() {
+    let rows;
+    try { rows = JSON.parse(localStorage.getItem(CACHE_KEY) || "[]"); } catch { return []; }
+    if (!Array.isArray(rows)) return [];
+    const live = rows.filter((r) => !bcExpired(r));
+    if (live.length !== rows.length) {
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(live)); } catch {}
+    }
+    return live;
+  }
   function save(rows) {
     rows.sort((a, b) => sortKey(b) < sortKey(a) ? -1 : sortKey(b) > sortKey(a) ? 1 : 0);
     try { localStorage.setItem(CACHE_KEY, JSON.stringify(rows)); } catch {}
@@ -6459,6 +6501,48 @@ function bcTrayPreview(row) {
   };
 }
 
+// dd/mm/yyyy — the form every date wears in this app's chrome (dpSlashText in
+// MOBILE_UI does the same job for the top-bar pills). Written out here rather
+// than borrowed because these screens are shared with the desktop shell, where
+// MOBILE_UI is inert.
+function bcSlashDate(iso) {
+  const p = String(iso || "").slice(0, 10).split("-");
+  return (p.length === 3 && p[0]) ? p[2] + "/" + p[1] + "/" + p[0] : "";
+}
+
+// The expiry picker: on the phone, THE SAME CONTROL as the daily message's
+// calendar — wheels, month grid, Clear / Cancel / Set — because the operator
+// asked for it by name and because a second date UI would be a second thing to
+// keep in step. `range` is what makes it answer a different question: that
+// calendar normally offers only days that HAVE a message, and here every day
+// from today onward is legal and every past day is not.
+//
+// ⚠ Past dates are disabled rather than merely discouraged: the database
+// refuses one (add_broadcast.sql §3/§4) and the nightly sweep would delete the
+// update the same night it was written. Five years of headroom is arbitrary but
+// far past any real announcement.
+//
+// ⚠ Returns false on the DESKTOP, where this picker does not exist. MOBILE_UI
+// returns a stub before the picker is even initialised (`if (!active) return
+// {...}`), and its DP_MON / DP_WD tables stay in the temporal dead zone for the
+// life of the page — calling in would throw, not merely look wrong. The
+// composer falls back to the browser's own calendar there, which is what a
+// desktop user expects anyway; the FIELD is identical on both, only the thing
+// that opens differs. Don't "fix" this by hoisting the picker out of MOBILE_UI:
+// it is closure-bound to that module and rewriting a delicate working component
+// with no test suite buys nothing (see the note on makeWheel).
+function bcOpenExpiryPicker(currentIso, onPick) {
+  const open = (typeof MOBILE_UI !== "undefined") && MOBILE_UI.openDatePicker;
+  if (!open) return false;
+  const today = bcIstStamp().slice(0, 10);
+  open(currentIso || null, onPick, {
+    range: { min: today, max: (parseInt(today.slice(0, 4), 10) + 5) + "-12-31" },
+    clearsSelection: true,          // "Clear" = no expiry, not "jump to today"
+    title: "Expires on",
+  });
+  return true;
+}
+
 // A small overlay shell the three screens below share.
 function bcSheet(titleText, bodyNode, barNode) {
   const ov = el(`<div class="bc-ov" role="dialog" aria-modal="true">
@@ -6495,8 +6579,21 @@ function openBroadcastComposer(row, onDone) {
   const afterSend = !!(row && row.notified_at);
   let picked = [];                    // {file, blob, w, h, name}
 
+  // ⚠ Field order is Title → Expires on → the words, on the operator's
+  // instruction. It also happens to be the order they are decided in: how long
+  // this matters for is part of choosing what to announce, and asking after the
+  // writing is done invites it being skipped.
   const body = el(`<div class="bc-form">
       <input type="text" class="bc-f-title" maxlength="200" placeholder="Title (optional)">
+      <div class="bc-f-exprow">
+        <button type="button" class="bc-f-exp">
+          <span class="bc-f-exp-l">Expires on</span>
+          <span class="bc-f-exp-v"></span>
+        </button>
+        <button type="button" class="bc-f-exp-x" hidden aria-label="Remove the expiry date">✕</button>
+      </div>
+      <input type="date" class="bc-f-expnative" hidden>
+      <div class="bc-f-exp-h"></div>
       <textarea class="bc-f-body" maxlength="8000" rows="8" placeholder="Write the update — a paragraph or two. Links open in the phone's browser."></textarea>
       <div class="bc-f-meta"><span class="bc-f-count"></span></div>
       <div class="bc-f-atts"></div>
@@ -6516,11 +6613,59 @@ function openBroadcastComposer(row, onDone) {
   const saveBtn = bar.querySelector(".bc-save");
   if (editing) { tEl.value = row.title || ""; bEl.value = row.body || ""; }
 
+  // ---- the expiry ----------------------------------------------------------
+  // Optional, and empty by default: an update with no date lives forever, which
+  // is what every update did before this existed. Only a date the operator
+  // deliberately picks makes one temporary.
+  const expBtn = body.querySelector(".bc-f-exp"), expVal = body.querySelector(".bc-f-exp-v"),
+        expHint = body.querySelector(".bc-f-exp-h"), expX = body.querySelector(".bc-f-exp-x"),
+        expNative = body.querySelector(".bc-f-expnative");
+  let expiresOn = (editing && row.expires_on) ? String(row.expires_on).slice(0, 10) : "";
+  const paintExp = () => {
+    expVal.textContent = expiresOn ? bcSlashDate(expiresOn) : "No expiry date";
+    expBtn.classList.toggle("bc-f-exp-set", !!expiresOn);
+    expX.hidden = !expiresOn;
+    // ⚠ Says DELETED, not "hidden" or "removed from the list". It is a hard
+    // delete of the row and its read receipts, there is no undo, and the person
+    // choosing the date is the only one who can decide that is what they want.
+    expHint.textContent = expiresOn
+      ? "This update is deleted for everyone at 11:59 PM on " + bcSlashDate(expiresOn) + ". This cannot be undone."
+      : "Leave this empty and the update stays forever. Set a date and it deletes itself that night.";
+  };
+  const setExp = (iso) => { expiresOn = iso || ""; paintExp(); };
+  paintExp();
+  expBtn.addEventListener("click", () => {
+    // Phone: the app's own calendar. Desktop: the browser's, from the hidden
+    // input — the picker above does not exist there (see bcOpenExpiryPicker).
+    if (bcOpenExpiryPicker(expiresOn, setExp)) return;
+    expNative.min = bcIstStamp().slice(0, 10);      // past dates unreachable
+    expNative.value = expiresOn || "";
+    // showPicker() opens the calendar directly; .click() is the fallback for a
+    // browser without it, where the field's own indicator has to be used.
+    if (expNative.showPicker) { try { expNative.showPicker(); return; } catch (_) {} }
+    expNative.hidden = false;
+    expNative.focus();
+  });
+  expNative.addEventListener("change", () => { setExp(expNative.value); expNative.hidden = true; });
+  // One explicit way to say "no expiry after all", on both shells — the wheel
+  // picker's own Clear does it too, but the browser's calendar has no such
+  // button and a date once set would otherwise be impossible to take back.
+  expX.addEventListener("click", () => setExp(""));
+
   // ⚠ The single most important thing this screen says. An edit to an
   // unsent-but-approved update silently tears up its approval (the DB trigger
   // does it), and an author who is not told simply sees their update vanish
   // back into the queue and reads it as a bug.
-  if (editing && row.published && !row.notified_at) {
+  // A returned draft comes back here with the reason attached — the author
+  // should be reading the objection while they rewrite, not hunting for it in
+  // the list behind this sheet. Saving is what resubmits it (the trigger clears
+  // the decline on any update), so say that too.
+  if (editing && row.declined_at) {
+    warnEl.hidden = false;
+    warnEl.textContent = (row.decliner_name || "Another admin") + " sent this back" +
+      (row.decline_reason ? ": “" + row.decline_reason + "”" : ".") +
+      " Saving it puts it back in the approval queue.";
+  } else if (editing && row.published && !row.notified_at) {
     warnEl.hidden = false;
     warnEl.textContent = "This update is approved but the notification has not gone out. " +
       "Changing the words will return it to the approval queue — another admin will have to approve it again.";
@@ -6586,15 +6731,27 @@ function openBroadcastComposer(row, onDone) {
         uploaded.push(await WA.uploadBroadcastMedia(p.blob, p.name, { w: p.w, h: p.h }));
       }
       const attachments = existing.concat(uploaded);
-      const fields = { title: tEl.value.trim() || null, body: text, attachments };
       let saved;
-      if (editing) saved = (await WA.updateBroadcast(row.id, fields)).message;
-      else saved = (await WA.postBroadcast(fields)).message;
+      if (editing) {
+        saved = (await WA.updateBroadcast(row.id, {
+          title: tEl.value.trim() || null, body: text, attachments,
+          expires_on: expiresOn || null,
+        })).message;
+      } else {
+        saved = (await WA.postBroadcast({
+          title: tEl.value.trim() || null, body: text, attachments,
+          expiresOn: expiresOn || null,
+        })).message;
+      }
       close();
       // A draft nobody notices is a draft that never sends. Fire-and-forget:
       // the row exists either way, and re-submitting pings again.
       if (saved && !saved.published) WA.notifyBroadcastPending(saved.id);
-      toast(editing ? "Saved." : "Sent for approval. Another admin has been notified.");
+      // A returned draft that has just been saved is a RESUBMISSION, and saying
+      // only "Saved." would leave its author wondering whether anyone was told.
+      toast(editing && !row.declined_at
+        ? "Saved."
+        : "Sent for approval. Another admin has been notified.");
       BROADCAST.sync().catch(() => {});
       if (onDone) onDone();
     } catch (e) {
@@ -6660,6 +6817,13 @@ function bcConfirmSend(row, onDone) {
     try {
       const r = await WA.sendBroadcastPush(row.id);
       if (r && r.skipped) {
+        // ⚠ "Already sent" IS a delivery result, and not recording it is what
+        // used to park the update in the "Not yet notified" strip permanently,
+        // offering a Resend button that could only ever be told the same thing
+        // again. The device counts are genuinely unknown on this path and stay
+        // null — the strip and the list footer both already render that as
+        // simply not saying how many.
+        await WA.recordBroadcastDelivery(row.id, null, null).catch(() => {});
         toast("Published. A notification for this update had already been sent.");
       } else {
         await WA.recordBroadcastDelivery(row.id, r && r.devices, r && r.sent)
@@ -6688,8 +6852,12 @@ function bcReview(row, onDone) {
       <div class="bc-r-body">${bcLinkify(row.body || "")}</div>
       ${bcAttachmentsHtml(row.attachments)}
     </div>`);
+  // Three answers, because a reviewer genuinely has three: not now, no, and
+  // yes. "Not yet" closes and changes nothing; Decline hands it back with a
+  // reason; Approve goes on to the confirm screen.
   const bar = el(`<div class="bc-bar-inner">
       <button type="button" class="bc-btn bc-cancel">Not yet</button>
+      <button type="button" class="bc-btn bc-danger bc-decl">Decline</button>
       <button type="button" class="bc-btn bc-primary bc-next">Approve &amp; Send…</button>
     </div>`);
   const { close } = bcSheet("Review this update", body, bar);
@@ -6701,7 +6869,62 @@ function bcReview(row, onDone) {
     if (a) { ev.preventDefault(); openExternalLink(a.getAttribute("href")); }
   });
   bar.querySelector(".bc-cancel").addEventListener("click", close);
+  bar.querySelector(".bc-decl").addEventListener("click", () => { close(); bcDecline(row, onDone); });
   bar.querySelector(".bc-next").addEventListener("click", () => { close(); bcConfirmSend(row, onDone); });
+}
+
+// ---- decline ---------------------------------------------------------------
+// The other answer a reviewer can give. Approving is one tap away; refusing has
+// to be too, or the only way to say no is to say nothing and let the draft rot
+// in the queue while its author assumes it is coming.
+//
+// ⚠ DECLINING DESTROYS NOTHING. The draft goes back to the person who wrote it,
+// with the reason attached; they rewrite it (any edit clears the decline and
+// re-pings the reviewers) or delete it themselves. Don't turn this into a
+// delete — throwing away someone else's words is not a review outcome.
+//
+// The reason is optional but strongly steered toward: a refusal with no
+// explanation is a task with no next step. It is shown to the author on the row
+// and again at the top of the composer while they rewrite.
+function bcDecline(row, onDone) {
+  const body = el(`<div class="bc-decline-form">
+      <div class="bc-d-lead">This goes back to <b>${escapeHtml(row.author_name || "its author")}</b>.
+        Nothing is deleted and nobody else is notified.</div>
+      <textarea class="bc-d-why" maxlength="500" rows="4"
+        placeholder="What needs to change? (optional, but they will only see what you write here)"></textarea>
+      <div class="bc-f-err" hidden></div>
+    </div>`);
+  const bar = el(`<div class="bc-bar-inner">
+      <button type="button" class="bc-btn bc-cancel">Cancel</button>
+      <button type="button" class="bc-btn bc-primary bc-go">Send it back</button>
+    </div>`);
+  const { close } = bcSheet("Decline this update", body, bar);
+  const errEl = body.querySelector(".bc-f-err"), goBtn = bar.querySelector(".bc-go");
+  const whyEl = body.querySelector(".bc-d-why");
+  setTimeout(() => { try { whyEl.focus(); } catch (_) {} }, 60);
+  bar.querySelector(".bc-cancel").addEventListener("click", close);
+
+  goBtn.addEventListener("click", async () => {
+    goBtn.disabled = true;
+    goBtn.textContent = "Sending back…";
+    errEl.hidden = true;
+    try {
+      await WA.declineBroadcast(row.id, whyEl.value.trim());
+    } catch (e) {
+      errEl.hidden = false;
+      errEl.textContent = (e && e.message) || "Could not decline this update.";
+      goBtn.disabled = false;
+      goBtn.textContent = "Send it back";
+      return;
+    }
+    // Fire-and-forget, like the approval ping: the decline is already recorded,
+    // and a lost notification only means the author sees it the next time they
+    // open Important Updates instead of immediately.
+    WA.notifyBroadcastDeclined(row.id);
+    close();
+    toast("Sent back to " + (row.author_name || "its author") + ".");
+    if (onDone) onDone();
+  });
 }
 
 // ---- resend ----------------------------------------------------------------
@@ -6709,23 +6932,24 @@ function bcReview(row, onDone) {
 // published, the invoke failed (network, or the CORS/JWT gateway regression),
 // and the update is live in the app with NOBODY TOLD.
 //
-// ⚠ Plain Resend does NOT clear the dedupe key. If send-push says it already
-// went out, that is the honest answer and the notification is not repeated —
-// clearing the key is a second, explicit decision behind its own confirm.
+// ⚠ Resend NEVER clears the dedupe key. If send-push says it already went out,
+// that is the honest answer and the notification is not repeated.
 // ⚠ Never auto-retry in a loop.
+//
+// ⚠ "Already sent" ends the matter (2026-08-18, operator's instruction). It is
+// recorded on the row, which takes the update out of the "Not yet notified"
+// strip, so the Resend button is not offered again — the previous behaviour
+// offered a second, deliberate send behind a confirm, and the button that led
+// to it was the one the operator asked to have removed. `WA.clearBroadcastSentKey`
+// and its RPC are kept (schema §6b) but no UI path reaches them now: sending
+// the same announcement to everyone twice is a decision that should cost more
+// than a tap, and nothing in the app offers it.
 async function bcResend(row, onDone) {
   try {
     const r = await WA.sendBroadcastPush(row.id);
     if (r && r.skipped) {
-      if (!confirm("The server says a notification for this update has already been sent.\n\n" +
-                   "Send it AGAIN to every signed-in device? Everyone who received the first one will get a second.")) {
-        if (onDone) onDone();
-        return;
-      }
-      await WA.clearBroadcastSentKey(row.id);
-      const r2 = await WA.sendBroadcastPush(row.id);
-      await WA.recordBroadcastDelivery(row.id, r2 && r2.devices, r2 && r2.sent).catch(() => {});
-      toast("Sent to " + ((r2 && r2.sent) || 0) + " devices.");
+      await WA.recordBroadcastDelivery(row.id, null, null).catch(() => {});
+      toast("This notification had already gone out. Nothing was sent twice.");
     } else {
       await WA.recordBroadcastDelivery(row.id, r && r.devices, r && r.sent).catch(() => {});
       toast("Sent to " + ((r && r.sent) || 0) + " devices.");
@@ -6735,6 +6959,40 @@ async function bcResend(row, onDone) {
   }
   BROADCAST.sync().catch(() => {});
   if (onDone) onDone();
+}
+
+// ---- opening one update (desktop) ------------------------------------------
+// The phone has a real reader page per update (#/m/broadcast/<id>); the desktop
+// list shows every update in full, so "open" here means lifting one out of the
+// column and putting it in front of the reader on its own.
+//
+// It exists because a card that shows everything still has to be OPENABLE: the
+// operator's report was that only the attached picture responded to a click,
+// which was true — the card was inert markup. Clicking anywhere on it now opens
+// this, and it is also where the date lives (the list itself carries none).
+function bcOpenUpdate(row) {
+  const when = (row.posted_at || row.created_at || "").slice(0, 10);
+  const body = el(`<div class="bc-review bc-read">
+      ${when ? `<div class="bc-r-when">${escapeHtml(bcSlashDate(when))}${row.edited_at ? " · edited" : ""}</div>` : ""}
+      ${row.title ? `<div class="bc-r-title">${escapeHtml(row.title)}</div>` : ""}
+      <div class="bc-r-body">${bcLinkify(row.body || "")}</div>
+      ${bcAttachmentsHtml(row.attachments)}
+      ${row.author_name ? `<div class="bc-r-by">— ${escapeHtml(row.author_name)}</div>` : ""}
+    </div>`);
+  const bar = el(`<div class="bc-bar-inner">
+      <button type="button" class="bc-btn bc-primary bc-close">Close</button>
+    </div>`);
+  const { close } = bcSheet("Important Update", body, bar);
+  bcPaintAttachments(body, row.attachments || []);
+  body.addEventListener("click", (ev) => {
+    const b = ev.target.closest(".bc-att-img, .bc-att-doc");
+    if (b) { ev.preventDefault(); bcOpenAttachment(row.attachments || [], parseInt(b.dataset.att, 10) || 0); return; }
+    const a = ev.target.closest("a.bc-link[data-ext]");
+    if (a) { ev.preventDefault(); openExternalLink(a.getAttribute("href")); }
+  });
+  bar.querySelector(".bc-close").addEventListener("click", close);
+  // Opening one deliberately is a stronger read signal than it scrolling past.
+  bcNoteRead(row.id);
 }
 
 // ---- the admin strip -------------------------------------------------------
@@ -6751,37 +7009,64 @@ async function mountBroadcastAdmin(node, onChanged) {
   const repaint = () => mountBroadcastAdmin(node, onChanged);
   const after = () => { repaint(); if (onChanged) onChanged(); };
 
-  let pending = [];
-  try { pending = (await WA.listPendingBroadcasts()).messages || []; }
+  let all = [];
+  try { all = (await WA.listPendingBroadcasts()).messages || []; }
   catch (e) {
     node.innerHTML = `<div class="bc-admin"><div class="bc-admin-err">${escapeHtml(e.message || "")}</div></div>`;
     return;
   }
+  const isMine = (r) => !!(r.author_id && me.id && r.author_id === me.id);
+  // ⚠ A declined draft has gone BACK TO ITS AUTHOR. It leaves every other
+  // admin's queue — there is nothing for them to do until it is rewritten, and
+  // leaving it there would mean two reviewers politely declining the same words
+  // in turn — and appears to its author alone, under the reason it was refused.
+  const pending  = all.filter((r) => !r.declined_at);
+  const returned = all.filter((r) => r.declined_at && isMine(r));
   // Published, but the notification never landed. Read from the cache — these
   // are published rows, so they are already synced.
   const unsent = BROADCAST.cached().filter((r) => r.published && !r.notified_at);
-  if (!pending.length && !unsent.length) { node.innerHTML = ""; return; }
+  if (!pending.length && !returned.length && !unsent.length) { node.innerHTML = ""; return; }
 
+  const preview = (r) => String(r.body || "").replace(/\s+/g, " ").slice(0, 110);
   const draftRow = (r) => {
-    const mine = r.author_id && me.id && r.author_id === me.id;
-    const prev = String(r.body || "").replace(/\s+/g, " ").slice(0, 110);
+    const mine = isMine(r);
+    const prev = preview(r);
     return `<div class="bc-q-row" data-id="${r.id}">
         <div class="bc-q-meta">
           <div class="bc-q-by">${escapeHtml(r.author_name || "—")}</div>
           <div class="bc-q-t">${escapeHtml(r.title || prev || "—")}</div>
           ${r.title ? `<div class="bc-q-p">${escapeHtml(prev)}</div>` : ""}
+          ${r.expires_on ? `<div class="bc-q-exp">Expires ${escapeHtml(bcSlashDate(r.expires_on))}</div>` : ""}
         </div>
         <div class="bc-q-acts">${mine
-          // ⚠ Your own draft offers NO approve button. The database would refuse
-          // it anyway (broadcasts_two_person), but a button that is offered and
-          // then rejected reads as a bug rather than as the rule.
+          // ⚠ Your own draft offers NO approve button — and no decline button
+          // either, for the same reason. The database would refuse both anyway
+          // (broadcasts_two_person / decline_broadcast), but a button that is
+          // offered and then rejected reads as a bug rather than as the rule.
           ? `<span class="bc-q-wait">Waiting for another admin</span>
              <button type="button" class="bc-btn bc-sm" data-act="edit">Edit</button>
              <button type="button" class="bc-btn bc-sm bc-danger" data-act="drop">Delete</button>`
-          : `<button type="button" class="bc-btn bc-sm bc-primary" data-act="review">Review &amp; approve</button>`}
+          // Approve and Decline are deliberately side by side. A reviewer with
+          // only one button has only one way to finish, and "leave it in the
+          // queue" is not an answer the author can act on.
+          : `<button type="button" class="bc-btn bc-sm bc-primary" data-act="review">Review &amp; approve</button>
+             <button type="button" class="bc-btn bc-sm bc-danger" data-act="decline">Decline</button>`}
         </div>
       </div>`;
   };
+  // Your own draft, refused and handed back. Edit is the resubmission — saving
+  // clears the decline in the trigger and pings the other admins again.
+  const returnedRow = (r) => `<div class="bc-q-row bc-q-returned" data-id="${r.id}">
+      <div class="bc-q-meta">
+        <div class="bc-q-by">Sent back by ${escapeHtml(r.decliner_name || "another admin")}</div>
+        <div class="bc-q-t">${escapeHtml(r.title || preview(r) || "—")}</div>
+        ${r.decline_reason ? `<div class="bc-q-why">“${escapeHtml(r.decline_reason)}”</div>` : ""}
+      </div>
+      <div class="bc-q-acts">
+        <button type="button" class="bc-btn bc-sm bc-primary" data-act="edit">Edit &amp; resubmit</button>
+        <button type="button" class="bc-btn bc-sm bc-danger" data-act="drop">Delete</button>
+      </div>
+    </div>`;
   const unsentRow = (r) => `<div class="bc-q-row bc-q-unsent" data-id="${r.id}">
       <div class="bc-q-meta">
         <div class="bc-q-by">Published, but nobody was notified</div>
@@ -6793,6 +7078,8 @@ async function mountBroadcastAdmin(node, onChanged) {
     </div>`;
 
   node.innerHTML = `<div class="bc-admin">
+      ${returned.length ? `<div class="bc-admin-head bc-admin-warn">Sent back to you <span class="bc-admin-n">${returned.length}</span></div>
+      <div class="bc-queue">${returned.map(returnedRow).join("")}</div>` : ""}
       ${pending.length ? `<div class="bc-admin-head">Awaiting approval <span class="bc-admin-n">${pending.length}</span></div>
       <div class="bc-queue">${pending.map(draftRow).join("")}</div>` : ""}
       ${unsent.length ? `<div class="bc-admin-head bc-admin-warn">Not yet notified</div>
@@ -6808,10 +7095,12 @@ async function mountBroadcastAdmin(node, onChanged) {
     if (!b) return;
     const holder = b.closest(".bc-q-row");
     const id = holder && parseInt(holder.dataset.id, 10);
-    const row = pending.find((r) => r.id === id) || unsent.find((r) => r.id === id);
+    const row = pending.find((r) => r.id === id) || returned.find((r) => r.id === id)
+             || unsent.find((r) => r.id === id);
     if (!row) return;
     const act = b.dataset.act;
     if (act === "review") return bcReview(row, after);
+    if (act === "decline") return bcDecline(row, after);
     if (act === "edit") return openBroadcastComposer(row, after);
     if (act === "resend") { b.disabled = true; return bcResend(row, after); }
     if (act === "drop") {
@@ -6860,12 +7149,18 @@ async function renderBroadcast() {
       listEl.innerHTML = `<div class="empty">No important updates yet. Announcements from the admin will appear here.</div>`;
       return;
     }
-    listEl.innerHTML = rows.map((r) => `<article class="sp-card bc-card" data-id="${r.id}">
-        <div class="sp-when">${escapeHtml(fmtDate((r.posted_at || r.created_at || "").slice(0, 10)))}${r.edited_at ? " · edited" : ""}</div>
+    // ⚠ NO DATE on the card (operator, 2026-08-18) — it lives inside the update
+    // now, on the sheet bcOpenUpdate() puts up. "· edited" stays, moved down to
+    // the footer with the rest of the provenance, because an update that was
+    // corrected after it went out must say so wherever it is read.
+    // The card is a real button: role + tabindex so it is reachable by keyboard,
+    // and the whole thing opens (see the click handler below).
+    listEl.innerHTML = rows.map((r) => `<article class="sp-card bc-card" data-id="${r.id}" role="button" tabindex="0">
         ${r.title ? `<div class="sp-title bc-c-title">${escapeHtml(r.title)}</div>` : ""}
         <div class="sp-body bc-c-body">${bcLinkify(r.body || "")}</div>
         ${bcAttachmentsHtml(r.attachments)}
         <div class="bc-c-foot">${escapeHtml(r.author_name ? "— " + r.author_name : "")}${
+          r.edited_at ? " · edited" : ""}${
           isModerator() && r.notified_devices != null
             ? ` · sent to ${r.notified_devices} device${r.notified_devices === 1 ? "" : "s"}` : ""
           }<span class="bc-c-reads"></span></div>
@@ -6880,15 +7175,41 @@ async function renderBroadcast() {
     if (rows[0]) bcNoteRead(rows[0].id);
     paintReads();
   };
+  // ⚠ A click ANYWHERE on a card opens that update (operator, 2026-08-18) — the
+  // card used to be inert markup, so the only thing that responded to a click
+  // was an attached picture, which read as "only the thumbnail works". The two
+  // things that keep their own behaviour are the ones that already had one: a
+  // link goes to the link, an attachment opens the attachment. A text selection
+  // is not a click either — dragging across a paragraph to copy it must not
+  // fling a sheet open in the reader's face.
+  const openFromCard = (card) => {
+    // By id, not by DOM position — the list repaints as syncs land.
+    const row = (BROADCAST.cached() || []).find((r) => String(r.id) === card.dataset.id);
+    if (row) bcOpenUpdate(row);
+  };
   listEl.addEventListener("click", (ev) => {
     const a = ev.target.closest("a.bc-link[data-ext]");
     if (a) { ev.preventDefault(); openExternalLink(a.getAttribute("href")); return; }
     const card = ev.target.closest(".bc-card");
+    if (!card) return;
     const b = ev.target.closest(".bc-att-img, .bc-att-doc");
-    if (!card || !b) return;
-    // By id, not by DOM position — the list repaints as syncs land.
-    const row = (BROADCAST.cached() || []).find((r) => String(r.id) === card.dataset.id);
-    if (row) bcOpenAttachment(row.attachments || [], parseInt(b.dataset.att, 10) || 0);
+    if (b) {
+      const row = (BROADCAST.cached() || []).find((r) => String(r.id) === card.dataset.id);
+      if (row) bcOpenAttachment(row.attachments || [], parseInt(b.dataset.att, 10) || 0);
+      return;
+    }
+    const sel = window.getSelection && window.getSelection();
+    if (sel && String(sel).length > 1) return;
+    openFromCard(card);
+  });
+  // Keyboard: the card announces itself as a button, so it has to behave like
+  // one for anyone not using a mouse.
+  listEl.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const card = ev.target.closest(".bc-card");
+    if (!card || ev.target.closest("a")) return;
+    ev.preventDefault();
+    openFromCard(card);
   });
 
   if (isModerator()) {
@@ -10060,6 +10381,16 @@ const MOBILE_UI = (() => {
       min: sorted[0] || null, max: sorted[sorted.length - 1] || null,
     };
   }
+  // The same shape dpData() returns, for a window of dates that has no message
+  // data behind it at all: nothing is "available" (so no purple days and no
+  // dots), and every day between min and max is selectable.
+  function dpRangeData(range) {
+    const y0 = +String(range.min).slice(0, 4), y1 = +String(range.max).slice(0, 4);
+    const years = [];
+    for (let y = y0; y <= y1; y++) years.push(y);
+    return { scope: "range", avail: new Set(), sorted: [], years,
+             min: range.min, max: range.max };
+  }
   function dpNearest(sortedAsc, s, dir) {
     if (dir === "newer") { for (let i = 0; i < sortedAsc.length; i++) if (sortedAsc[i] > s) return sortedAsc[i]; return null; }
     for (let i = sortedAsc.length - 1; i >= 0; i--) if (sortedAsc[i] < s) return sortedAsc[i]; return null;
@@ -10079,7 +10410,11 @@ const MOBILE_UI = (() => {
     _stageId = null; _feedCards = [];
     const kind = isAnushthan(s) ? "anushthan" : "notfound";
     const dEl = $("m-panel-date");
-    if (dEl) { dEl.textContent = dpPillText(s); dEl.onclick = () => openDatePicker(s, goDate); }
+    if (dEl) {
+      dEl.textContent = dpPillText(s);
+      dEl.classList.remove("m-datepill-flat");   // shared element — see wireVPanel
+      dEl.onclick = () => openDatePicker(s, goDate);
+    }
     ["m-panel-fav", "m-panel-share", "m-panel-dl"].forEach((id) => { const b = $(id); if (b) b.classList.add("m-vact-disabled"); });
     const wrap = el(`<div class="m-msgwrap"><div class="m-msg">
       <div class="m-msg-ico">🕉️</div>
@@ -10114,11 +10449,22 @@ const MOBILE_UI = (() => {
   //              spinning can't land on a dead month. "Clear" then means
   //              "clear the filter" and calls onSet(null).
   //   emptyMsg   toast text when the scope has no dates at all.
+  //   range      {min,max} → a FREE window of dates with no message data behind
+  //              it, for picking a date that is not a message date at all (the
+  //              Important Updates expiry). Every day inside the window is
+  //              selectable and every day outside it is disabled; `scope` and
+  //              `sectionOnly` are then irrelevant and dpData() is not called.
+  //   clearsSelection  true → "Clear" means onSet(null) rather than "jump to
+  //              today". Implied by sectionOnly; spelled out for `range`, where
+  //              clearing means "no expiry" and jumping to today would be wrong.
   let _dpClose = null;
   async function openDatePicker(currentIso, onSet, opts) {
     const o = opts || {};
     const only = !!o.sectionOnly;
-    const data = await dpData(o.scope);
+    // ⚠ dpData() answers "which days have a message". A free range asks the
+    // opposite question — "which days are legal to choose" — so it is bypassed
+    // rather than coaxed into producing a year of fake availability.
+    const data = o.range ? dpRangeData(o.range) : await dpData(o.scope);
     if (!data.min) { toast(o.emptyMsg || "No wisdom available yet."); return; }
     const mn = dpParse(data.min), mx = dpParse(data.max);
     // Section pickers accept only real message dates; the daily/union pickers
@@ -10229,7 +10575,11 @@ const MOBILE_UI = (() => {
       let h = "";
       for (let b = 0; b < first; b++) h += "<span></span>";
       for (let d = 1; d <= N; d++) {
-        const s = dpIso(sel.y, sel.m, d), ok = inRange(s), selD = d === sel.d, dot = data.avail.has(s), anu = isAnushthan(s) && ok;
+        // ⚠ The Anushthan tint is suppressed in range mode: those days mean
+        // "an anushthan ran then", which says nothing about a date being a
+        // sensible expiry and would read as the picker recommending it.
+        const s = dpIso(sel.y, sel.m, d), ok = inRange(s), selD = d === sel.d, dot = data.avail.has(s),
+              anu = !o.range && isAnushthan(s) && ok;
         // Section mode: a date that HAS a message is written in purple, with no
         // background at all (operator's call — the filled circles read as a
         // month full of selections). Only the day you actually picked wears the
@@ -10324,7 +10674,7 @@ const MOBILE_UI = (() => {
     // goes back to showing everything. (It used to be labelled "Show all";
     // every picker says "Clear" now, whatever it clears.)
     q('[data-act="clear"]').addEventListener("click", () => {
-      if (only) { haptic(); close(); onSet(null); return; }
+      if (only || o.clearsSelection) { haptic(); close(); onSet(null); return; }
       sel = dpParse(clampIso(todayIso())); clamp(); render();
     });
     q('[data-act="cancel"]').addEventListener("click", close);
@@ -10972,6 +11322,11 @@ const MOBILE_UI = (() => {
     // opens the date picker; tapping it jumps to any date's Guru's msg.
     const dEl = $("m-panel-date");
     dEl.textContent = e.date ? dpPillText(e.date) : (e.weekday || "");
+    // The panel is ONE element reused by every reader, so the flat/inert dress
+    // Important Updates puts on it (see msgReaderPage) has to be taken off here
+    // — otherwise walking from an update back to the daily msg leaves a pill
+    // that looks unclickable while being perfectly clickable.
+    dEl.classList.remove("m-datepill-flat");
     dEl.onclick = () => openDatePicker(e.date, goDate);
     $("m-panel-fav").classList.remove("m-vact-disabled");
     $("m-panel-share").classList.remove("m-vact-disabled");
@@ -12398,9 +12753,23 @@ const MOBILE_UI = (() => {
       lastSeen: () => BROADCAST.lastSeen(),
       isNew: (r, seen) => r.id > (seen || 0),
       subscribe: (fn) => (window.WA && WA.subscribeBroadcasts ? WA.subscribeBroadcasts({ onChange: fn }) : null),
+      // ⚠ The LIST shows no date (operator, 2026-08-18). An announcement is
+      // read for what it says, not for when it was posted, and a column of
+      // dates on a short list of notices was noise. The date is still there
+      // INSIDE the update — see `dateInert` below — which is the one place
+      // someone asks "when was this?". This flag also removes the date filter
+      // from this section's top bar: filtering announcements by day is a
+      // question nobody has of a list this short.
+      hideDate: true,
+      // ⚠ The pill inside an update DISPLAYS the date and does nothing when
+      // tapped. Every other section opens its calendar from there; here there
+      // is no calendar to open, because the list it would filter has no dates.
+      dateInert: true,
       // An update the sutradhar corrected after it was sent says so, rather
       // than quietly differing from the notification people already read.
-      rowNote: (r) => (r.edited_at ? "· edited" : ""),
+      // ⚠ No leading "·" — unlike Special's, this note stands alone on a row
+      // with no date in front of it.
+      rowNote: (r) => (r.edited_at ? "edited" : ""),
       // ⚠ `lang` is IGNORED. One body, exactly as typed — this is the only
       // message section without a language pair, and that is deliberate: these
       // are operator-written announcements, not translated teachings.
@@ -12521,7 +12890,7 @@ const MOBILE_UI = (() => {
     return `<a class="mx-row${href ? "" : " mx-row-flat"}"${href ? ` href="${href}"` : ""}>
         ${thumb}
         <div class="mx-meta">
-          <div class="mx-top">${escapeHtml(v.date ? fmtDate(v.date) : "")}${np > 1 ? ` · ${np} pages` : ""}${note ? ` <span class="mx-note">${escapeHtml(note)}</span>` : ""}${fresh ? ` <span class="mx-new">NEW</span>` : ""}</div>
+          <div class="mx-top">${sec.hideDate ? "" : escapeHtml(v.date ? fmtDate(v.date) : "")}${np > 1 ? ` · ${np} pages` : ""}${note ? ` <span class="mx-note">${escapeHtml(note)}</span>` : ""}${fresh ? ` <span class="mx-new">NEW</span>` : ""}</div>
           <div class="mx-title">${hl && hl.term ? markTerm(escapeHtml(v.title || "—"), hl.term) : escapeHtml(v.title || "—")}</div>
           <div class="mx-prev">${hl && hl.term ? markTerm(escapeHtml(prev), hl.term) : escapeHtml(prev)}</div>
         </div>
@@ -12603,6 +12972,11 @@ const MOBILE_UI = (() => {
     // filter that's the newest message the section has (per the operator: "the
     // last msg we received"), so the bar always answers "how current is this?".
     const paintTopDate = (rows) => {
+      // ⚠ A section may have no date in its chrome at all (Important Updates).
+      // Returning early rather than setting an empty pill is what actually
+      // removes it: setChrome() has already cleared the bar on the way in, so
+      // "don't set one" IS the removal.
+      if (sec.hideDate) return;
       const newest = (rows || []).map((r) => secPickDate(sec, r)).filter(Boolean).sort().pop();
       const shownDate = filterDate || newest || "";
       setTopDate({
@@ -12783,7 +13157,14 @@ const MOBILE_UI = (() => {
       // chevron beside it, which is also what the Android back button does.
       const dEl = $("m-panel-date");
       dEl.textContent = v.date ? dpSlashText(v.date) : sec.title;
-      dEl.onclick = () => openDatePicker(v.date || null, onDatePicked, {
+      // ⚠ `dateInert` (Important Updates): the pill still SAYS the date — that
+      // is the one place the date is wanted — but tapping it does nothing.
+      // There is no calendar behind it because that section's list carries no
+      // date at all, and a control that opens a filter for a list that cannot
+      // be filtered is worse than no control. `.m-datepill-flat` drops the ▾
+      // and the press state so it does not invite the tap in the first place.
+      dEl.classList.toggle("m-datepill-flat", !!sec.dateInert);
+      dEl.onclick = sec.dateInert ? null : () => openDatePicker(v.date || null, onDatePicked, {
         scope: sec.key, sectionOnly: true, title: sec.listTitle,
         emptyMsg: "No dates to pick yet — " + sec.listTitle + " has no messages.",
       });
@@ -13122,6 +13503,14 @@ const MOBILE_UI = (() => {
   return {
     active,
     openChatZoom,
+    // ⚠ Exposed for the Important Updates composer, which is one of the very
+    // few screens deliberately built for BOTH shells (BROADCAST_PLAN.md §6 —
+    // long announcements are miserable to type on a phone). Everything else in
+    // this module is mobile-only and `active` is false on the desktop, but the
+    // picker itself is plain DOM with un-gated CSS and works in either. Without
+    // this export the desktop composer would need a second, different date
+    // control, and the two would drift.
+    openDatePicker,
     handles(seg) { return !seg.length || seg[0] === "entry" || seg[0] === "m" || seg[0] === "favorites" || seg[0] === "special" || seg[0] === "letterpad" || seg[0] === "anubhuti" || seg[0] === "admintalks" || seg[0] === "dhyan"; },
     async route(seg, params) {
       closeDrawer();
