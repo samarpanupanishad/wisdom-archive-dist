@@ -463,17 +463,46 @@
       const remote = checked.remote;
       if (checked.relocated) result.relocated = checked.relocated;
 
+      // ---- which content the host is offering.
+      // content_version used to live ONLY in manifest.json. That forced the
+      // nightly ingest to rewrite a file covered by an offline ECDSA signature
+      // it cannot produce, and the way it "solved" that was to drop `files`,
+      // `min_shell` and `db_sha256`. A manifest without `files` reads as
+      // unsigned to the frozen shell, so downloadCode skipped the UI half --
+      // content kept flowing while every OTA update silently stopped applying
+      // (see mobile/republish_manifest.py). The volatile half now lives in its
+      // own unsigned file so manifest.json can stay immutable and signed.
+      let cv = remote.content_version || "";
+      let dbHash = checked.signed ? (remote.db_sha256 || "") : "";
+      try {
+        const cr = await fetch(live + "/content.json", { cache: "no-store" });
+        if (cr.ok) {
+          const cj = await cr.json();
+          // Absent or malformed content.json = a host from before the split.
+          // Fall through to the manifest rather than stalling content.
+          if (cj && cj.content_version) {
+            cv = cj.content_version;
+            // Deliberately NOT signature-backed: this file changes nightly and
+            // the signing key is offline. It still catches the failure that
+            // actually happens -- a truncated 1.5 MB transfer. The code half
+            // keeps its full signature check, so a hostile host can swap
+            // content but can never execute JavaScript on the device.
+            dbHash = cj.db_sha256 || "";
+          }
+        }
+      } catch {}
+
       // ---- content (wisdom.db + extras.json)
-      if (remote.content_version && remote.content_version !== contentVersion()) {
+      if (cv && cv !== contentVersion()) {
         const dbr = await fetch(live + "/wisdom.db", { cache: "no-store" });
         if (!dbr.ok) throw new Error("wisdom.db HTTP " + dbr.status);
         const bytes = new Uint8Array(await dbr.arrayBuffer());
         // ~1.5 MB over a phone connection is the transfer most likely to be
-        // silently truncated. This hash is covered by the manifest signature,
-        // so it rejects both a partial download and a swapped file.
-        if (checked.signed && remote.db_sha256) {
+        // silently truncated, so reject both a partial download and a file
+        // that isn't the one the host said it was serving.
+        if (dbHash) {
           const got = await B.sha256Hex(bytes);
-          if (got !== remote.db_sha256) throw new Error("wisdom.db hash mismatch");
+          if (got !== dbHash) throw new Error("wisdom.db hash mismatch");
         }
         const fresh = openFromBytes(bytes);   // validates before anything is replaced
 
@@ -494,7 +523,7 @@
 
         await writePersisted(DB_FILE, bytesToB64(bytes));
         await writePersisted(EXTRAS_FILE, btoa(unescape(encodeURIComponent(JSON.stringify(freshExtras)))));
-        ls.set("wa:mobile:contentVersion", remote.content_version);
+        ls.set("wa:mobile:contentVersion", cv);
       }
 
       // ---- code (styles.css / app.js / wa-supabase.js / supabase.js / this
