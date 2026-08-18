@@ -3263,12 +3263,25 @@ async function renderBrowse(mode, params) {
 
 // "Your Lucky Msg for Today": one random pick per device per DAY, not per
 // click — the first visit of the day draws it, every later visit returns to
-// the same msg until midnight.
+// the same msg until the day rolls over.
+//
+// ⚠ The day boundary is 3:30 AM IST, NOT local midnight, and it comes from
+// SADHANA.today() rather than a second copy of the arithmetic. That helper and
+// `effectiveIstDate` in supabase/functions/reveal-pick/index.ts are the app's
+// one definition of "today"; the reveal photo (server-side) and the Dhyan Diary
+// already used it, and this used to build its own key from the DEVICE's local
+// calendar date instead. Two things were wrong with that: opening the app at
+// 1 AM drew a NEW lucky msg while still showing YESTERDAY's guru photo (the two
+// rotated 3.5 hours apart), and the key followed the phone's timezone, so travel
+// or a clock change moved it. Don't reintroduce a local-date key here.
+//
+// (The pick itself stays PER DEVICE — unlike the reveal photo, which is chosen
+// once server-side so everyone shares it. Making this global needs an Edge
+// Function, not a client change.)
 async function renderRandom() {
   const nav = _nav;
   try {
-    const t = new Date();
-    const dayKey = `${t.getFullYear()}-${t.getMonth() + 1}-${t.getDate()}`;
+    const dayKey = SADHANA.today();
     let id = null;
     try { if (localStorage.getItem("wa:luckyDate") === dayKey) id = localStorage.getItem("wa:luckyId"); } catch {}
     if (id) {

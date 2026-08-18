@@ -1111,6 +1111,20 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 }
 @media (max-width: 640px) {
   .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; } .pl-center { transform: translateY(6.5vh); }
+  /* The caption clears the NADI STRANDS here, not the orbs. `.pl-nadi` is a fixed
+     314px tall (a width/height attribute pair in index.html, which does not ship
+     over the air), and 314 is the DESKTOP column's height. This band shrinks the
+     orbs to 22px and the gaps to 13px, so the column is only 268px — the braid is
+     46px longer than the thing it decorates, and that leftover tail hung 18px into
+     the caption. Measured on a 393x852 phone: strands paint down to y=625, the
+     caption used to start at y=607; 40px puts it at 639, clearing by 14. The orbs
+     themselves were never the problem — the root orb ends 33px above the text.
+     ⚠ So this number is tied to the 46px overhang, NOT to taste. If the braid is
+     ever made to track the column's real height (`.pl-nadi { height: 100% }` — a
+     no-op on desktop, and it also lands the crossings on their orbs, which they
+     currently miss by up to 44px here), this drops straight back to 8px. There is
+     221px of free space below the caption on a phone, so the nudge costs nothing. */
+  .pl-text { margin-top: 40px; }
 }
 /* The charan steps down in bands as the viewport gets shorter. The lockup is pinned
    near the top and the chakra column is centred, so every pixel of picture height is
