@@ -910,7 +910,8 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 /* ============================ Preloader ============================ */
 .preloader { position: fixed; inset: 0; z-index: 9999; background: #f4f0f8;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  overflow: hidden; transition: opacity .85s ease; }
+  overflow: hidden; transition: opacity .85s ease;
+  padding-bottom: calc(var(--pl-rise) * 2); }
 /* ⚠ `flex-direction: column` and the static .pl-brand below are ONE change, and it
    replaced the whole reason this block used to be difficult. The lockup used to be
    position:absolute at top:5% while .pl-center was centred independently, so the two
@@ -952,7 +953,20 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    with --pl-steps near the end of the stylesheet and silently beat the band —
    computed margin stayed 10px at 812x375 and pushed the lockup 1px off screen.
    Keep any new default above line ~1180, or give the band more specificity. */
-:root { --pl-gap: 10px; }
+:root { --pl-gap: 10px;
+  /* How far the whole stacked group sits ABOVE dead centre. One chakra orb's height,
+     which is the unit the change was actually asked in ("one circle higher") — so it
+     tracks the orb size per band rather than being an unrelated number.
+     ⚠ It is spent as `padding-bottom: calc(var(--pl-rise) * 2)` on .preloader, NOT as
+     a transform: the group is centred inside the parent's CONTENT box, so shrinking
+     that box from below lifts the group by HALF the padding. Hence the *2.
+     Absolutely-positioned children (.pl-bg, .pl-reveal) resolve `inset: 0` against
+     the PADDING box, so the background and the full-screen guru photo still cover the
+     whole screen — verified, not assumed. .pl-flash is position:fixed and unaffected.
+     ⚠ Short-viewport bands set this to 0. There the group already nearly fills the
+     screen (at 812x375 the lockup's top clears by only 4px), so any lift at all would
+     push it off the top edge. */
+  --pl-rise: 26px; }
 /* Watercolour mountains + lotus + title are baked into this artwork. */
 .pl-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none;
   background: #f4f0f8 var(--wa-asset-preloader-bg, url("/assets/preloader-bg.jpg")) center / cover no-repeat; }
@@ -1165,6 +1179,8 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 }
 @media (max-width: 640px) {
   .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; }
+  /* One orb is 22px here, so the lift is 22px — see --pl-rise. */
+  :root { --pl-rise: 22px; }
   /* 11vh, not the 6.5vh this band shipped with in 9.20: on a SMALL phone the crown
      orb's glow was reaching the "🌹 GURU 🌹" line of the lockup above it. Measured
      gap from that line to the glow — 360x640 had only 7px (which is what reads as
@@ -1225,7 +1241,9 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
      band would appear to do nothing. Zero because the group barely fits here —
      measured at 812x375, a 10px gap already pushes the top of the lockup 1px off
      screen, and at 0 it clears by 4. The visual gap that leaves is 14px. */
-  :root { --pl-gap: 0px; }
+  /* Both to 0: the group already nearly fills a short screen, so neither a gap nor
+     a lift fits. Measured at 812x375 the lockup clears the top edge by 4px at 0/0. */
+  :root { --pl-gap: 0px; --pl-rise: 0px; }
 }
 /* Landscape phone (~375px tall). The app is NOT portrait-locked, so a rotation during
    launch lands here. Everything shrinks again.
