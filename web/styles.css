@@ -957,7 +957,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   --c-heart: #57bd6a; --c-throat: #3fb3d6; --c-thirdeye: #4a57d6; --c-crown: #8a5cc6;
 }
 /* Centred composition; the brand lockup sits above it, pinned near the top.
-   The column is nudged DOWN off centre (8vh, 6.5vh on phones): it opens up the
+   The column is nudged DOWN off centre (8vh, 11vh on phones): it opens up the
    gap under the lockup, which is the pair that actually competes for space here.
    The short-viewport bands below deliberately do NOT increase with it — they
    already shrink the lockup and tighten the chakra gaps, and on a landscape
@@ -991,7 +991,18 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 /* Two nadi strands braid up through the chakras: split at the root, cross at
    every chakra centre, swap sides between, and merge at the crown. They "draw"
    upward in sync with the rising orb — narrow 1px lines, soft glow, ±15px sway. */
-.pl-nadi { position: absolute; left: 50%; top: 0; transform: translateX(-50%); z-index: 1; pointer-events: none; overflow: visible; }
+/* ⚠ `height: 100%` overrides the svg's own height="314" attribute, and that
+   override is the whole point. 314 is the DESKTOP column's height; every band
+   below shrinks the orbs and gaps, so the column becomes 268px (phone), 248px
+   (short) or 178px (landscape) while the markup's braid stayed 314. It was not
+   just overshooting the bottom — the crossings are meant to sit ON the chakras
+   and were landing up to 44px away from them on a phone, 74px in landscape, so
+   the braid did not visibly braid through anything. Measured after: within 1-3px
+   at every size, and a NO-OP on desktop (314 = 314), which is why it can live in
+   the base rule rather than in each band.
+   The height attribute cannot be fixed at source: it is in index.html, which
+   never ships over the air. Don't "tidy" this into the markup. */
+.pl-nadi { position: absolute; left: 50%; top: 0; height: 100%; transform: translateX(-50%); z-index: 1; pointer-events: none; overflow: visible; }
 .pl-nadi-a, .pl-nadi-b { fill: none; stroke-width: 2.5; stroke-linecap: round;
   stroke-dasharray: 1; stroke-dashoffset: 1; opacity: 0;
   animation: nadi-draw 1.38s ease-in forwards .9s; }
@@ -1110,21 +1121,23 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   .pl-nadi-a, .pl-nadi-b { stroke-dashoffset: 0; opacity: .4; }
 }
 @media (max-width: 640px) {
-  .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; } .pl-center { transform: translateY(6.5vh); }
-  /* The caption clears the NADI STRANDS here, not the orbs. `.pl-nadi` is a fixed
-     314px tall (a width/height attribute pair in index.html, which does not ship
-     over the air), and 314 is the DESKTOP column's height. This band shrinks the
-     orbs to 22px and the gaps to 13px, so the column is only 268px — the braid is
-     46px longer than the thing it decorates, and that leftover tail hung 18px into
-     the caption. Measured on a 393x852 phone: strands paint down to y=625, the
-     caption used to start at y=607; 40px puts it at 639, clearing by 14. The orbs
-     themselves were never the problem — the root orb ends 33px above the text.
-     ⚠ So this number is tied to the 46px overhang, NOT to taste. If the braid is
-     ever made to track the column's real height (`.pl-nadi { height: 100% }` — a
-     no-op on desktop, and it also lands the crossings on their orbs, which they
-     currently miss by up to 44px here), this drops straight back to 8px. There is
-     221px of free space below the caption on a phone, so the nudge costs nothing. */
-  .pl-text { margin-top: 40px; }
+  .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; } .pl-center { transform: translateY(11vh); }
+  /* 11vh, not the 6.5vh this band shipped with in 9.20: on a SMALL phone the crown
+     orb's glow was reaching the "🌹 GURU 🌹" line of the lockup above it. Measured
+     gap from that line to the glow — 360x640 had only 7px (which is what reads as
+     touching), 393x700 38px, 393x852 63px. The fix is banded by width, not height,
+     because the pair that collides is the lockup and the column, and it is the
+     phone layout that brings them together.
+     ⚠ The caption needs NO rule of its own here. It and .pl-chakras are both
+     children of .pl-center, so this one transform moves the orbs and the text
+     together and the spacing between them is untouched — that is the intent, not a
+     coincidence. 9.21 did carry a `.pl-text { margin-top: 40px }` here, purely to
+     clear the over-long braid's dangling tail; `.pl-nadi { height: 100% }` removed
+     that tail at source, so the nudge is gone and the caption is back to its
+     natural 8px. Removing it also SHORTENS .pl-center, and since the column is
+     vertically centred that pushed everything down a further ~16px for free.
+     After: GURU gap 51px at 360x640 and 117px at 393x852, the caption clears the
+     strands by 25px, and 100-207px stays free below it. */
 }
 /* The charan steps down in bands as the viewport gets shorter. The lockup is pinned
    near the top and the chakra column is centred, so every pixel of picture height is
@@ -1141,7 +1154,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    So the old design was ALREADY touching at ~700 and slightly overlapping at 667 —
    these bands are chosen to stay at or above that, never below.
    ⚠ Those figures were measured with the chakra column at translateY(5vh). It is
-   8vh now (6.5vh on phones, still 5vh on the short bands), which ADDS roughly
+   8vh now (11vh on phones, still 5vh on the short bands), which ADDS roughly
    0.03 x viewport height to every clearance in the table — re-measured at 900x700
    the tightest band went from ~17px to 38px. So the table is now pessimistic, not
    optimistic; treat it as the floor. If the offset is ever reduced again, these are
@@ -1190,7 +1203,11 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   .pl-tag { font-size: 10px; }
   .chakra { width: 16px; height: 16px; }
   .pl-chakras { gap: 8px; padding: 8px 0 10px; }
-  .pl-nadi { transform: translateX(-50%) scale(.62); transform-origin: 50% 50%; }
+  /* ⚠ There was a `transform: translateX(-50%) scale(.62)` here. It existed only
+     to shrink the fixed 314px braid into this band; now that `.pl-nadi` tracks the
+     column height it is actively wrong — measured, it took the braid to 110px
+     against a 178px column, ending it 34px SHORT of the root orb. Removed on
+     purpose; the base rule's translateX(-50%) still centres it. */
 }
 
 /* ---------------- Admin: Add Wisdom ---------------- */
