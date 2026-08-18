@@ -655,7 +655,14 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .wc-hdr { display: flex; align-items: center; gap: 10px; padding: 12px 18px 10px; border-bottom: 1px solid var(--border-soft); flex: 0 0 auto; }
 .wc-title { font-weight: 600; font-size: 14px; color: var(--text); display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; }
-.wc-msgs { flex: 1; overflow-y: auto; padding: 8px 0; min-height: 80px; }
+/* ⚠ overflow-anchor: none is load-bearing. A chat holds only its newest page
+   and prepends older ones as the reader scrolls up (ctx.loadEarlier), which
+   restores the scroll position by hand. Chrome's own scroll anchoring corrects
+   for the same inserted height, and the two together jump the reader a whole
+   page instead of holding them still. */
+.wc-msgs { flex: 1; overflow-y: auto; padding: 8px 0; min-height: 80px; overflow-anchor: none; }
+/* The "reaching further back" line, at the top of the list while a page loads. */
+.wc-older { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 20px; font-style: italic; }
 .wc-new-msg { flex: 0 0 auto; align-self: flex-end; display: flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; margin: 0 14px 8px 0; padding: 0; border: none; border-radius: 50%;
   background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; line-height: 1;
@@ -2714,13 +2721,12 @@ body.gated { overflow: hidden; }
    Rows deliberately reuse the Samuhik Satsang row CSS (.mx-row/.sx-row) so the
    two lists read as one family. The one structural difference: a sharing row
    has a SINGLE tap target, because the topic IS the thread — there is no
-   separate "open the message" destination to split the row between. */
-.an-row { align-items: stretch; }
-.an-row-main {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;
-  text-decoration: none; color: inherit;
-}
-.an-row-main:active { opacity: .6; }
+   separate "open the message" destination to split the row between. So the
+   row IS the link (.mx-row as an <a>, its own default), rather than a wrapper
+   holding one: an inner anchor leaves the row's padding untappable, which on
+   Android left the FIRST row openable only from its thumbnail. */
+.an-row { align-items: center; -webkit-tap-highlight-color: transparent; }
+.an-row:active { opacity: .6; }
 .an-tile { flex: none; display: flex; align-items: center; }
 .an-by { margin-top: 3px; font: 500 11.5px var(--sans); color: var(--accent-2); }
 .an-row .mx-thumb-txt .mx-ico { animation: none; }   /* no Lucky-msg sparkle in a list */

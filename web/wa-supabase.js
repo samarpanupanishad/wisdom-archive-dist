@@ -231,10 +231,28 @@ function _istToday() {
 }
 const _NOT_EXPIRED = () => "expires_on.is.null,expires_on.gte." + _istToday();
 
-async function _loadProfile(uid) {
+// ⚠ CACHED, briefly. This is the hottest read in the app: getChat() and
+// postMessage() both call it, so before the cache EVERY message sent cost a
+// profiles round trip before the insert even started — the single biggest
+// part of the delay between tapping Send and seeing the bubble.
+//
+// Safe to cache because nothing here is a permission check: role and
+// chat_muted are enforced by RLS in Postgres (see the messages insert policy
+// in schema.sql), and these copies only decide which controls the UI offers.
+// A stale copy therefore costs a differently-worded error, never a wrongly
+// allowed action. me() — the boot-time role refresh — passes {fresh:true} and
+// refills the cache, and logout() drops it.
+const PROFILE_TTL_MS = 120000;
+let _profCache = null;                   // {uid, at, user}
+function _dropProfileCache() { _profCache = null; }
+async function _loadProfile(uid, opts) {
+  if (!(opts && opts.fresh) && _profCache && _profCache.uid === uid &&
+      Date.now() - _profCache.at < PROFILE_TTL_MS) return _profCache.user;
   const { data, error } = await _sb.from("profiles").select("*").eq("id", uid).single();
   if (error) throw new Error(error.message);
-  return _userFromProfile(data);
+  const user = _userFromProfile(data);
+  _profCache = { uid, at: Date.now(), user };
+  return user;
 }
 async function _rpc(name, args) {
   const { data, error } = await _sb.rpc(name, args || {});
@@ -467,6 +485,10 @@ async function _deviceSign(payload) {
 // message is an UPDATE that stamps `deleted_at` (there is no `updated_at`
 // column), so a since-query would deliver new messages but never tombstones.
 // Diffing the recent window catches both with one fetch.
+// How many messages a chat holds at a time, and how many one scroll-up adds.
+// Small enough that a months-old satsang opens as fast as a new one; large
+// enough that a phone screen is full and the reader is not paging constantly.
+const CHAT_PAGE_SIZE = 30;
 const CHAT_POLL_MS = 6000;
 const CHAT_POLL_WINDOW = 60;
 
@@ -743,6 +765,7 @@ const WA = {
   // this machine starts from nothing even though the KEY is still installed.
   async logout() {
     _deviceHeader = null;
+    _dropProfileCache();
     try { await _sb.auth.signOut(); } catch (_) {}
   },
 
@@ -754,7 +777,7 @@ const WA = {
   async me() {
     const { data: { session } } = await _sb.auth.getSession();
     if (!session) throw new Error("Not signed in.");
-    return { token: session.access_token, user: await _loadProfile(session.user.id) };
+    return { token: session.access_token, user: await _loadProfile(session.user.id, { fresh: true }) };
   },
 
   async authConfig() {
@@ -791,7 +814,16 @@ const WA = {
   // supabase/add_satsang_chat.sql); this flag only decides whether the UI offers
   // an action that would be rejected anyway. Anything reading can_moderate to
   // decide "may delete" is now wrong.
-  async getChat(wid) {
+  //
+  // ⚠ WINDOWED. This returns the NEWEST `limit` messages, not the thread. A
+  // satsang that has been running for months is thousands of rows, and pulling
+  // every one of them was both the longest wait on opening a busy discussion
+  // and thousands of bubbles to build before the first could be read — on a
+  // phone, seconds of it. `has_more` says whether anything older exists;
+  // getChatBefore() walks back from there as the reader scrolls up.
+  //
+  // Still returned OLDEST FIRST, which is the order the renderer wants.
+  async getChat(wid, limit) {
     const { data: { session } } = await _sb.auth.getSession();
     if (!session) throw Object.assign(new Error("Not signed in."), { code: "AUTH" });
     const user = await _loadProfile(session.user.id);
@@ -799,13 +831,37 @@ const WA = {
     if (!(isMod || user.role === "member")) {
       throw Object.assign(new Error("Members only."), { code: "FORBIDDEN" });
     }
+    const take = limit || CHAT_PAGE_SIZE;
     const { data, error } = await _sb.from("messages").select("*")
-      .eq("wisdom_id", String(wid)).order("created_at", { ascending: true });
+      .eq("wisdom_id", String(wid)).order("created_at", { ascending: false }).limit(take);
     if (error) throw new Error(error.message);
-    const res = { messages: (data || []).map(_mapMsg), can_moderate: isMod, me: user.username,
+    const rows = (data || []).slice().reverse();
+    const res = { messages: rows.map(_mapMsg), has_more: (data || []).length >= take,
+                  can_moderate: isMod, me: user.username,
                   can_delete: user.role === "sutradhar" };
     if (!isMod) res.is_muted = !!user.chat_muted;
     return res;
+  },
+
+  // One page older than `beforeIso`, oldest first. Rides the same
+  // (wisdom_id, created_at) index the window above does.
+  //
+  // ⚠ `lte`, not `lt`: two messages sharing a timestamp to the microsecond
+  // would otherwise fall down the gap between two pages and be lost from the
+  // conversation forever. The boundary row therefore comes back every time and
+  // the caller drops the ids it already holds — a duplicate is free, a missing
+  // message is not.
+  //
+  // No session read: this is only ever called from inside a chat that already
+  // loaded, and RLS is what actually decides who may read it.
+  async getChatBefore(wid, beforeIso, limit) {
+    const take = limit || CHAT_PAGE_SIZE;
+    const { data, error } = await _sb.from("messages").select("*")
+      .eq("wisdom_id", String(wid)).lte("created_at", beforeIso)
+      .order("created_at", { ascending: false }).limit(take);
+    if (error) throw new Error(error.message);
+    return { messages: (data || []).slice().reverse().map(_mapMsg),
+             has_more: (data || []).length >= take };
   },
 
   // Returns {message}; throws Error.code MUTED. Members post without limit —
@@ -1831,16 +1887,19 @@ const WA = {
   // visitor who never asked would tell them they'd been turned down.
   async setRole(id, role, prevRole) {
     const d = await _rpc("set_user_role", { uid: id, new_role: role });
+    _dropProfileCache();      // an admin may well have just done this to themselves
     if (prevRole === "pending") {
       if (role === "member" || role === "moderator") _firePush({ kind: "access", user_id: id, status: "approved" });
       else if (role === "visitor") _firePush({ kind: "access", user_id: id, status: "denied" });
     }
     return d;
   },
-  renameUser(id, username) { return _rpc("rename_user", { uid: id, new_username: username }); },
-  deleteUser(id) { return _rpc("delete_user", { uid: id }); },
-  toggleMute(id) { return _rpc("toggle_mute", { uid: id }); },
-  transferLeadership(id) { return _rpc("transfer_leadership", { uid: id }); },
+  // Same reason as setRole: these can land on the caller's own row, and the
+  // cached copy must not outlive the change that a moderator just made.
+  async renameUser(id, username) { const d = await _rpc("rename_user", { uid: id, new_username: username }); _dropProfileCache(); return d; },
+  async deleteUser(id) { const d = await _rpc("delete_user", { uid: id }); _dropProfileCache(); return d; },
+  async toggleMute(id) { const d = await _rpc("toggle_mute", { uid: id }); _dropProfileCache(); return d; },
+  async transferLeadership(id) { const d = await _rpc("transfer_leadership", { uid: id }); _dropProfileCache(); return d; },
   setSignup(enabled) { return _rpc("set_signup", { enabled }); },
 
   // ----- Admin device binding (ADMIN_DEVICE_BINDING_PLAN.md) --------------

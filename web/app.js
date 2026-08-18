@@ -1512,7 +1512,7 @@ async function paintPin(body, msgsEl, ctx, midOrUndefined) {
     <span class="wc-pin-body"><span class="wc-pin-user">${escapeHtml(who)}</span>
     <span class="wc-pin-text">${escapeHtml(text.slice(0, 120))}</span></span>
     ${ctx.canModerate ? `<button class="wc-pin-x" title="Unpin" aria-label="Unpin">✕</button>` : ""}`;
-  bar.querySelector(".wc-pin-body").addEventListener("click", () => chatJumpToParent(msgsEl, mid));
+  bar.querySelector(".wc-pin-body").addEventListener("click", () => chatJumpToParent(msgsEl, mid, ctx));
   const x = bar.querySelector(".wc-pin-x");
   if (x) x.addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -1736,13 +1736,28 @@ async function downscaleImage(file) {
 // re-signed well before the hour is up so a long-open chat doesn't start
 // showing broken images.
 const MEDIA_URLS = new Map();          // path -> {url, exp}
+const MEDIA_INFLIGHT = new Map();      // path -> Promise: one signing call, many askers
 async function mediaUrls(paths) {
   const now = Date.now();
   const need = paths.filter((p) => { const e = MEDIA_URLS.get(p); return !e || e.exp < now + 60000; });
-  if (need.length) {
-    const got = await WA.signedMediaUrls(need, 3600);
-    Object.keys(got).forEach((p) => MEDIA_URLS.set(p, { url: got[p], exp: now + 3300000 }));
+  // Paths already being signed by an earlier caller are WAITED ON, not asked
+  // for again. That is what lets renderWisdomChat start the batch and paint
+  // immediately: every bubble's own paintAttachments() joins the same request
+  // instead of firing its own, so twenty photos still cost one round trip.
+  const waits = [];
+  const ask = [];
+  need.forEach((p) => { const f = MEDIA_INFLIGHT.get(p); if (f) waits.push(f); else ask.push(p); });
+  if (ask.length) {
+    const job = WA.signedMediaUrls(ask, 3600).then((got) => {
+      Object.keys(got).forEach((p) => MEDIA_URLS.set(p, { url: got[p], exp: Date.now() + 3300000 }));
+    });
+    // Clear the in-flight marks whether it worked or not — a failed batch must
+    // not poison the path for the next attempt.
+    const done = job.finally(() => ask.forEach((p) => MEDIA_INFLIGHT.delete(p)));
+    ask.forEach((p) => MEDIA_INFLIGHT.set(p, done));
+    waits.push(done);
   }
+  if (waits.length) await Promise.all(waits);
   const out = {};
   paths.forEach((p) => { const e = MEDIA_URLS.get(p); if (e) out[p] = e.url; });
   return out;
@@ -2066,8 +2081,18 @@ function wireChatMsgMenu(msgEl, m, ctx) {
 // walked back. A quote whose parent is off-screen (older than what's loaded) or
 // already removed simply does nothing — the snippet still reads on its own,
 // which is the whole reason it's denormalised.
-function chatJumpToParent(msgsEl, mid) {
-  const target = mid && msgsEl.querySelector(`[data-mid="${mid}"]`);
+async function chatJumpToParent(msgsEl, mid, ctx) {
+  let target = mid && msgsEl.querySelector(`[data-mid="${mid}"]`);
+  // A chat holds only its newest page or two, so the quoted message is often
+  // simply not loaded yet. Walk back through the thread until it is, rather
+  // than telling the reader it isn't there when it plainly is.
+  if (!target && mid && ctx && ctx.loadEarlier) {
+    let guard = 0;
+    while (!target && ctx.hasMore && guard++ < 40) {
+      if (!(await ctx.loadEarlier())) break;
+      target = msgsEl.querySelector(`[data-mid="${mid}"]`);
+    }
+  }
   if (!target) { toast("That message isn't in view."); return; }
   target.scrollIntoView({ behavior: "smooth", block: "center" });
   target.classList.add("wc-msg-flash");
@@ -2127,7 +2152,7 @@ function buildChatMsgEl(m, ctx, prev) {
       ${quote}
       ${atts ? attachmentsHtml(atts) : ""}
       ${isPlaceholder ? "" : `<div class="wc-text">${highlightMentions(renderMarkdown(m.text || ""))}</div>`}
-      <div class="wc-stamp"><span class="wc-time">${escapeHtml(chatClock(m.ts))}</span></div>
+      <div class="wc-stamp"><span class="wc-time">${m.pending ? "sending…" : escapeHtml(chatClock(m.ts))}</span></div>
       ${ctx.canDelete ? `<button class="wc-del" title="Delete">✕</button>` : ""}
       ${reacts ? `<div class="wc-reacts">${reacts}</div>` : ""}
     </div>
@@ -2152,7 +2177,7 @@ function buildChatMsgEl(m, ctx, prev) {
   if (quote) {
     msgEl.querySelector(".wc-quote").addEventListener("click", (e) => {
       e.stopPropagation();
-      chatJumpToParent(msgEl.parentElement, m.replyTo);
+      chatJumpToParent(msgEl.parentElement, m.replyTo, ctx);
     });
   }
   if (ctx.canDelete) {
@@ -2193,6 +2218,35 @@ function renderChatMessages(msgsEl, messages, ctx) {
     prev = m.sys ? { user: "", ts: m.ts } : m;
   });
   msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+
+// Insert one older PAGE above what is already on screen (see ctx.loadEarlier).
+// The batch is built by the same separator + grouping pass the first render
+// uses, and then the seam is mended, which is the whole difficulty here:
+//
+//   • the day separator that used to head the list is a DUPLICATE if the batch
+//     ends on that same day — the thread would show the date twice;
+//   • the message that used to be first may now GROUP into the one above it
+//     (same person, same day, within five minutes), and it was drawn ungrouped
+//     because at the time nothing came before it. It is rebuilt with its new
+//     neighbour so the block structure matches what a full render would draw.
+//
+// A "New messages" divider between the two runs is left exactly where it is.
+function chatPrependOlder(msgsEl, older, ctx) {
+  const frag = document.createDocumentFragment();
+  let prev = null;
+  older.forEach((m) => {
+    if (!prev || chatDayKey(prev.ts) !== chatDayKey(m.ts)) frag.appendChild(chatDaySepEl(m.ts));
+    frag.appendChild(buildChatMsgEl(m, ctx, prev));
+    prev = m.sys ? { user: "", ts: m.ts } : m;
+  });
+  const wasFirst = ctx.loaded[0];
+  const head = msgsEl.firstElementChild;
+  if (head && head.classList.contains("wc-daysep") && prev && wasFirst &&
+      chatDayKey(prev.ts) === chatDayKey(wasFirst.ts)) head.remove();
+  msgsEl.insertBefore(frag, msgsEl.firstChild);
+  const seam = wasFirst && wasFirst.id && msgsEl.querySelector(`[data-mid="${wasFirst.id}"]`);
+  if (seam && prev) seam.replaceWith(buildChatMsgEl(wasFirst, ctx, prev));
 }
 
 // Append one message live, skipping it if it's already on screen (e.g. our own
@@ -2251,9 +2305,11 @@ function openChatStream(wid, msgsEl, ctx) {
       // Someone just spoke, so they've plainly stopped typing.
       if (ctx.typing) ctx.typing.clear(m.user);
       // Their message arriving means we've read up to it — and any "Seen by"
-      // on our own older message is now stale.
-      WA.markThreadRead(ctx.wid);
-      paintSeenBy(msgsEl, ctx);
+      // on our own older message is now stale. Both go through the throttles
+      // set up in renderWisdomChat, so a burst of ten messages costs one
+      // receipt and one count, not ten of each.
+      if (ctx.pingRead) ctx.pingRead(); else WA.markThreadRead(ctx.wid);
+      if (ctx.pingSeen) ctx.pingSeen(); else paintSeenBy(msgsEl, ctx);
     },
     onUpdate: (m) => chatUpdateLive(msgsEl, m, ctx),
     onReact: (r) => applyReactEvent(ctx, msgsEl, r, true),
@@ -2319,7 +2375,13 @@ async function renderWisdomChat(body, wid, label, opts) {
   // Hide it as soon as the reader scrolls back down themselves, not only on click.
   msgsEl.addEventListener("scroll", () => {
     if (!newMsgBtn.hidden && msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 80) newMsgBtn.hidden = true;
-  });
+  }, { passive: true });
+
+  // Reactions are an INDEPENDENT read, so it starts here rather than after the
+  // messages land: one wait instead of two. It carries its own catch from the
+  // moment it is created — an unhandled rejection on a decoration must never
+  // reach the conversation.
+  const reactsP = WA.listReactions(wid).catch(() => ({ reactions: [] }));
 
   let data;
   try {
@@ -2330,7 +2392,7 @@ async function renderWisdomChat(body, wid, label, opts) {
       const gate = el(`<div class="wc-gate"></div>`);
       gate.innerHTML = modSignInHtml();
       wrap.appendChild(gate);
-      wireModSignIn(gate, () => renderWisdomChat(body, wid));
+      wireModSignIn(gate, () => renderWisdomChat(body, wid, label, opts));
       return;
     }
     if (err.code === "FORBIDDEN") {
@@ -2353,36 +2415,117 @@ async function renderWisdomChat(body, wid, label, opts) {
   // and the "New messages" divider needs where the reader actually left off.
   const ctx = { me: data.me, canModerate: !!data.can_moderate, canDelete: !!data.can_delete,
                 canReply: !(!data.can_moderate && data.is_muted), reacts: new Map(),
-                seenBefore: SATSANG.seenFor(wid) || "", wid, body };
+                seenBefore: SATSANG.seenFor(wid) || "", wid, body,
+                // The window: what is on screen, oldest first, and whether the
+                // thread continues above it. Everything that reaches backwards
+                // (scrolling up, a quote jump, opening the search) goes through
+                // ctx.loadEarlier below and keeps these two honest.
+                loaded: (data.messages || []).slice(), hasMore: !!data.has_more };
   if (opts && opts.onCtx) opts.onCtx(ctx);
-  // Reactions load in ONE query for the whole thread, before the first paint, so
-  // pills don't pop in a moment after the messages. A failure here must never
-  // cost the chat itself — an empty store just means no pills.
-  try {
-    const rx = await WA.listReactions(wid);
-    (rx.reactions || []).forEach((r) => {
-      const list = ctx.reacts.get(r.mid) || [];
-      list.push({ user: r.user, emoji: r.emoji });
-      ctx.reacts.set(r.mid, list);
-    });
-  } catch { /* reactions are decoration; the conversation is not */ }
-  // Sign every image in the thread in ONE batch, before the first paint. Each
-  // bubble then asks mediaUrls() for its own paths and gets a cache hit — without
-  // this prime, a thread with twenty photos would make twenty signing round trips
-  // on open, which on rural mobile data is the difference between usable and not.
+  // Reactions still land BEFORE the first paint (pills that pop in a moment
+  // later read as a glitch) — but the request has been in flight since before
+  // the messages arrived, so by now it has usually already answered.
+  const rx = await reactsP;
+  (rx.reactions || []).forEach((r) => {
+    const list = ctx.reacts.get(r.mid) || [];
+    list.push({ user: r.user, emoji: r.emoji });
+    ctx.reacts.set(r.mid, list);
+  });
+  // Sign every image in the thread in ONE batch — but do NOT wait for it. Each
+  // bubble's paintAttachments() joins this very request (mediaUrls dedups by
+  // path), so a thread with twenty photos still makes one signing round trip
+  // instead of twenty; awaiting it here only meant nobody could read the WORDS
+  // until the pictures were ready, which on rural mobile data is most of the
+  // wait when a thread opens.
   try {
     const paths = [...new Set((data.messages || [])
       .flatMap((m) => (Array.isArray(m.attachments) ? m.attachments : []))
       .filter(isImageAtt).map((a) => a.path))];
-    if (paths.length) await mediaUrls(paths);
+    if (paths.length) mediaUrls(paths).catch(() => {});
   } catch { /* unsigned images just don't appear; the words still do */ }
   renderChatMessages(msgsEl, data.messages, ctx);
   // Opening a discussion clears its badge (Samuhik Satsang or Anubhuti Sharing).
   markThreadSeen(wid, (data.messages || []).reduce((a, m) => (m.ts > a ? m.ts : a), ""));
+
+  // ---- the two receipt pings, both THROTTLED --------------------------------
+  // Each is a session read plus a database round trip, and each used to be fired
+  // per scroll EVENT / per arriving message. One fling through a long thread put
+  // dozens of writes on the wire, which is most of what made reading a busy
+  // satsang feel sticky. Neither says anything different a few seconds later.
+  // They live on ctx so the live stream (openChatStream) shares these very
+  // counters rather than keeping its own.
+  const READ_MIN_MS = 8000;
+  let lastReadPing = 0;
+  ctx.pingRead = (force) => {
+    const now = Date.now();
+    if (!force && now - lastReadPing < READ_MIN_MS) return;
+    lastReadPing = now;
+    WA.markThreadRead(wid);
+  };
+  // "Seen by N" is a COUNT query, so it gets a trailing throttle: repaint once
+  // the burst has settled, not once per message in it. Skipped outright if the
+  // chat has since been left — a pending timer must not outlive its thread.
+  const SEEN_MIN_MS = 6000;
+  let seenTimer = null, lastSeenPaint = 0;
+  ctx.pingSeen = () => {
+    if (seenTimer) return;
+    const wait = Math.max(0, SEEN_MIN_MS - (Date.now() - lastSeenPaint));
+    seenTimer = setTimeout(() => {
+      seenTimer = null;
+      lastSeenPaint = Date.now();
+      if (msgsEl.isConnected) paintSeenBy(msgsEl, ctx);
+    }, wait);
+  };
+
+  // ---- older messages, fetched as the reader scrolls up ---------------------
+  // Scroll position is restored BY HAND (and .wc-msgs turns off the browser's
+  // own scroll anchoring) because the two together fight: each corrects for the
+  // inserted height, and the reader ends up jumped a page instead of held still.
+  let loadingMore = false;
+  const loadEarlier = async () => {
+    if (loadingMore || !ctx.hasMore || !ctx.loaded.length) return false;
+    loadingMore = true;
+    const note = el(`<div class="wc-older">Loading earlier messages…</div>`);
+    msgsEl.insertBefore(note, msgsEl.firstChild);
+    const prevH = msgsEl.scrollHeight, prevTop = msgsEl.scrollTop;
+    try {
+      const d = await WA.getChatBefore(wid, ctx.loaded[0].ts);
+      // getChatBefore overlaps by design (see its header), so the page it
+      // returns always re-includes the message we asked from.
+      const have = new Set(ctx.loaded.map((m) => m.id));
+      const older = (d.messages || []).filter((m) => m.id && !have.has(m.id));
+      note.remove();
+      ctx.hasMore = !!d.has_more && older.length > 0;
+      if (older.length) {
+        chatPrependOlder(msgsEl, older, ctx);
+        ctx.loaded = older.concat(ctx.loaded);
+        msgsEl.scrollTop = msgsEl.scrollHeight - prevH + prevTop;
+        // The pin banner may have been showing "(older message)" for something
+        // that is now on screen.
+        if (ctx.pinnedId && ctx.repaintPin) ctx.repaintPin(ctx.pinnedId);
+      }
+      return older.length > 0;
+    } catch {
+      // hasMore is deliberately left alone: this was a bad moment on the
+      // network, not the top of the thread. The next scroll tries again.
+      note.textContent = "Couldn't load earlier messages.";
+      setTimeout(() => note.remove(), 2500);
+      return false;
+    } finally { loadingMore = false; }
+  };
+  ctx.loadEarlier = loadEarlier;
+  // Everything, for the two things that genuinely need the whole thread: the
+  // in-thread search, and a quote pointing a long way back.
+  ctx.loadAll = async () => {
+    let guard = 0;
+    while (ctx.hasMore && guard++ < 200) { if (!(await loadEarlier())) break; }
+  };
+
   openChatStream(wid, msgsEl, ctx);   // live updates for everyone — even muted readers
   // Opening the thread IS the read receipt. Both are best-effort: a missing
   // thread_reads table costs a line of small print, never the conversation.
-  WA.markThreadRead(wid);
+  ctx.pingRead(true);
+  lastSeenPaint = Date.now();
   paintSeenBy(msgsEl, ctx);
   // Pin banner + in-thread search. Both read what is already rendered, so they
   // are wired after the first paint, not before it.
@@ -2390,11 +2533,35 @@ async function renderWisdomChat(body, wid, label, opts) {
   paintPin(body, msgsEl, ctx);
   const finder = wireChatSearch(body, msgsEl);
   const findBtn = body.querySelector(".wc-find-btn");
-  if (findBtn && finder) findBtn.addEventListener("click", () => finder.open());
-  // Reaching the bottom is the other moment "read" genuinely means read.
-  msgsEl.addEventListener("scroll", () => {
-    if (msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 40) WA.markThreadRead(wid);
+  // ⚠ The finder matches what is RENDERED, so on a windowed thread it has to
+  // pull the rest in first — otherwise "find in this satsang" quietly means
+  // "find in the last thirty messages", which is worse than not finding at all.
+  if (findBtn && finder) findBtn.addEventListener("click", async () => {
+    finder.open();
+    if (ctx.hasMore) { toast("Loading the whole conversation…"); await ctx.loadAll(); }
   });
+  // Reaching the bottom is the other moment "read" genuinely means read.
+  // ⚠ Throttled, and PASSIVE: a scroll listener the browser has to consult
+  // before it may scroll is a real cost on a phone, and this one never calls
+  // preventDefault.
+  msgsEl.addEventListener("scroll", () => {
+    // Near the top: reach back for the page before this one. loadEarlier()
+    // guards itself against overlapping calls, so a fling that fires this
+    // fifty times still makes one request.
+    if (msgsEl.scrollTop < 160) loadEarlier();
+    if (msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 40) ctx.pingRead();
+  }, { passive: true });
+
+  // A page of 30 may not fill a tall screen — and a list that doesn't overflow
+  // cannot be scrolled UP, so there would be no way to ask for more. Top it up
+  // until it does. Not awaited: the composer below must not wait on it.
+  (async () => {
+    let fills = 0;
+    while (ctx.hasMore && fills++ < 5 && msgsEl.clientHeight &&
+           msgsEl.scrollHeight <= msgsEl.clientHeight + 40) {
+      if (!(await loadEarlier())) break;
+    }
+  })();
 
   // Input area — muted or normal. Members post WITHOUT limit: message credits
   // were removed (membership is capped by invitation instead), so muting is the
@@ -2554,11 +2721,10 @@ async function renderWisdomChat(body, wid, label, opts) {
         });
       });
     };
-    const clearTray = () => {
-      pending.forEach((p) => p.url && URL.revokeObjectURL(p.url));
-      pending = [];
-      paintTray();
-    };
+    // Hand the tray back to the member without throwing the picked files away:
+    // doSend takes them, and has to be able to give them back if the send fails.
+    const takeTray = () => { const files = pending; pending = []; paintTray(); return files; };
+    const dropFiles = (files) => files.forEach((p) => p.url && URL.revokeObjectURL(p.url));
     // One intake path for both the gallery picker and the camera (phase E) —
     // a captured photo is just another File, and must go through the same size
     // cap, the same MIME+extension check and the same downscale.
@@ -2581,44 +2747,89 @@ async function renderWisdomChat(body, wid, label, opts) {
     fileEl.addEventListener("change", () => takeFiles(fileEl));
     camEl.addEventListener("change", () => takeFiles(camEl));
 
+    // Take the optimistic bubble back out — and everything drawn only because it
+    // was there. A day separator it introduced has to go with it, or the real
+    // message draws a second one and the thread shows the date twice; and if it
+    // was the thread's only message, the empty-state line comes back.
+    const dropTmp = (tmpId) => {
+      const n = tmpId && msgsEl.querySelector(`[data-mid="${tmpId}"]`);
+      if (!n) return;
+      const sep = n.previousElementSibling;
+      n.remove();
+      if (sep && sep.classList.contains("wc-daysep") && !sep.nextElementSibling) sep.remove();
+      if (!msgsEl.querySelector(".wc-msg")) {
+        msgsEl.innerHTML = `<div class="wc-empty">No messages yet — be the first to share a reflection!</div>`;
+      }
+    };
+    // Sending is OPTIMISTIC for the plain-text case. The composer empties and
+    // the bubble appears the instant Send is tapped, and the network happens
+    // behind it — before this, the message only showed up after a profile read
+    // AND an insert had both come back, which on a phone is the whole reason
+    // sending felt sluggish. A message with pictures still waits, because until
+    // the bytes are somewhere there is nothing honest to draw.
+    let tmpSeq = 0;
     const doSend = async () => {
       const text = ta.value.trim();
       if (!text && !pending.length) return;
+      const files = takeTray();          // whatever was picked when Send was tapped
+      const reply = replyTo;
+      ta.value = "";
+      ta.style.height = "";              // back to the resting height, not the grown one
+      clearReply();
+      const tmpId = files.length ? "" : "tmp:" + (++tmpSeq);
+      if (tmpId) {
+        chatAppendLive(msgsEl, { id: tmpId, user: ctx.me, text, pending: true,
+          ts: new Date().toISOString(),
+          replyTo: reply && reply.id, replyUser: reply && reply.user,
+          replySnippet: reply && reply.text }, ctx);
+      }
       sendBtn.disabled = true;
       try {
         // Upload FIRST, insert second — a row pointing at a missing object is
         // unrecoverable; an orphaned object is just garbage.
         let uploaded = null;
-        if (pending.length) {
+        if (files.length) {
           sendBtn.classList.add("wc-send-busy");
           uploaded = [];
-          for (const p of pending) {
+          for (const p of files) {
             uploaded.push(await WA.uploadChatMedia(wid, p.blob, p.name, { w: p.w, h: p.h }));
           }
         }
         // NOT `body` — that name is renderWisdomChat's own DOM parameter, which
         // the MUTED path below re-renders with.
         const outText = text || mediaPlaceholder(uploaded);
-        const d = await WA.postMessage(wid, outText, replyTo, uploaded);
-        ta.value = "";
-        ta.style.height = "";        // back to the resting height, not the grown one
-        clearReply();
-        clearTray();
+        const d = await WA.postMessage(wid, outText, reply, uploaded);
         sendBtn.classList.remove("wc-send-busy");
-        // Show our message at once; the live stream echoes it, but dedup-by-id avoids a double.
+        // Swap the optimistic copy for the real row: it carries the id the live
+        // stream will echo, which is what stops the same message drawing twice.
+        dropTmp(tmpId);
         if (d.message) chatAppendLive(msgsEl, d.message, ctx);
+        dropFiles(files);
         sendBtn.disabled = false;
       } catch (err) {
         sendBtn.classList.remove("wc-send-busy");
-        if (err.code === "MUTED") { renderWisdomChat(body, wid); return; }
-        // The words and the picked files stay in the composer so the member can
-        // retry — losing what someone wrote is the worst possible failure here.
+        dropTmp(tmpId);
+        if (err.code === "MUTED") { dropFiles(files); renderWisdomChat(body, wid, label, opts); return; }
+        // The words, the reply and the picked files go back into the composer so
+        // the member can retry — losing what someone wrote is the worst possible
+        // failure here, and clearing it optimistically means putting it back by
+        // hand. Anything typed in the meantime wins; nothing is overwritten.
+        if (!ta.value.trim()) { ta.value = text; autoGrow(); }
+        if (reply && !replyTo) ctx.setReply(reply);
+        if (files.length) { pending = files.concat(pending); paintTray(); }
         toast(err.message || "Could not send message."); sendBtn.disabled = false;
       }
     };
     sendBtn.addEventListener("click", doSend);
     ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !CHAT_TOUCH_ENTER) { e.preventDefault(); doSend(); } });
   }
+
+  // Open on the newest message. renderChatMessages already scrolled to the
+  // bottom, but it ran BEFORE the composer above claimed its share of the
+  // height — so that scroll aimed at a bottom that has since moved, and the
+  // thread opened a little short of it. Callers used to paper over this one at
+  // a time; doing it here means every surface opens the same way.
+  msgsEl.scrollTop = msgsEl.scrollHeight;
 }
 
 // Click a section header (or its chevron) to collapse/expand its body.
@@ -12534,6 +12745,13 @@ const MOBILE_UI = (() => {
   // The rows reuse the satsang row's CSS (.mx-row/.sx-row) so the two lists read
   // as one family, but a sharing row has a SINGLE tap target: the topic is the
   // thread, so there is no second destination to split the row between.
+  //
+  // ⚠ That single target is the ROW ITSELF — <a class="mx-row">, the shape
+  // .mx-row was written for and the one every other working list here uses (see
+  // resultItem). It used to be a <div> wrapping an inner <a>, which left the
+  // row's own 12/14px padding outside the link and, on Android, cost the top
+  // row of the list its text area entirely: only the thumbnail opened it.
+  // Do not reintroduce the wrapper.
 
   function anubhutiRowEl(t) {
     const when = String(t.last_at || t.created_at || "").slice(0, 10);
@@ -12545,17 +12763,15 @@ const MOBILE_UI = (() => {
     const tile = words
       ? `<div class="mx-thumb sx-thumb-text"><span>${escapeHtml(words)}</span></div>`
       : `<div class="mx-thumb mx-thumb-txt"><span class="mx-ico">🪷</span></div>`;
-    return el(`<div class="mx-row sx-row an-row">
-        <a class="an-row-main" href="${anubhutiHref(t.id)}">
-          <div class="an-tile" aria-hidden="true">${tile}</div>
-          <div class="mx-meta">
-            <div class="mx-top">${escapeHtml(top)}${ANUBHUTI.isUnread(t) ? ` <span class="mx-new">NEW</span>` : ""}</div>
-            <div class="mx-title">${escapeHtml(t.title || "—")}</div>
-            <div class="mx-prev">${escapeHtml(anubhutiPreview(t))}</div>
-            <div class="an-by">${escapeHtml(t.author || "")}</div>
-          </div>
-        </a>
-      </div>`);
+    return el(`<a class="mx-row sx-row an-row" href="${anubhutiHref(t.id)}">
+        <div class="an-tile" aria-hidden="true">${tile}</div>
+        <div class="mx-meta">
+          <div class="mx-top">${escapeHtml(top)}${ANUBHUTI.isUnread(t) ? ` <span class="mx-new">NEW</span>` : ""}</div>
+          <div class="mx-title">${escapeHtml(t.title || "—")}</div>
+          <div class="mx-prev">${escapeHtml(anubhutiPreview(t))}</div>
+          <div class="an-by">${escapeHtml(t.author || "")}</div>
+        </div>
+      </a>`);
   }
 
   // #/m/anubhuti        → the index of every sharing
