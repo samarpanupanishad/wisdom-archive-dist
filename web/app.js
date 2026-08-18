@@ -78,6 +78,56 @@ function thumbImg(e) { return e && e.thumb_url ? `<img class="thumb" src="${e.th
 })();
 
 // --------------------------------------------------------------------------
+// Preloader petal shower (pushpa varsha) — rose petals drifting down over the
+// guru reveal. Lives here, not in index.html, for one reason: index.html NEVER
+// reaches an installed APK over the air, and app.js does — so this is a publish,
+// not a new APK. The petal art, the fall and the reduced-motion opt-out are all
+// in styles.css (.pl-petals); this only supplies the bodies and their per-petal
+// variation, which is what stops twenty petals from falling in formation.
+//
+// Runs at parse time, which is ~3s before the burst uncovers the photo — there is
+// no timer and nothing to keep in sync, because the CSS attaches the animation
+// under `.preloader.burst` and index.html already adds that class. Every --delay
+// is NEGATIVE (a random phase of that petal's own cycle), so the first frame after
+// the burst is already a full sky of petals mid-fall rather than an empty one that
+// slowly fills — and nothing animates at all during the load, when the WebView has
+// no cycles to spare.
+(function petalShower() {
+  const pl = document.getElementById("preloader");
+  if (!pl || pl.querySelector(".pl-petals")) return;
+  // index.html's reduced-motion path skips the burst entirely, so these would
+  // never be seen anyway — but don't build twenty nodes to leave them hidden.
+  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  const TINTS = ["#f4a7bd", "#e87f9d", "#d95c7f", "#f7c3d1", "#c9436a", "#fbdde4"];
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const sign = () => (Math.random() < 0.5 ? -1 : 1);
+
+  let html = "";
+  for (let n = 0; n < 20; n++) {
+    const dur = rnd(2.6, 4.4);
+    html += "<i style=\"" +
+      // A little past both edges: drift carries the outliers into frame.
+      `--x:${rnd(-4, 100).toFixed(1)}%;` +
+      `--size:${rnd(11, 22).toFixed(1)}px;` +
+      `--dur:${dur.toFixed(2)}s;` +
+      // Negative, and never more than one full cycle back — see the note above.
+      `--delay:${(-rnd(0, dur)).toFixed(2)}s;` +
+      `--drift:${(rnd(12, 46) * sign()).toFixed(1)}px;` +
+      `--spin:${(rnd(0.6, 1.6) * sign()).toFixed(2)};` +
+      `--fade:${rnd(0.72, 1).toFixed(2)};` +
+      `--tint:${TINTS[(Math.random() * TINTS.length) | 0]};` +
+      (Math.random() < 0.34 ? "--petal:var(--petal-b);" : "") +
+      "\"></i>";
+  }
+  const box = document.createElement("div");
+  box.className = "pl-petals";
+  box.setAttribute("aria-hidden", "true");
+  box.innerHTML = html;
+  pl.appendChild(box);
+})();
+
+// --------------------------------------------------------------------------
 // Local storage
 // --------------------------------------------------------------------------
 const store = {

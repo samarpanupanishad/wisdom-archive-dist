@@ -932,18 +932,38 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   background: #f4f0f8 var(--wa-asset-preloader-bg, url("/assets/preloader-bg.jpg")) center / cover no-repeat; }
 .pl-flash { position: fixed; inset: 0; background: radial-gradient(circle at 50% 46%, #fff, #fff); opacity: 0; z-index: 3; pointer-events: none; transition: opacity .5s ease; }
 .preloader.burst .pl-flash { opacity: .93; }
-/* Full-page guru image, revealed out of the white burst, held, then dismissed. */
+/* Full-page guru image, revealed out of the white burst, held, then dismissed.
+   It PULLS BACK as it is held: opens tight at 1.25 and settles to its natural
+   framing at 1.0. Two things about that direction are deliberate.
+   - It ends at exactly 1.0, never below, because the photo is `cover`. Any final
+     scale under 1 would show the page behind it along an edge.
+   - It zooms OUT, not in, because the photo CHANGES DAILY (revealPhotoOfTheDay()
+     in app.js picks from a Storage bucket, so its composition is unknown here).
+     Whichever end of the move sits at 1.0 is the safely-framed one; a tight crop
+     that might clip a crown belongs in the first moment, while the white flash is
+     still fading and the image is only part-way opaque — NOT at the end, held at
+     full opacity, which is where the eye actually rests.
+   1.9s, not the old 2.6s: `guru` is added 400ms after the burst and the reveal is
+   held 1800ms before dismissal starts (both in index.html, which does NOT ship
+   over the air — treat those two numbers as fixed). 1.9s lands the photo at its
+   final framing just as the preloader begins to fade, so it comes to rest instead
+   of being cut away mid-move. */
 .pl-reveal { position: absolute; inset: 0; z-index: 5; opacity: 0; pointer-events: none;
   background: #f4f0f8 var(--wa-asset-guru-reveal, url("/assets/guru-reveal.jpg")) center / cover no-repeat;
-  transform: scale(1.04); transition: opacity 1s ease, transform 2.6s ease-out; }
+  transform: scale(1.25); transition: opacity 1s ease, transform 1.9s ease-out; }
 .preloader.guru .pl-reveal { opacity: 1; transform: scale(1); }
 :root {
   --c-root: #e0463c; --c-sacral: #ef8a3b; --c-solar: #f2c43d;
   --c-heart: #57bd6a; --c-throat: #3fb3d6; --c-thirdeye: #4a57d6; --c-crown: #8a5cc6;
 }
-/* Centred composition; baked-in title sits above it in the artwork. */
+/* Centred composition; the brand lockup sits above it, pinned near the top.
+   The column is nudged DOWN off centre (8vh, 6.5vh on phones): it opens up the
+   gap under the lockup, which is the pair that actually competes for space here.
+   The short-viewport bands below deliberately do NOT increase with it — they
+   already shrink the lockup and tighten the chakra gaps, and on a landscape
+   phone another 8vh of drop is headroom that isn't there. */
 .pl-center { position: relative; z-index: 2; display: flex; flex-direction: column;
-  align-items: center; text-align: center; padding: 20px; transform: translateY(5vh); }
+  align-items: center; text-align: center; padding: 20px; transform: translateY(8vh); }
 
 .pl-chakras { position: relative; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px 0 20px; }
 /* Visible by default (with a resting glow); the awaken animation is a pure
@@ -1000,6 +1020,52 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   100% { opacity: 0; transform: translate(-50%,-50%) scale(42); } }
 .preloader.burst .chakra { box-shadow: 0 0 26px 8px color-mix(in srgb, var(--color) 75%, transparent); }
 
+/* ---- Pushpa varsha: rose petals over the guru reveal ------------------------
+   The petal <i> elements are INJECTED BY app.js (petalShower(), just under
+   revealPhotoOfTheDay()), not written into index.html — index.html never reaches
+   an installed APK over the air, and app.js does, so this whole effect ships as a
+   publish. Each petal carries its own --x/--size/--dur/--delay/--drift/--spin/
+   --tint/--fade, which is what keeps twenty of them from marching in step.
+   The silhouette is a masked inline SVG rather than a border-radius approximation
+   or a bundled PNG: it gives a real petal outline (rounded fan, tapered base) with
+   the colour still coming from CSS, so no new file joins the artwork channel.
+   ⚠ The animation is attached only under `.preloader.burst`, and app.js seeds every
+   --delay NEGATIVE — so nothing animates during the load (the WebView has no cycles
+   to spare then; that is the whole reason .pl-gate exists) and yet the first frame
+   after the burst already shows a full field of petals mid-fall instead of an empty
+   sky slowly filling. The fall is `infinite`, so it keeps supplying petals for as
+   long as the reveal is held. */
+.pl-petals { position: absolute; inset: 0; z-index: 6; overflow: hidden; pointer-events: none;
+  opacity: 0; transition: opacity .6s ease;
+  /* Two silhouettes, so a field of twenty doesn't read as one shape repeated: a
+     face-on petal (rounded fan, tapered base) and a curled one seen side-on.
+     app.js sets `--petal: var(--petal-b)` inline on roughly a third of them.
+     Kept here rather than in the JS so the artwork stays with the stylesheet. */
+  --petal-a: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 116'%3E%3Cpath d='M50 114 C16 92 4 60 12 34 C20 8 42 2 50 2 C58 2 80 8 88 34 C96 60 84 92 50 114 Z' fill='%23000'/%3E%3C/svg%3E");
+  --petal-b: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 116'%3E%3Cpath d='M48 114 C14 90 6 56 18 30 C28 8 52 0 66 6 C58 24 56 48 60 70 C63 88 58 102 48 114 Z' fill='%23000'/%3E%3C/svg%3E");
+  --petal: var(--petal-a); }
+.preloader.burst .pl-petals { opacity: 1; }
+.pl-petals i { position: absolute; top: 0; left: var(--x); width: var(--size);
+  height: calc(var(--size) * 1.16); opacity: 0;
+  background: linear-gradient(155deg, color-mix(in srgb, var(--tint) 42%, #fff) 0%,
+    var(--tint) 58%, color-mix(in srgb, var(--tint) 74%, #7d2340) 100%);
+  -webkit-mask-image: var(--petal); mask-image: var(--petal);
+  -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
+.preloader.burst .pl-petals i { animation: pl-petal-fall var(--dur) linear var(--delay) infinite; }
+/* Sway and spin are baked into the stops (one transform list, same functions at
+   every stop, or the interpolation breaks); --drift flips sign mid-fall so the
+   petal tacks left and right instead of sliding one way. */
+@keyframes pl-petal-fall {
+  0%   { transform: translate3d(0, -16vh, 0) rotate(0deg); opacity: 0; }
+  6%   { opacity: var(--fade); }
+  25%  { transform: translate3d(var(--drift), 14vh, 0) rotate(calc(var(--spin) * 80deg)); }
+  50%  { transform: translate3d(calc(var(--drift) * -0.85), 42vh, 0) rotate(calc(var(--spin) * 170deg)); }
+  75%  { transform: translate3d(var(--drift), 70vh, 0) rotate(calc(var(--spin) * 265deg)); }
+  94%  { opacity: var(--fade); }
+  100% { transform: translate3d(calc(var(--drift) * -0.4), 116vh, 0) rotate(calc(var(--spin) * 360deg)); opacity: 0; }
+}
+
 /* ---- Brand lockup: charan + name + tagline ----------------------------------
    Replaces the lotus/title/tagline that used to be painted into preloader-bg.jpg.
    Sits ABOVE the chakra column, which is centred by .pl-center — so the two can
@@ -1026,18 +1092,25 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   font-style: normal; letter-spacing: .09em; }                 /* dark pink, own centred line */
 
 .pl-text { color: var(--accent); font-weight: 600; font-size: 16px; margin-top: 8px; min-height: 22px; }
-/* "कृपया अमृत बरसाइए।" flashes 3 times while it's on screen (645ms per cycle,
-   matching the preloader's message-swap interval in index.html) rather than
-   sitting static for three identical re-renders. */
-@keyframes pl-text-blink { 0%, 100% { opacity: 1; } 25%, 75% { opacity: .15; } 50% { opacity: 1; } }
+/* "कृपया अमृत बरसाइए।" occupies three message steps (645ms each, see the
+   swap interval in index.html), and blinks ONCE PER STEP — three slow breaths
+   while it is on screen, not a flicker.
+   ⚠ This keyframe used to dip at 25% AND 75% and return to 1 at 50%, i.e. TWO
+   flashes per iteration — six in 1935ms, one every ~320ms, which read as
+   continuous strobing rather than as three deliberate blinks. One dip per
+   cycle is the fix; do not "restore" the mid-cycle 50% stop. The count stays 3
+   and the duration stays matched to the step interval, so the animation ends
+   exactly as the final caption replaces the phrase. */
+@keyframes pl-text-blink { 0%, 100% { opacity: 1; } 50% { opacity: .18; } }
 .pl-text.pl-blink { animation: pl-text-blink 645ms ease-in-out 3; }
 @media (prefers-reduced-motion: reduce) {
   .chakra, .chakra::before, .chakra::after, .pl-nadi-a, .pl-nadi-b, .pl-rise, .pl-particle, .preloader.burst .pl-burst, .pl-text.pl-blink { animation: none !important; }
+  .pl-petals { display: none !important; }
   .chakra { opacity: 1; transform: scale(1); box-shadow: 0 0 14px 3px color-mix(in srgb, var(--color) 55%, transparent); }
   .pl-nadi-a, .pl-nadi-b { stroke-dashoffset: 0; opacity: .4; }
 }
 @media (max-width: 640px) {
-  .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; } .pl-center { transform: translateY(3.5vh); }
+  .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; } .pl-center { transform: translateY(6.5vh); }
 }
 /* The charan steps down in bands as the viewport gets shorter. The lockup is pinned
    near the top and the chakra column is centred, so every pixel of picture height is
@@ -1052,7 +1125,13 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
          700          1           -48        -17          5
          667         -3           -51        -21          2
    So the old design was ALREADY touching at ~700 and slightly overlapping at 667 —
-   these bands are chosen to stay at or above that, never below. Note a typical phone
+   these bands are chosen to stay at or above that, never below.
+   ⚠ Those figures were measured with the chakra column at translateY(5vh). It is
+   8vh now (6.5vh on phones, still 5vh on the short bands), which ADDS roughly
+   0.03 x viewport height to every clearance in the table — re-measured at 900x700
+   the tightest band went from ~17px to 38px. So the table is now pessimistic, not
+   optimistic; treat it as the floor. If the offset is ever reduced again, these are
+   the numbers that come back. Note a typical phone
    (393x852) clears by 38px at full size, so handsets keep the largest charan. */
 @media (max-height: 845px) {
   .pl-charan { width: 140px; height: 110px; margin-bottom: .35em; }
@@ -1077,6 +1156,12 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
      short screen it must come down too or it still runs into the text. */
   .chakra { width: 22px; height: 22px; }
   .pl-chakras { gap: 12px; padding: 10px 0 12px; }
+  /* ⚠ Hold the ORIGINAL 5vh here — do not inherit the 8vh drop. Measured at
+     812x375 the 8vh version left only 8px under the column (against 19px at 5vh):
+     the drop buys clearance under the lockup by spending it at the bottom, and on
+     a short screen there is none to spend. This band keys off height, so a phone in
+     portrait is unaffected and still gets the full 6.5vh. */
+  .pl-center { transform: translateY(5vh); }
 }
 /* Landscape phone (~375px tall). The app is NOT portrait-locked, so a rotation during
    launch lands here. Everything shrinks again.
