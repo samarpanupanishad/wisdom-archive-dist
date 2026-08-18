@@ -5226,7 +5226,15 @@ const SATSANG = (() => {
     // Those belong to their own menu and their own badge, so they are dropped
     // here at the source — one place, rather than at each of the index, the
     // count and the row renderer.
-    threads = (d.threads || []).filter((t) => !isAnubhutiWid(t.wid));
+    //
+    // ⚠ Admin Talks is dropped here too — defence in depth, NOT the lock. The
+    // server already excludes 'admin:%' (add_admin_talks.sql §6), but THREE
+    // older files still define list_satsang_threads() without that filter, and
+    // it is SECURITY DEFINER, so re-running any of them puts the private room
+    // in every member's index past RLS. That is not hypothetical: it shipped
+    // that way once. This keeps the UI honest when the server side regresses.
+    threads = (d.threads || [])
+      .filter((t) => !isAnubhutiWid(t.wid) && !isAdminTalksWid(t.wid));
     adoptBaseline(threads);
     recount();
     return threads;
@@ -5256,6 +5264,13 @@ const SATSANG = (() => {
     // An Anubhuti Sharing message belongs to ANUBHUTI's badge, not this one.
     // Its noteIncoming() is called alongside this one by the same dispatcher.
     if (isAnubhutiWid(m.wid)) return;
+    // Admin Talks likewise belongs to ADMINTALK's badge. Without this line the
+    // room's push (send-push sets data.wid = "admin:talks") arrives here as an
+    // unrecognised wid and gets UNSHIFTED into `threads` below, which both
+    // double-counts one message across two badges and offers the private room
+    // as a "Forward to another satsang" target — that picker calls
+    // satsangGroups() UNFORCED, so it reads this list and not the server's.
+    if (isAdminTalksWid(m.wid)) return;
     const wid = m.wid ? String(m.wid) : "";
     const ts = m.ts || new Date().toISOString();
     if (wid) {
