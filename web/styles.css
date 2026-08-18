@@ -909,8 +909,24 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 
 /* ============================ Preloader ============================ */
 .preloader { position: fixed; inset: 0; z-index: 9999; background: #f4f0f8;
-  display: flex; align-items: center; justify-content: center; overflow: hidden;
-  transition: opacity .85s ease; }
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  overflow: hidden; transition: opacity .85s ease; }
+/* ⚠ `flex-direction: column` and the static .pl-brand below are ONE change, and it
+   replaced the whole reason this block used to be difficult. The lockup used to be
+   position:absolute at top:5% while .pl-center was centred independently, so the two
+   were free to collide — and how badly depended entirely on viewport height. Measured
+   across real phones, the SAME css produced a 39px gap on a 360x640 and 140px on a
+   412x915, so no single offset could ever be right: tuning it wide enough for a small
+   phone made a large one look empty, and tuning it tight enough for a large phone put
+   the orbs on the "🌹 GURU 🌹" line of a small one.
+   Now both are in flow, stacked, and centred as ONE group, so `--pl-gap` is a real
+   distance rather than a guess: measured 34px on 360x640, 393x852, 412x915 and 35px on
+   desktop — the same number everywhere, which is the entire point. They also can no
+   longer overlap at any size, whatever the font scale does.
+   The cost, accepted deliberately: on a tall screen the lockup is no longer pinned near
+   the top, it sits where centring puts it (about 90px lower on a 393x852). If it ever
+   needs to go back up, that is a change to justify-content here, NOT a reintroduction
+   of absolute positioning. */
 .preloader.reveal { opacity: 0; pointer-events: none; }
 /* Hold the entrance until the screen has actually rendered. index.html adds
    .go from a double rAF; until then every animation below sits at its 0%
@@ -927,6 +943,16 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .preloader.pl-gate:not(.go) .pl-nadi-b,
 .preloader.pl-gate:not(.go) .pl-rise,
 .preloader.pl-gate:not(.go) .pl-particle { animation-play-state: paused; }
+/* Distance from the brand lockup to the chakra column. See the .preloader note:
+   a plain px value, because it now MEANS the same thing on every screen (measured
+   34px on 360x640, 393x852 and 412x915 alike).
+   ⚠ Declared HERE, above the @media bands, and that position is load-bearing. The
+   short-viewport band overrides it with another `:root` rule; both selectors have
+   the same specificity, so the one LATER in the file wins. This default first sat
+   with --pl-steps near the end of the stylesheet and silently beat the band —
+   computed margin stayed 10px at 812x375 and pushed the lockup 1px off screen.
+   Keep any new default above line ~1180, or give the band more specificity. */
+:root { --pl-gap: 10px; }
 /* Watercolour mountains + lotus + title are baked into this artwork. */
 .pl-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none;
   background: #f4f0f8 var(--wa-asset-preloader-bg, url("/assets/preloader-bg.jpg")) center / cover no-repeat; }
@@ -956,14 +982,15 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   --c-root: #e0463c; --c-sacral: #ef8a3b; --c-solar: #f2c43d;
   --c-heart: #57bd6a; --c-throat: #3fb3d6; --c-thirdeye: #4a57d6; --c-crown: #8a5cc6;
 }
-/* Centred composition; the brand lockup sits above it, pinned near the top.
-   The column is nudged DOWN off centre (8vh, 11vh on phones): it opens up the
-   gap under the lockup, which is the pair that actually competes for space here.
-   The short-viewport bands below deliberately do NOT increase with it — they
-   already shrink the lockup and tighten the chakra gaps, and on a landscape
-   phone another 8vh of drop is headroom that isn't there. */
+/* Second half of the stacked group: the lockup is above, this is below, and the
+   two are separated by `--pl-gap` (see the .preloader note). There used to be a
+   `transform: translateY(8vh)` here — 11vh on phones, 5vh on short screens — which
+   existed only to push a separately-centred column clear of a separately-pinned
+   lockup. It is gone: with both in one flex column there is nothing to push away
+   from. ⚠ Don't reintroduce a vh nudge to adjust spacing; change --pl-gap, which
+   is measured in real pixels and behaves the same on every screen. */
 .pl-center { position: relative; z-index: 2; display: flex; flex-direction: column;
-  align-items: center; text-align: center; padding: 20px; transform: translateY(8vh); }
+  align-items: center; text-align: center; padding: 20px; margin-top: var(--pl-gap); }
 
 .pl-chakras { position: relative; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px 0 20px; }
 /* Visible by default (with a resting glow); the awaken animation is a pure
@@ -1081,7 +1108,9 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    Replaces the lotus/title/tagline that used to be painted into preloader-bg.jpg.
    Sits ABOVE the chakra column, which is centred by .pl-center — so the two can
    collide on short viewports. See the max-height rule at the end of this block. */
-.pl-brand { position: absolute; left: 0; right: 0; top: 5%; z-index: 2;
+/* `width: 100%` matters: as a shrink-to-fit flex item the padding would no longer
+   bound the text and the name/tagline would wrap differently from how it was tuned. */
+.pl-brand { position: static; width: 100%; z-index: 2;
   text-align: center; pointer-events: none; padding: 0 16px; }
 /* The artwork is a TRANSPARENT CUTOUT now (guru-charan.png) — just the ink lines,
    with the black vignette AND the cream paper patch both removed, so it sits on the
@@ -1102,7 +1131,21 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .pl-tag-b { display: block; margin-top: .15em; color: #a8385c; font-weight: 700;
   font-style: normal; letter-spacing: .09em; }                 /* dark pink, own centred line */
 
-.pl-text { color: var(--accent); font-weight: 600; font-size: 16px; margin-top: 8px; min-height: 22px; }
+/* ⚠ A FIXED height, not min-height, and this is what stops the orbs jumping.
+   .pl-text and .pl-chakras are both children of .pl-center, so the caption's height
+   is part of the column's height — and the column is centred, so when the final
+   message ("Showering Guru's Msg... Thanks Gurudev for everything...!") wrapped to a
+   second line on a phone the box grew 24px and the whole thing, orbs included, rose
+   by HALF that: a measured 12px jump, on every phone, exactly as the last message
+   appeared. Desktop never showed it because the caption fits one line there.
+   3em reserves two lines and never changes, so nothing downstream can move. In `em`
+   on purpose: it scales with the font, which a px value would not. And the text is
+   top-aligned in that box, so a caption longer than the reserve grows DOWNWARD into
+   the free space below (78-190px of it) instead of pushing the column up — the orbs
+   stay put even in the three-line case. Verified: orb shift 12px -> 0px, and the
+   caption's own first line stopped drifting too. */
+.pl-text { color: var(--accent); font-weight: 600; font-size: 16px; margin-top: 8px;
+  height: 3em; }
 /* "कृपया अमृत बरसाइए।" occupies three message steps (645ms each, see the
    swap interval in index.html), and blinks ONCE PER STEP — three slow breaths
    while it is on screen, not a flicker.
@@ -1121,7 +1164,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   .pl-nadi-a, .pl-nadi-b { stroke-dashoffset: 0; opacity: .4; }
 }
 @media (max-width: 640px) {
-  .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; } .pl-center { transform: translateY(11vh); }
+  .chakra { width: 22px; height: 22px; } .pl-chakras { gap: 13px; }
   /* 11vh, not the 6.5vh this band shipped with in 9.20: on a SMALL phone the crown
      orb's glow was reaching the "🌹 GURU 🌹" line of the lockup above it. Measured
      gap from that line to the glow — 360x640 had only 7px (which is what reads as
@@ -1139,27 +1182,22 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
      After: GURU gap 51px at 360x640 and 117px at 393x852, the caption clears the
      strands by 25px, and 100-207px stays free below it. */
 }
-/* The charan steps down in bands as the viewport gets shorter. The lockup is pinned
-   near the top and the chakra column is centred, so every pixel of picture height is
-   a pixel of clearance lost — and the cutout is a much taller box than the old photo
-   was (139px vs 85px), which spends headroom the old design had already used up.
-   Measured clearance between the lockup and the chakras (1280 wide, and re-checked
-   on phone widths, where it runs a few px looser):
-        height   old 132x85    176x139    140x110    112x88
-        1000        150           102
-         860         81            32         63
-         770         36           -13         18         40
-         700          1           -48        -17          5
-         667         -3           -51        -21          2
-   So the old design was ALREADY touching at ~700 and slightly overlapping at 667 —
-   these bands are chosen to stay at or above that, never below.
-   ⚠ Those figures were measured with the chakra column at translateY(5vh). It is
-   8vh now (11vh on phones, still 5vh on the short bands), which ADDS roughly
-   0.03 x viewport height to every clearance in the table — re-measured at 900x700
-   the tightest band went from ~17px to 38px. So the table is now pessimistic, not
-   optimistic; treat it as the floor. If the offset is ever reduced again, these are
-   the numbers that come back. Note a typical phone
-   (393x852) clears by 38px at full size, so handsets keep the largest charan. */
+/* The charan steps down in bands as the viewport gets shorter.
+   ⚠ WHAT THESE BANDS ARE FOR CHANGED. They used to prevent the lockup and the chakra
+   column from OVERLAPPING: the lockup was pinned at top:5% and the column was centred
+   independently, so every pixel of picture height was a pixel of clearance lost, and a
+   table of measured clearances lived here (it recorded the design already touching at
+   ~700px tall and overlapping at 667). That table is deleted rather than updated
+   because the failure it described can no longer happen — the two are now one stacked
+   flex group (see .preloader) and are physically incapable of overlapping at any size
+   or font scale.
+   What they do NOW is keep the GROUP inside a short viewport. The group is roughly
+   lockup + --pl-gap + column + caption, and on a landscape phone that is close to the
+   full screen height: measured at 812x375 the lockup's top sits 4px below the viewport
+   edge, so it is the shrinking here that keeps it on screen at all — and why those
+   bands force --pl-gap to 0. Portrait phones have 78-190px spare and are not close.
+   So: still don't enlarge the charan without re-measuring, but the number to watch is
+   now the top of .pl-brand against 0, not a gap between two boxes. */
 @media (max-height: 845px) {
   .pl-charan { width: 140px; height: 110px; margin-bottom: .35em; }
 }
@@ -1175,20 +1213,19 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    moves to top:2% but the chakra column is still nearly full height, so 112x88 would
    overlap by 20px here. 72x57 restores the original's exact +12 clearance. */
 @media (max-height: 560px) {
-  .pl-brand { top: 2%; }
   .pl-charan { width: 72px; height: 57px; margin-bottom: .25em; }
   .pl-name { font-size: 16px; }
   .pl-tag { font-size: 11px; }
-  /* The lockup alone is not enough: the chakra column is ~314px on its own, so on a
-     short screen it must come down too or it still runs into the text. */
+  /* Shrinking the lockup is not enough on its own — the column is the taller half of
+     the group, so it has to give up height too or the group cannot fit the screen. */
   .chakra { width: 22px; height: 22px; }
   .pl-chakras { gap: 12px; padding: 10px 0 12px; }
-  /* ⚠ Hold the ORIGINAL 5vh here — do not inherit the 8vh drop. Measured at
-     812x375 the 8vh version left only 8px under the column (against 19px at 5vh):
-     the drop buys clearance under the lockup by spending it at the bottom, and on
-     a short screen there is none to spend. This band keys off height, so a phone in
-     portrait is unaffected and still gets the full 6.5vh. */
-  .pl-center { transform: translateY(5vh); }
+  /* ⚠ Must be `:root { ... }`, not a bare `--pl-gap: 0px` in the media block: a
+     declaration outside any rule is invalid css and gets dropped silently, so the
+     band would appear to do nothing. Zero because the group barely fits here —
+     measured at 812x375, a 10px gap already pushes the top of the lockup 1px off
+     screen, and at 0 it clears by 4. The visual gap that leaves is 14px. */
+  :root { --pl-gap: 0px; }
 }
 /* Landscape phone (~375px tall). The app is NOT portrait-locked, so a rotation during
    launch lands here. Everything shrinks again.
