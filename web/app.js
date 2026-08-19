@@ -10012,9 +10012,10 @@ const MOBILE_UI = (() => {
         <a href="#/m/special"><span class="mi">✨</span> Special Telegram Msg <span class="m-badge" data-special-badge hidden></span></a>
         <a href="#/m/letterpad"><span class="mi">✍️</span> Guru's Letterpad Msg <span class="m-badge" data-letterpad-badge hidden></span></a>
         <a href="#/m/anushthan"><span class="mi">🪔</span> Anushthan Msg</a>
-        <!-- Upanishad Gyan: the hourly two-line thought and every one already
-             sent. In the main list, not under More — a notification tap lands
-             here thirteen times a day, so it must be findable without one. -->
+        <!-- Upanishad Gyan: the hourly two-line thought, for the eighteen minutes
+             it lives (2026-08-19 — it used to keep every one ever sent). In the
+             main list, not under More — a notification tap lands here thirteen
+             times a day, so it must be findable without one. -->
         <a href="#/m/gyan"><span class="mi">📿</span> Upanishad Gyan</a>
         <!-- Personal Dhyan Diary: private, on-device, and used daily — so it
              belongs in the main list rather than under More, for the same
@@ -10301,6 +10302,27 @@ const MOBILE_UI = (() => {
   // (wa:searchLang, the one the home-screen widget reuses) but is stored
   // separately: someone who types their searches in English has not thereby
   // asked for the guru's words in English on their lock screen.
+  // A thought's whole life, on the lock screen and on the Upanishad Gyan screen
+  // alike (operator, 2026-08-19). Eighteen minutes after it arrives it is gone
+  // from both: Android removes the notification by itself (setTimeoutAfter, see
+  // mobile/android/.../WaMessagingService.java) and this screen stops showing it.
+  //
+  // ⚠ Measured from when the thought was SENT (thought_slots.created_at, which
+  // WA.recentThoughts returns as `ts`), never from the top of its hour — cron can
+  // be up to ten minutes late and a late thought still gets its full eighteen.
+  const GYAN_LIVE_MS = 18 * 60 * 1000;
+
+  // The widest window a device may choose, IST hours, inclusive. ⚠ The same two
+  // numbers are the check constraint in supabase/add_gyan_window.sql and
+  // FIRST_SLOT/LAST_SLOT in the thought-pick function. All three must agree, or
+  // this picker offers an hour the server never picks a thought for.
+  const GYAN_MIN_HOUR = 5, GYAN_MAX_HOUR = 23;
+
+  // How long after the top of the hour a thought may still be "on its way"
+  // rather than missed — the cron cadence (ten minutes) plus slack. It is only
+  // ever used to choose which sentence the screen shows while it waits.
+  const GYAN_GRACE_MIN = 12;
+
   const GYAN = {
     lang() {
       try {
@@ -10312,6 +10334,80 @@ const MOBILE_UI = (() => {
     setLang(l) { try { localStorage.setItem("wa:notif:lang", l === "en" ? "en" : "hi"); } catch (_) {} },
     on() { try { return localStorage.getItem("wa:notif:thought") !== "0"; } catch (_) { return true; } },
     setOn(v) { try { localStorage.setItem("wa:notif:thought", v ? "1" : "0"); } catch (_) {} },
+
+    // ---- the hours this device wants them in (2026-08-19) ------------------
+    // Inclusive IST hours, default 8..20 — 8 AM to 8 PM, thirteen a day, the same
+    // count the old fixed 6 AM - 6 PM sent. Like the language and the on/off
+    // switch these live on the device's token row, so the local copy here is a
+    // mirror the Settings card can paint from instantly and offline.
+    _hour(key, dflt) {
+      try {
+        const n = parseInt(localStorage.getItem(key), 10);
+        if (n >= GYAN_MIN_HOUR && n <= GYAN_MAX_HOUR) return n;
+      } catch (_) {}
+      return dflt;
+    },
+    from() { return GYAN._hour("wa:notif:from", 8); },
+    to() { return GYAN._hour("wa:notif:to", 20); },
+    setWindow(f, t) {
+      try {
+        localStorage.setItem("wa:notif:from", String(f));
+        localStorage.setItem("wa:notif:to", String(t));
+      } catch (_) {}
+    },
+    // Is this IST hour one this device asked for? The screen filters by it as
+    // well as the push, so the two never disagree: a thought picked for 5 AM
+    // because SOMEBODY wanted it is not this phone's thought at all.
+    covers(slot) {
+      const h = Number(slot);
+      return h >= GYAN.from() && h <= GYAN.to();
+    },
+
+    // The IST clock, in minutes since midnight. The slots are IST hours and the
+    // phone may be anywhere, so this is computed from UTC rather than read off
+    // the device's own calendar.
+    istMinutes() {
+      const d = new Date();
+      return ((d.getUTCHours() * 60 + d.getUTCMinutes()) + 330) % 1440;
+    },
+
+    // The one thought this screen may show, or null. `items` is newest-first, and
+    // only the newest can be live — they are an hour apart and live eighteen
+    // minutes, so at most one is ever inside its own lifetime.
+    //
+    // ⚠ Leans on the phone's clock being roughly right, which is the same thing
+    // every "x minutes ago" in this app already assumes. A badly wrong clock
+    // shows nothing rather than something stale.
+    live(items) {
+      const t = (items || [])[0];
+      if (!t || !t.ts) return null;
+      const born = Date.parse(t.ts);
+      if (!(born > 0)) return null;
+      if (Date.now() - born >= GYAN_LIVE_MS) return null;
+      return GYAN.covers(t.slot) ? t : null;
+    },
+    // Whole minutes of life left in a live thought, at least 1.
+    minutesLeft(t) {
+      const born = Date.parse(t && t.ts);
+      if (!(born > 0)) return 0;
+      return Math.max(1, Math.ceil((GYAN_LIVE_MS - (Date.now() - born)) / 60000));
+    },
+
+    // What to say while nothing is live: {hour, tomorrow, coming}. `coming` means
+    // this hour's own thought has not arrived yet but still might — the honest
+    // answer inside the cron's ten-minute slack, instead of pointing at the next
+    // hour and then being contradicted four minutes later.
+    next() {
+      const f = GYAN.from(), t = GYAN.to();
+      const mins = GYAN.istMinutes();
+      const h = Math.floor(mins / 60);
+      if (h >= f && h <= t && (mins % 60) < GYAN_GRACE_MIN) {
+        return { hour: h, tomorrow: false, coming: true };
+      }
+      if (h < f) return { hour: f, tomorrow: false, coming: false };
+      if (h < t) return { hour: h + 1, tomorrow: false, coming: false };
+      return { hour: f, tomorrow: true, coming: false };
+    },
   };
 
   let _pushInited = false;
@@ -10380,7 +10476,12 @@ const MOBILE_UI = (() => {
       try {
         await Push.createChannel({
           id: "upanishad_gyan", name: "Upanishad Gyan",
-          description: "A short thought from the Guru's heart, each hour from 6 AM to 6 PM",
+          // ⚠ No hours in the description any more: since 2026-08-19 they are the
+          // user's own (Settings › Upanishad Gyan), and a channel created once at
+          // 6 AM - 6 PM would go on telling everyone the wrong thing for ever —
+          // the description is fixed at creation and this line only re-runs for
+          // devices that do not have the channel yet.
+          description: "A short thought from the Guru's heart, once an hour during the hours you choose",
           importance: 3, visibility: 1,
         });
         _pdiag({ channelGyan: "created" });
@@ -10410,11 +10511,27 @@ const MOBILE_UI = (() => {
       } catch (e) { _pdiag({ channelBroadcast: "createChannel failed: " + (e && e.message || e) }); }
       Push.addListener("registration", async (t) => {
         _pdiag({ token: (t && t.value || "").slice(0, 18) + "…", registeredAt: Date.now() });
-        // The language goes up at registration so a device that never opens
-        // Settings still receives its own language. The on/off flag deliberately
-        // does NOT: only the Settings card may change that, or every launch
-        // would re-assert a default over a deliberate opt-out.
-        try { await WA.registerDeviceToken(t.value, "android", GYAN.lang()); _pdiag({ supabase: "OK" }); }
+        // The language and the WINDOW go up at registration so a device that never
+        // opens Settings still receives its own language in its own hours. The
+        // on/off flag deliberately does NOT: only the Settings card may change
+        // that, or every launch would re-assert a default over a deliberate
+        // opt-out. (The window is safe to re-assert precisely because the local
+        // mirror IS what the user chose — GYAN.from()/to() return the stored
+        // choice, and the defaults only when there has never been one.)
+        //
+        // The shell version goes up too, and it is not a preference: send-push
+        // needs to know whether this APK can dismiss a notification by itself
+        // before it decides what shape to send (see THOUGHT_TIMEOUT_MIN_SHELL).
+        // Absent outside the app — a browser has no shell and no push either.
+        let shellVer = "";
+        try {
+          if (window.WA_BOOT && WA_BOOT.shellVersion) shellVer = WA_BOOT.shellVersion() || "";
+        } catch (_) {}
+        try {
+          await WA.registerDeviceToken(t.value, "android", GYAN.lang(), undefined,
+                                       GYAN.from(), GYAN.to(), shellVer);
+          _pdiag({ supabase: "OK", shell: shellVer || "(none)" });
+        }
         catch (e) { _pdiag({ supabase: "FAIL: " + (e && e.message || e) }); }
       });
       Push.addListener("registrationError", (e) => _pdiag({ regError: JSON.stringify(e) }));
@@ -13644,18 +13761,35 @@ const MOBILE_UI = (() => {
   }
 
   // ---- Message to Admin ----------------------------------------------------
-  // ---- Upanishad Gyan — the hourly thought, and its archive ---------------
-  // Where a notification tap lands, and the reason the notifications may safely
-  // collapse into one another: every thought ever sent is here, so a phone left
-  // face-down all day loses nothing.
+  // ---- Upanishad Gyan — the hourly thought, while it lasts -----------------
+  // Where a notification tap lands.
+  //
+  // ⚠ NO LONGER AN ARCHIVE (operator, 2026-08-19), and that reversal is the whole
+  // design of this screen. It used to keep every thought ever sent, which is what
+  // made the notifications safe to collapse into one another. Now a thought lives
+  // eighteen minutes — the same eighteen minutes it lives on the lock screen — and
+  // then this screen shows the hour of the next one instead. The operator's reason
+  // is that the thing recurs every hour: a line meant to be sat with for a few
+  // minutes becomes a list to scroll once it is kept, and thirteen of those a day
+  // is a backlog, not a gift.
+  //
+  // So for most of every hour this screen is deliberately EMPTY of thoughts. That
+  // is not a bug to fix by lengthening the window or keeping "just the last one".
+  //
+  // ⚠ Nothing is deleted server-side, and nothing here should ever start deleting.
+  // thought_slots' primary key (slot_date, slot) is the only thing stopping the
+  // every-ten-minutes cron from re-picking and re-sending an hour it has already
+  // served — delete the row at minute eighteen and the twenty-minute tick sends
+  // that hour a second time, with a different thought. "Deleted" is a rule about
+  // what is SHOWN. See WA.recentThoughts.
   //
   // Reads thought_slots (what was actually SENT), never the thoughts pool —
-  // showing the pool would hand every reader tomorrow's thought today and turn
-  // an hourly gift into a list to scroll to the end of.
+  // showing the pool would hand every reader tomorrow's thought today.
   //
   // Cached in localStorage and painted from cache FIRST, so the screen opens
   // instantly and still reads on a phone with no signal — the same offline
-  // stance as the message sections.
+  // stance as the message sections. A cache older than eighteen minutes paints
+  // nothing, which is correct: it IS out of date.
   const GYAN_CACHE = "wa:gyan:cache";
   function gyanCached() {
     try { return JSON.parse(localStorage.getItem(GYAN_CACHE) || "[]"); } catch (_) { return []; }
@@ -13671,57 +13805,118 @@ const MOBILE_UI = (() => {
     const node = el(`<div class="m-gyan"></div>`);
     pageFrame("Upanishad Gyan", node);
 
-    // Set by a notification tap (send-push puts the slot in the route), so the
-    // thought that was just announced is the one the eye lands on.
-    const wantDate = params && params.get("d");
+    // Set by a notification tap (send-push puts the slot in the route). It is no
+    // longer needed to FIND the thought among many — there is at most one — but it
+    // is still what tells an expired tap apart from an idle visit, which are two
+    // different sentences. Mostly it matters on an APK too old to dismiss its own
+    // notification: there the notification can still be sitting in the tray at
+    // minute forty, and the tap must not land on a screen that looks broken.
     const wantSlot = params && params.get("s");
 
-    const render = (items, note) => {
-      if (!items.length) {
-        node.innerHTML = `<div class="m-hint">${escapeHtml(note
-          || "The first thought will appear here once it is sent. They arrive every hour, 6 AM to 6 PM.")}</div>`;
-        return;
-      }
+    // The words of the ONE live thought. A thought with no translation in the
+    // chosen language is shown in the one it has — the same fallback the reader
+    // makes. Silence would be the worse answer, and it is the guru's word either
+    // way.
+    const wordsOf = (t) => {
       const L = GYAN.lang();
-      let html = note ? `<div class="m-hint" style="margin-bottom:12px">${escapeHtml(note)}</div>` : "";
-      let lastDate = null;
-      for (const t of items) {
-        // A thought with no translation in the chosen language is shown in the
-        // one it has — the same fallback the reader makes. Silence would be the
-        // worse answer, and it is the guru's word either way.
-        const text = (L === "en" ? (t.en || t.hi) : (t.hi || t.en)) || "";
-        if (!text) continue;
-        if (t.date !== lastDate) {
-          lastDate = t.date;
-          let label = t.date;
-          try { label = fmtDate(t.date); } catch (_) {}
-          html += `<div class="m-count" style="margin-top:16px">${escapeHtml(label)}</div>`;
-        }
-        const hit = wantDate && String(t.date) === String(wantDate) && String(t.slot) === String(wantSlot);
-        html += `<div class="m-msgitem${hit ? " m-gyan-hit" : ""}"` +
-          (hit ? ` id="m-gyan-hit"` : "") + `>` +
-          `<div class="m-msgtext" style="font-family:var(--serif);font-size:17px;line-height:1.6">${escapeHtml(text)}</div>` +
-          `<div class="m-msgts">${escapeHtml(gyanSlotLabel(t.slot))}</div></div>`;
-      }
-      node.innerHTML = html || `<div class="m-hint">Nothing to show yet.</div>`;
-      const hitEl = node.querySelector("#m-gyan-hit");
-      if (hitEl && hitEl.scrollIntoView) {
-        try { hitEl.scrollIntoView({ block: "center" }); } catch (_) {}
-      }
+      return (L === "en" ? (t.en || t.hi) : (t.hi || t.en)) || "";
     };
 
-    const cached = gyanCached();
-    render(cached, cached.length ? "" : "Loading…");
+    // What the screen says for the other forty-odd minutes of the hour.
+    const waitingHtml = (note) => {
+      if (note) return `<div class="m-hint">${escapeHtml(note)}</div>`;
+      const n = GYAN.next();
+      const at = gyanSlotLabel(n.hour);
+      let line = n.coming
+        ? `The thought for ${at} is on its way.`
+        : n.tomorrow
+          ? `The next thought arrives tomorrow at ${at}.`
+          : `The next thought arrives at ${at}.`;
+      // Said once, plainly, and only here: this is the screen where someone
+      // wonders where the earlier ones went.
+      const why = wantSlot && !n.coming
+        ? "That thought's time has passed. Each one stays for eighteen minutes and is then let go."
+        : "Each thought stays for eighteen minutes and is then let go.";
+      return `<div class="m-hint">${escapeHtml(line)}</div>` +
+             `<div class="m-hint" style="margin-top:8px">${escapeHtml(why)}</div>` +
+             (GYAN.on() ? "" : `<div class="m-hint" style="margin-top:8px">` +
+               escapeHtml("Notifications for these are switched off, so you'll only see one if you open this screen while it is here.") +
+               `</div>`);
+    };
 
-    try {
-      const items = await WA.recentThoughts(120);
-      try { localStorage.setItem(GYAN_CACHE, JSON.stringify(items)); } catch (_) {}
-      render(items, "");
-    } catch (e) {
-      // Offline with a cache is not an error worth showing; offline without one
-      // is, or the screen is a blank page with no explanation.
-      if (!cached.length) render([], "Couldn't load the thoughts just now. They'll appear when you're back online.");
-    }
+    // ⚠ Repaints only when what is on screen would actually differ. The timer
+    // below runs every half minute for as long as the screen is open, and
+    // rewriting innerHTML on each tick would drop the reader's text selection
+    // mid-thought — on the one screen whose whole purpose is to be read slowly.
+    let lastSig = null;
+    const render = (items, note) => {
+      const t = GYAN.live(items);
+      const text = t ? wordsOf(t) : "";
+      if (!t || !text) {
+        const n = GYAN.next();
+        const sig = `wait:${note}:${n.hour}:${n.coming}:${n.tomorrow}`;
+        if (sig === lastSig) return;
+        lastSig = sig;
+        node.innerHTML = waitingHtml(note);
+        return;
+      }
+      const left = GYAN.minutesLeft(t);
+      const sig = `live:${t.date}:${t.slot}:${left}:${GYAN.lang()}`;
+      if (sig === lastSig) return;
+      lastSig = sig;
+      node.innerHTML =
+        `<div class="m-msgitem m-gyan-hit">` +
+          `<div class="m-msgtext" style="font-family:var(--serif);font-size:17px;line-height:1.6">${escapeHtml(text)}</div>` +
+          `<div class="m-msgts">${escapeHtml(gyanSlotLabel(t.slot))} · ` +
+            escapeHtml(left === 1 ? "here for another minute" : `here for another ${left} minutes`) +
+          `</div>` +
+        `</div>`;
+    };
+
+    // Painted from cache first, but ONLY if there is one: an empty cache would
+    // otherwise flash "the next thought arrives at 9 AM" for as long as the fetch
+    // takes, and then be contradicted by a thought that was there all along.
+    let items = gyanCached();
+    // `note` outlives one paint on purpose: the timer below repaints every half
+    // minute, and a note that lived only inside the failing call would be wiped
+    // thirty seconds later — telling someone still offline that their thought
+    // arrives at nine.
+    let note = "";
+    const paint = () => render(items, note);
+    if (items.length) paint();
+
+    let lastFetch = 0;
+    const refresh = async () => {
+      lastFetch = Date.now();
+      try {
+        items = await WA.recentThoughts(4);
+        try { localStorage.setItem(GYAN_CACHE, JSON.stringify(items)); } catch (_) {}
+        note = "";
+      } catch (e) {
+        // Offline is only worth saying when there is nothing at all to show —
+        // otherwise the live thought is on screen and the message would be noise.
+        note = GYAN.live(items)
+          ? ""
+          : "Couldn't reach the server just now. The thought will appear when you're back online.";
+      }
+      paint();
+    };
+    await refresh();
+
+    // Repaint while the screen is open: the countdown moves, a thought expires
+    // mid-read, and — inside the cron's slack — one arrives without the page
+    // being reopened. Half a minute is fine for all three.
+    //
+    // ⚠ Stops itself when the node leaves the document. This page has no teardown
+    // hook, so the guard IS the teardown: without it every visit would leave a
+    // timer painting into a detached element for the rest of the session.
+    const tick = setInterval(() => {
+      if (!node.isConnected) { clearInterval(tick); return; }
+      paint();
+      // Nothing live and the hour's thought still due — ask the server again,
+      // but no more than once a minute.
+      if (!GYAN.live(items) && GYAN.next().coming && Date.now() - lastFetch > 60000) refresh();
+    }, 30000);
   }
 
   async function contactPage() {
@@ -13941,20 +14136,35 @@ const MOBILE_UI = (() => {
       // a real off switch — and, because it is the guru's own words rather than
       // app chrome, its own language choice.
       //
-      // ⚠ Both preferences are stored against THIS DEVICE's push token, not the
-      // account (supabase/add_guru_thoughts.sql explains why). Two consequences
-      // visible right here: the card can work with nobody signed in, and it is
-      // useless before the device has an FCM token — hence the guard below,
-      // which says so rather than offering a switch that silently does nothing.
+      // Since 2026-08-19 it also gets its own HOURS. The old fixed 6 AM - 6 PM was
+      // one answer for a whole user base that gets up at different times; the
+      // default is now 8 AM - 8 PM (still thirteen a day) and either end can be
+      // moved anywhere inside 5 AM - 11 PM. Nobody is asked to accept a
+      // notification at an hour they are asleep.
+      //
+      // ⚠ All THREE preferences are stored against THIS DEVICE's push token, not
+      // the account (supabase/add_guru_thoughts.sql explains why, and
+      // add_gyan_window.sql adds the window on the same reasoning). Two
+      // consequences visible right here: the card can work with nobody signed in,
+      // and it is useless before the device has an FCM token — hence the guard
+      // below, which says so rather than offering a switch that silently does
+      // nothing.
       const gbox = el(`<div class="sync-box" id="m-gyan-box">
         <h3 style="margin-top:0">Upanishad Gyan</h3>
         <label class="m-switchrow">Hourly thought from the Guru
           <span class="m-switch"><input type="checkbox" id="m-gyan-on"><i></i></span></label>
-        <div class="m-hint" id="m-gyan-subhint">One short thought every hour, 6 AM to 6 PM.</div>
+        <div class="m-hint" id="m-gyan-subhint"></div>
         <div class="m-seg-row" id="m-gyan-langrow" style="justify-content:flex-start;margin:14px 0 0">
           <div class="m-langseg m-searchseg" id="m-gyan-lang" role="group" aria-label="Upanishad Gyan language">
             <button data-lang="hi" type="button">हिंदी</button>
             <button data-lang="en" type="button">English</button>
+          </div>
+        </div>
+        <div id="m-gyan-winrow" style="margin:14px 0 0">
+          <div class="m-count" style="margin:0 0 6px">The hours you want them in</div>
+          <div class="m-inputrow">
+            <select id="m-gyan-from" aria-label="First thought of the day"></select>
+            <select id="m-gyan-to" aria-label="Last thought of the day"></select>
           </div>
         </div>
         <div class="m-hint" id="m-gyan-hint"></div>
@@ -13962,25 +14172,63 @@ const MOBILE_UI = (() => {
       prose.appendChild(gbox);
       const gsw = gbox.querySelector("#m-gyan-on");
       const glangRow = gbox.querySelector("#m-gyan-langrow");
+      const gwinRow = gbox.querySelector("#m-gyan-winrow");
+      const gfrom = gbox.querySelector("#m-gyan-from");
+      const gto = gbox.querySelector("#m-gyan-to");
+      const gsub = gbox.querySelector("#m-gyan-subhint");
       const ghint = gbox.querySelector("#m-gyan-hint");
       const gtok = (window.WA && WA.storedPushToken && WA.storedPushToken()) || "";
+
+      // ---- the window picker (2026-08-19) ---------------------------------
+      // Two plain selects rather than the spinner the Dhyan Diary uses: this is a
+      // pair of whole hours out of nineteen, set once and rarely revisited, and a
+      // native select is the control every phone already knows how to open.
+      //
+      // ⚠ 5 AM to 11 PM is not a UI choice. thought-pick only ever picks for those
+      // hours and device_tokens' check constraint only ever stores them, so an
+      // option outside GYAN_MIN_HOUR..GYAN_MAX_HOUR would be a switch that does
+      // nothing — or worse, one the server rejects with an error the user cannot
+      // act on.
+      for (let h = GYAN_MIN_HOUR; h <= GYAN_MAX_HOUR; h++) {
+        // createElement, not el(): an <option> has no parent <select> inside a
+        // detached template and is not worth relying on the parser's goodwill for.
+        [gfrom, gto].forEach((sel) => {
+          const o = document.createElement("option");
+          o.value = String(h);
+          o.textContent = gyanSlotLabel(h);
+          sel.appendChild(o);
+        });
+      }
+      const paintGyanWindow = () => {
+        gfrom.value = String(GYAN.from());
+        gto.value = String(GYAN.to());
+      };
+      paintGyanWindow();
 
       gsw.checked = GYAN.on();
       const paintGyanLang = () => gbox.querySelectorAll("#m-gyan-lang button")
         .forEach((b) => b.classList.toggle("active", b.dataset.lang === GYAN.lang()));
       paintGyanLang();
       const paintGyanHint = () => {
-        // The language choice is meaningless while the thoughts are switched
-        // off — hide it rather than leave a live-looking control that changes
-        // nothing anyone will see.
+        // The language and the hours are both meaningless while the thoughts are
+        // switched off — hide them rather than leave live-looking controls that
+        // change nothing anyone will see.
         glangRow.hidden = !gsw.checked;
+        gwinRow.hidden = !gsw.checked;
+        const span = `${gyanSlotLabel(GYAN.from())} to ${gyanSlotLabel(GYAN.to())}`;
+        gsub.textContent = `One short thought every hour, ${span}.`;
         ghint.textContent = !granted
           ? "Notifications are switched off for this app on your phone. Turn them on in Settings › Apps › Samarpan Upanishad › Notifications."
           : !gtok
             ? "This device isn't registered for notifications yet. Reopen the app once and this will start working."
             : gsw.checked
-              ? "A thought arrives each hour between 6 AM and 6 PM. Every one of them stays in Upanishad Gyan, so nothing is missed."
-              : "No hourly notifications. You can still read every thought any time in Upanishad Gyan.";
+              // ⚠ The old wording promised the opposite ("every one of them stays
+              // in Upanishad Gyan, so nothing is missed"). Since 2026-08-19 a
+              // thought is let go after eighteen minutes, and this line is the
+              // only place the app explains that, so it must say it plainly
+              // rather than leave someone hunting for yesterday's thought.
+              ? `A thought arrives each hour between ${span}. Each one stays for eighteen minutes — on your lock screen and in Upanishad Gyan — and is then let go.`
+              : "No hourly notifications. You'll see a thought only if you open Upanishad Gyan while one is there.";
       };
       paintGyanHint();
 
@@ -13998,6 +14246,42 @@ const MOBILE_UI = (() => {
         paintGyanHint();
         gsw.disabled = false;
       });
+
+      // Changing either end saves BOTH, because the server takes a window as a
+      // pair (set_thought_prefs refuses half of one — half a window is how you
+      // end up with notify_from later than notify_to and a device that is sent
+      // nothing at all, silently, for ever).
+      //
+      // A choice that would invert the pair drags the other end with it instead of
+      // being refused: someone moving the start to 9 PM means "start at 9 PM", and
+      // an error message about the end hour is a puzzle, not an answer.
+      const saveGyanWindow = async (moved) => {
+        const had = { f: GYAN.from(), t: GYAN.to() };
+        let f = parseInt(gfrom.value, 10), t = parseInt(gto.value, 10);
+        if (!(f >= GYAN_MIN_HOUR && f <= GYAN_MAX_HOUR)) f = had.f;
+        if (!(t >= GYAN_MIN_HOUR && t <= GYAN_MAX_HOUR)) t = had.t;
+        if (f > t) { if (moved === "from") t = f; else f = t; }
+        if (f === had.f && t === had.t) { paintGyanWindow(); return; }
+
+        GYAN.setWindow(f, t);        // paint immediately; roll back if refused
+        paintGyanWindow();
+        paintGyanHint();
+        gfrom.disabled = gto.disabled = true;
+        try {
+          await WA.setThoughtPrefs(null, null, f, t);
+          toast(f === t
+            ? `One thought a day, at ${gyanSlotLabel(f)}`
+            : `Thoughts from ${gyanSlotLabel(f)} to ${gyanSlotLabel(t)}`);
+        } catch (err) {
+          GYAN.setWindow(had.f, had.t);
+          paintGyanWindow();
+          paintGyanHint();
+          toast(err.message);
+        }
+        gfrom.disabled = gto.disabled = false;
+      };
+      gfrom.addEventListener("change", () => saveGyanWindow("from"));
+      gto.addEventListener("change", () => saveGyanWindow("to"));
 
       gbox.querySelector("#m-gyan-lang").addEventListener("click", async (e) => {
         const b = e.target.closest("button[data-lang]");

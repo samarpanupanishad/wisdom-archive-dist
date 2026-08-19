@@ -1341,12 +1341,22 @@ const WA = {
   // only the Settings card is allowed to change; passing a default there would
   // silently re-enable notifications someone had switched off.
   //
-  // ⚠ Three call shapes, oldest last: the 4-argument RPC, the 2-argument RPC
+  // `shell` is the APK version this phone is running (wa-boot's shellVersion) and
+  // is NOT a preference — it is a fact about the running app, so it is sent on
+  // every launch and always overwrites. send-push needs it to decide the SHAPE of
+  // the Upanishad Gyan push (see THOUGHT_TIMEOUT_MIN_SHELL): a shell that can
+  // dismiss a notification by itself is sent a data-only message, an older one the
+  // ordinary kind it can actually display. A device that never reports a shell is
+  // treated as old, which is the safe direction.
+  //
+  // ⚠ Three call shapes, oldest last: the full RPC, the 2-argument RPC
   // (this OTA reached the phone before add_guru_thoughts.sql was run on the
   // server), then a plain insert (no RPC at all). Registration must never fail
   // just because the newest server section is missing — a device that does not
-  // register receives nothing at all, forever.
-  async registerDeviceToken(token, platform, lang, wantThought) {
+  // register receives nothing at all, forever. The window/shell arguments ride on
+  // the first shape only: a server without add_gyan_window.sql rejects them, and
+  // the retry below is what keeps such a phone registered anyway.
+  async registerDeviceToken(token, platform, lang, wantThought, winFrom, winTo, shell) {
     if (!token) return { ok: false };
     const plat = platform || "android";
     // Remembered so app.js can re-register after sign-in without waiting for
@@ -1357,10 +1367,30 @@ const WA = {
     const args = { tok: token, plat };
     if (lang === "hi" || lang === "en") args.lang = lang;
     if (wantThought === true || wantThought === false) args.want_thought = wantThought;
-    if (args.lang || args.want_thought !== undefined) {
+    if (Number.isFinite(winFrom) && Number.isFinite(winTo)) {
+      args.win_from = Math.round(winFrom);
+      args.win_to = Math.round(winTo);
+    }
+    if (shell) args.shell_ver = String(shell);
+    if (args.lang || args.want_thought !== undefined
+        || args.win_from !== undefined || args.shell_ver !== undefined) {
       const { error: newErr } = await _sb.rpc("register_device_token", args);
       if (!newErr) return { ok: true };
-      if (!missing(newErr)) throw new Error(newErr.message);
+      // ⚠ A server without add_gyan_window.sql answers "function not found" for
+      // the whole call, window and language alike. Retry WITHOUT the new
+      // arguments before giving up, or this OTA would leave every such phone
+      // unregistered — the exact failure the 2-argument fallback below exists to
+      // prevent, one section further on.
+      if (missing(newErr) && (args.win_from !== undefined || args.shell_ver !== undefined)) {
+        const older = { tok: token, plat };
+        if (args.lang) older.lang = args.lang;
+        if (args.want_thought !== undefined) older.want_thought = args.want_thought;
+        const { error: olderErr } = await _sb.rpc("register_device_token", older);
+        if (!olderErr) return { ok: true, window: false };
+        if (!missing(olderErr)) throw new Error(olderErr.message);
+      } else if (!missing(newErr)) {
+        throw new Error(newErr.message);
+      }
     }
 
     const { error } = await _sb.rpc("register_device_token", { tok: token, plat });
@@ -1383,16 +1413,31 @@ const WA = {
   // these notifications reach phones that never signed in, so an account-level
   // switch would leave most of the audience unable to turn them off or pick a
   // language. See the header of supabase/add_guru_thoughts.sql.
-  async setThoughtPrefs(lang, wantThought) {
+  // ⚠ Every argument is OPTIONAL and an omitted one means "leave the stored value
+  // alone" — the Settings card changes one thing at a time and must not carry the
+  // other two along on the way. The window is the pair (winFrom, winTo) and is
+  // sent only when BOTH are numbers: set_thought_prefs rejects half a window
+  // rather than guessing at the other end.
+  async setThoughtPrefs(lang, wantThought, winFrom, winTo) {
     const tok = this.storedPushToken();
     if (!tok) throw new Error("This device isn't registered for notifications yet. Open the app once with notifications allowed, then try again.");
     const args = { tok };
     if (lang === "hi" || lang === "en") args.lang = lang;
     if (wantThought === true || wantThought === false) args.want_thought = wantThought;
+    if (Number.isFinite(winFrom) && Number.isFinite(winTo)) {
+      args.win_from = Math.round(winFrom);
+      args.win_to = Math.round(winTo);
+    }
     const { error } = await _sb.rpc("set_thought_prefs", args);
     if (error) {
-      throw new Error(/set_thought_prefs|schema cache|does not exist|not find/i.test(error.message || "")
-        ? "Upanishad Gyan isn't set up on the server yet. (Admin: run supabase/add_guru_thoughts.sql.)"
+      // Two different "not set up" cases, and the message has to name the right
+      // file or the admin runs the wrong one: the whole feature missing (the old
+      // 3-argument function absent) vs. the window missing (the 5-argument one).
+      const missing = /set_thought_prefs|schema cache|does not exist|not find/i.test(error.message || "");
+      throw new Error(missing
+        ? (args.win_from !== undefined
+            ? "Choosing your own hours isn't set up on the server yet. (Admin: run supabase/add_gyan_window.sql.)"
+            : "Upanishad Gyan isn't set up on the server yet. (Admin: run supabase/add_guru_thoughts.sql.)")
         : error.message);
     }
     return { ok: true };
@@ -1402,15 +1447,27 @@ const WA = {
   // shows. Reads the SLOTS, not the pool: an unsent thought is not yet the
   // guru's word for any hour, and showing the whole pool would turn a quiet
   // hourly gift into a scrollable list of everything coming.
+  //
+  // ⚠ created_at comes back as `ts` and the screen cannot work without it
+  // (2026-08-19): a thought now lives eighteen minutes and is then gone from the
+  // screen as well as from the tray, and created_at — the moment thought-pick
+  // claimed the hour, which is the moment the push went out — is what that is
+  // measured from. Never the top of the hour: cron can be up to ten minutes late
+  // and a late thought must still get its full eighteen minutes.
+  //
+  // The rows are NOT deleted server-side and must never be. thought_slots'
+  // primary key (slot_date, slot) is the only thing stopping the every-ten-minutes
+  // cron from re-picking and re-sending an hour it has already served, so
+  // "deleted after eighteen minutes" is a rule about what is SHOWN.
   async recentThoughts(limit) {
     const { data, error } = await _sb.from("thought_slots")
-      .select("slot_date,slot,thoughts(id,text_hi,text_en)")
+      .select("slot_date,slot,created_at,thoughts(id,text_hi,text_en)")
       .order("slot_date", { ascending: false })
       .order("slot", { ascending: false })
       .limit(Math.min(Math.max(limit || 60, 1), 300));
     if (error) throw new Error(error.message);
     return (data || []).map((r) => ({
-      date: r.slot_date, slot: r.slot,
+      date: r.slot_date, slot: r.slot, ts: r.created_at || "",
       hi: (r.thoughts && r.thoughts.text_hi) || "",
       en: (r.thoughts && r.thoughts.text_en) || "",
     })).filter((t) => t.hi || t.en);
