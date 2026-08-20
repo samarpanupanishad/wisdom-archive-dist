@@ -2098,7 +2098,10 @@ html:has(body.m-mode .m-community) { overflow: hidden; }
    transform would make these elements a containing block for nothing. */
 body.m-mode.m-kb .m-top,
 body.m-mode.m-kb .m-community { transform: translateY(var(--m-vvtop, 0px)); }
-body.m-mode.m-kb .m-community { will-change: transform; }
+/* ⚠ No will-change here. Promoting the column to its own layer while the
+   variable was being rewritten on every scroll event was part of the flicker
+   (2026-08-20). With pre-shrink the offset stays 0 and this transform is inert,
+   so there is nothing to promote. */
 body.m-mode .m-chatbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 body.m-mode .m-chatbody .wc-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 body.m-mode .m-chatbody .wc-hdr { display: none; }   /* replaced by .m-chat-head */

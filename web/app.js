@@ -10515,6 +10515,34 @@ const MOBILE_UI = (() => {
   const KB_MIN = 120;   // less than this is a toolbar/URL bar, not a keyboard
   let kbPluginH = 0;    // keyboard height per the plugin, 0 when it says nothing
   let kbFullH = 0;      // tallest viewport ever seen = the no-keyboard height
+
+  // THE PAN IS STALE, AND THAT WAS THE WHOLE BUG (measured on the operator's
+  // phone, 2026-08-20: innerHeight 805, visualViewport 543, offsetTop 262).
+  //
+  // Tapping the composer makes Chrome scroll the focused box into view WHILE THE
+  // COLUMN IS STILL FULL HEIGHT - so it pans the visual viewport 262px down -
+  // and only afterwards does the resize event arrive and the column shrink. The
+  // pan is never withdrawn. 9.35 tried to chase it with a transform every frame,
+  // which is what made scrolling flicker.
+  //
+  // So do not let the pan happen. On focus, shrink the column IMMEDIATELY using
+  // the keyboard height this device showed last time, before the browser has
+  // decided where to scroll. The composer is then already inside the visible
+  // strip, there is nothing to reveal, and offsetTop stays 0.
+  //
+  // The measurement is remembered per device because the first focus after an
+  // install has nothing to go on. The fallback errs LARGE deliberately: guessing
+  // too big leaves the composer higher than it needs to be for a moment, while
+  // guessing too small puts it back under the keyboard, which is the bug.
+  const KB_REMEMBER = "wa:kbh";
+  const KB_GUESS_FRAC = 0.42;
+  function rememberedKb() {
+    try { return parseInt(localStorage.getItem(KB_REMEMBER) || "0", 10) || 0; } catch { return 0; }
+  }
+  function rememberKb(px) {
+    if (!(px > KB_MIN)) return;
+    try { localStorage.setItem(KB_REMEMBER, String(Math.round(px))); } catch {}
+  }
   function applyViewport() {
     const vv = window.visualViewport;
     const cur = window.innerHeight || document.documentElement.clientHeight;
@@ -10544,10 +10572,17 @@ const MOBILE_UI = (() => {
       n, atEnd: n.scrollHeight - n.scrollTop - n.clientHeight < 80,
     }));
 
-    document.documentElement.style.setProperty("--m-vvh", h + "px");
-    document.body.classList.toggle("m-kb", open);
-    publishPan();
+    // Learn this device's real keyboard height the first time it is genuinely
+    // measured, so the next focus can pre-shrink to the exact value.
+    if (open && vv && full - vv.height > KB_MIN) rememberKb(full - vv.height);
 
+    const wasOpen = document.body.classList.contains("m-kb");
+    setViewportVars(h, open);
+
+    // ⚠ Only on the OPEN/CLOSE transition. Re-pinning on every resize event
+    // yanked the list to the bottom mid-gesture, which is half of the flicker
+    // the operator reported (2026-08-20).
+    if (open === wasOpen) return;
     requestAnimationFrame(() => {
       lists.forEach(({ n, atEnd }) => { if (atEnd) n.scrollTop = n.scrollHeight; });
       // The composer's resting height is smaller while the keyboard is up (see
@@ -10556,6 +10591,39 @@ const MOBILE_UI = (() => {
       document.querySelectorAll(".wc-ta").forEach(autoGrowTa);
     });
   }
+
+  // One writer for both variables, so the pre-shrink path and the measured path
+  // cannot drift. Rounded: --m-vvh arrived as 542.933349609375px on the phone,
+  // and a fractional height re-rasterises the whole column on every update.
+  let _lastVvh = -1, _lastPan = -1;
+  function setViewportVars(h, open) {
+    const px = Math.round(h);
+    if (px !== _lastVvh) {
+      _lastVvh = px;
+      document.documentElement.style.setProperty("--m-vvh", px + "px");
+    }
+    document.body.classList.toggle("m-kb", !!open);
+    publishPan();
+  }
+
+  // Pre-shrink: the fix. Runs on focus, before Chrome decides where to scroll.
+  let _preShrinkCheck = 0;
+  document.addEventListener("focusin", (e) => {
+    const t = e.target;
+    if (!t || !t.classList || !t.classList.contains("wc-ta")) return;
+    const full = kbFullH || window.innerHeight || 0;
+    if (!full) return;
+    const kb = rememberedKb() || Math.round(full * KB_GUESS_FRAC);
+    if (!(kb > KB_MIN)) return;
+    setViewportVars(full - kb, true);
+    // ⚠ A focus is not a promise of a keyboard: a hardware/Bluetooth keyboard
+    // raises none at all. Without this the column would stay shrunk for the rest
+    // of the session with nothing to restore it, since applyViewport only runs
+    // on a resize that would never come. Re-measure shortly after and let the
+    // real numbers stand either way.
+    clearTimeout(_preShrinkCheck);
+    _preShrinkCheck = setTimeout(applyViewport, 600);
+  });
 
   // ⚠ THE ONE THAT MATTERED (2026-08-20, after 9.34 was tested on a phone).
   // When the keyboard opens, Chrome does not scroll the DOCUMENT to reveal the
@@ -10576,14 +10644,20 @@ const MOBILE_UI = (() => {
   // honoured at navigation time and index.html is not in publish_update.py's
   // UI_FILES, and the Capacitor Keyboard plugin's setResizeMode() is literally
   // `call.unimplemented()` on Android. Following the pan is the whole fix.
+  // With pre-shrink doing its job the pan should now be 0 and this stays inert.
+  // It remains as a SAFETY NET: if a device still pans for some reason, the top
+  // bar and column follow it rather than sliding under the fold.
+  // ⚠ Writes only on an actual change. 9.35 wrote the property on every scroll
+  // event under the finger, and the transform trailed the pan by a frame - the
+  // "screen flickers" the operator reported.
   function publishPan() {
     const vv = window.visualViewport;
     const top = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
+    if (top === _lastPan) return;
+    _lastPan = top;
     document.documentElement.style.setProperty("--m-vvtop", top + "px");
   }
   if (window.visualViewport) {
-    // Cheap on purpose: a pan fires this continuously under the finger, so it
-    // writes one custom property and does no measuring and no layout reads.
     window.visualViewport.addEventListener("scroll", publishPan);
   }
   if (window.visualViewport) {
@@ -10612,24 +10686,11 @@ const MOBILE_UI = (() => {
   })();
   applyViewport();
 
-  // Swiping DOWN over a conversation puts the keyboard away — WhatsApp's
-  // gesture, and the only way to see more of the thread without hunting for a
-  // Back press. Passive: this never calls preventDefault, so it cannot cost the
-  // list its native scrolling.
-  let _kbSwipe = null;
-  document.addEventListener("touchstart", (e) => {
-    const list = e.target.closest && e.target.closest(".wc-msgs");
-    _kbSwipe = list && e.touches[0] ? { y: e.touches[0].clientY } : null;
-  }, { passive: true });
-  document.addEventListener("touchmove", (e) => {
-    if (!_kbSwipe || !document.body.classList.contains("m-kb")) return;
-    if (e.touches[0] && e.touches[0].clientY - _kbSwipe.y > 44) {
-      _kbSwipe = null;
-      const ta = document.querySelector(".wc-ta");
-      if (ta) ta.blur();
-    }
-  }, { passive: true });
-  document.addEventListener("touchend", () => { _kbSwipe = null; }, { passive: true });
+  // REMOVED 2026-08-20: swipe-down-to-dismiss. It was asked for and it was a
+  // mistake - a 44px downward drag is also just SCROLLING BACK THROUGH THE
+  // CONVERSATION, so reading a few messages up dropped the keyboard and the
+  // layout jumped underneath the finger. WhatsApp does not do this either.
+  // Scrolling the thread now leaves the keyboard exactly where it is.
 
   // ---- top-bar right-hand action ------------------------------------------
   // One reusable slot (currently the Samuhik Satsang "+"). setChrome() clears it
