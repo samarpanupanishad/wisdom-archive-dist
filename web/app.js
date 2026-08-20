@@ -10610,8 +10610,18 @@ const MOBILE_UI = (() => {
   // cannot drift. Rounded: --m-vvh arrived as 542.933349609375px on the phone,
   // and a fractional height re-rasterises the whole column on every update.
   let _lastVvh = -1, _lastPan = -1;
+  // Set while the keyboard is animating open. The IME does not appear in one
+  // step: visualViewport.height walks down 805 -> ... -> 495 over ~250ms, and
+  // applying every intermediate value resized the column on each frame - so
+  // after the focus pre-shrink had already put it in the right place, the
+  // in-between measurements pushed it back down and then up again. That is the
+  // "flickers two times" (operator, 2026-08-20). While settling, a measurement
+  // may only make the column SMALLER; the honest final value is taken when the
+  // flag clears, 600ms after focus.
+  let _kbSettling = false;
   function setViewportVars(h, open) {
     const px = Math.round(h);
+    if (_kbSettling && open && _lastVvh > 0 && px > _lastVvh) return;
     if (px !== _lastVvh) {
       _lastVvh = px;
       document.documentElement.style.setProperty("--m-vvh", px + "px");
@@ -10629,14 +10639,16 @@ const MOBILE_UI = (() => {
     if (!full) return;
     const kb = rememberedKb() || Math.round(full * KB_GUESS_FRAC);
     if (!(kb > KB_MIN)) return;
+    _kbSettling = true;
     setViewportVars(full - kb, true);
     // ⚠ A focus is not a promise of a keyboard: a hardware/Bluetooth keyboard
     // raises none at all. Without this the column would stay shrunk for the rest
     // of the session with nothing to restore it, since applyViewport only runs
     // on a resize that would never come. Re-measure shortly after and let the
-    // real numbers stand either way.
+    // real numbers stand either way — the flag drops FIRST so this one
+    // measurement is allowed to correct the column in either direction.
     clearTimeout(_preShrinkCheck);
-    _preShrinkCheck = setTimeout(applyViewport, 600);
+    _preShrinkCheck = setTimeout(() => { _kbSettling = false; applyViewport(); }, 600);
   });
 
   // ⚠ THE ONE THAT MATTERED (2026-08-20, after 9.34 was tested on a phone).
@@ -10695,8 +10707,9 @@ const MOBILE_UI = (() => {
       kbPluginH = (info && info.keyboardHeight) || kbPluginH;
       applyViewport();
     });
-    kb.addListener("keyboardWillHide", () => { kbPluginH = 0; applyViewport(); });
-    kb.addListener("keyboardDidHide", () => { kbPluginH = 0; applyViewport(); });
+    const hide = () => { kbPluginH = 0; _kbSettling = false; applyViewport(); };
+    kb.addListener("keyboardWillHide", hide);
+    kb.addListener("keyboardDidHide", hide);
   })();
   applyViewport();
 

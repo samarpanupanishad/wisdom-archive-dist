@@ -660,7 +660,14 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    restores the scroll position by hand. Chrome's own scroll anchoring corrects
    for the same inserted height, and the two together jump the reader a whole
    page instead of holding them still. */
-.wc-msgs { flex: 1; overflow-y: auto; padding: 8px 0; min-height: 80px; overflow-anchor: none; }
+/* overscroll-behavior: THE conversation must not hand its gesture on. Without
+   it, reaching the newest message and dragging further - or the oldest and
+   dragging back - chains the scroll to the page, which with the keyboard up
+   pans the whole visual viewport and drags the entire screen with it (operator,
+   2026-08-20). `none` rather than `contain` so the glow/bounce goes too: any
+   movement outside the thread itself is the thing being reported. */
+.wc-msgs { flex: 1; overflow-y: auto; padding: 8px 0; min-height: 80px; overflow-anchor: none;
+           overscroll-behavior: none; }
 /* The "reaching further back" line, at the top of the list while a page loads. */
 .wc-older { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 20px; font-style: italic; }
 .wc-new-msg { flex: 0 0 auto; align-self: flex-end; display: flex; align-items: center; justify-content: center;
@@ -2086,8 +2093,8 @@ body.m-mode .m-community {
    which is browser-level and untouchable from CSS. The transform below is what
    actually fixes it. */
 body.m-mode .content:has(.m-community) { min-height: 0; }
-body.m-mode:has(.m-community) { overflow: hidden; }
-html:has(body.m-mode .m-community) { overflow: hidden; }
+body.m-mode:has(.m-community) { overflow: hidden; overscroll-behavior: none; }
+html:has(body.m-mode .m-community) { overflow: hidden; overscroll-behavior: none; }
 
 /* FOLLOW THE PAN. --m-vvtop is visualViewport.offsetTop, published by MOBILE_UI
    whenever the visible window moves. Translating the top bar and the chat column
