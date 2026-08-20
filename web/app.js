@@ -14417,15 +14417,27 @@ const MOBILE_UI = (() => {
   // re-checks it); this is only what the counter counts against.
   const GANGA_LIMIT_KEY = "wa:ganga:limit";
 
-  // ⚠ FOUR LINES OF ROOM, deliberately empty (operator, 2026-08-20 — "keep a 4
-  // line space for instructions, the instructions will be provided soon"). The
-  // words are coming later; the space is reserved now so the screen does not
-  // jump when they arrive, and so the box below never sits directly under the
-  // guru's words with nothing to explain it.
+  // The operator's own words to the sadhaks, supplied 2026-08-20 (the four lines
+  // of room were held open empty for a day waiting for them).
   //
-  // To fill it: put one string per line in here and change nothing else. The
-  // block keeps four lines' height whether it is empty or full.
-  const GANGA_INSTRUCTIONS = [];
+  // ⚠ TRANSCRIBE, DO NOT EDIT. Three things here look like mistakes and are not:
+  // "विनंती" (rather than the more usual Hindi विनती), and the English words
+  // "imprint" and "share" sitting inside the Devanagari. That is how the operator
+  // writes, and it is how the sadhaks are addressed elsewhere in the app. Don't
+  // "correct" the spelling and don't translate the English into Hindi.
+  //
+  // ⚠ Hindi only, like everything else on this screen — there is no English
+  // variant to keep in step (the language toggle is gone).
+  //
+  // To change it: edit here and publish. `lines` is one string per paragraph, not
+  // per visual line — the wrapping is the phone's business.
+  const GANGA_INSTRUCTIONS = {
+    title: "नम्र विनंती",
+    lines: [
+      "स्वामी जी के शब्द जो आपकी आत्मा में imprint हो चुके हैं और जो आपके दिल के " +
+      "बहुत करीब हैं उन विचारों को साधकों के साथ share करें न्यूनतम पंक्तियाँ में",
+    ],
+  };
 
   function gyanCached() {
     try { return JSON.parse(localStorage.getItem(GYAN_CACHE) || "[]"); } catch (_) { return []; }
@@ -14564,10 +14576,13 @@ const MOBILE_UI = (() => {
     };
     await refresh();
 
-    // ---- 2. the room for the instructions ---------------------------------
-    instrEl.innerHTML = GANGA_INSTRUCTIONS.length
-      ? GANGA_INSTRUCTIONS.map((l) => `<div>${escapeHtml(l)}</div>`).join("")
-      : "";
+    // ---- 2. the instructions ----------------------------------------------
+    // Painted once, outside every repaint path, like the box below it.
+    instrEl.innerHTML =
+      (GANGA_INSTRUCTIONS.title
+        ? `<div class="m-ganga-instr-h">${escapeHtml(GANGA_INSTRUCTIONS.title)}</div>`
+        : "") +
+      (GANGA_INSTRUCTIONS.lines || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("");
 
     // ---- 3. the member's box ----------------------------------------------
     // Painted once and never repainted while the screen is open — see the trap at

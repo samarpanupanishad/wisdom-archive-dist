@@ -1958,13 +1958,23 @@ body.m-mode .content:has(.m-page-scroll) { min-height: 0; }
    there must not be one: a display:none would put the name on the wire. */
 .m-ganga-credit { color: var(--accent); }
 
-/* ⚠ FOUR LINES OF ROOM, held open whether or not there are words in it
-   (operator, 2026-08-20). The min-height is the whole point — the instructions
-   are coming later and the box below must not jump up the screen when they
-   arrive. Don't collapse this when it is empty. */
+/* The operator's नम्र विनंती to the sadhaks, between the five thoughts and the
+   box they write in. The min-height reserves four lines and is kept now that
+   there ARE words: it stops the compose box jumping up the screen on a phone
+   whose font settings wrap this shorter than expected.
+
+   ⚠ The accent rule is what separates GUIDANCE from the guru's words above it —
+   the thoughts are cards, this is not, so the two can never be misread for each
+   other. :empty drops the rule so an emptied GANGA_INSTRUCTIONS leaves a blank
+   space rather than a bare floating line. */
 .m-ganga-instr {
-  min-height: calc(4 * 1.55em); margin: 18px 2px 14px;
-  font: 400 14.5px/1.55 var(--sans); color: var(--muted); white-space: pre-wrap;
+  min-height: calc(4 * 1.55em); margin: 18px 2px 16px;
+  padding-left: 12px; border-left: 3px solid var(--accent-soft);
+  font: 400 14.5px/1.55 var(--sans); color: var(--text); white-space: pre-wrap;
+}
+.m-ganga-instr:empty { border-left: 0; padding-left: 0; }
+.m-ganga-instr-h {
+  font: 700 15px var(--sans); color: var(--accent); margin-bottom: 5px;
 }
 .m-ganga-box { margin-bottom: 18px; }
 .m-ganga-box textarea {
