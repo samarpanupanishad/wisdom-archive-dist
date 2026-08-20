@@ -2079,13 +2079,26 @@ body.m-mode .m-community {
   }
 }
 /* A chat screen is not a scrolling page — only its message list scrolls, the way
-   WhatsApp behaves. .content's min-height:100vh was leaving a full screen of
-   empty document below the composer once the keyboard opened, and the operator
-   could pan around inside it. Both halves matter: drop the min-height so there
-   is nothing to scroll TO, and lock the scroller so a fling cannot start. */
+   WhatsApp behaves. Drop .content's min-height:100vh so there is no empty
+   document below the composer, and lock the scroller so a fling cannot start.
+   ⚠ NOT sufficient on its own, and 9.34 proved it: what the operator was
+   dragging is the VISUAL viewport panning inside a full-height layout viewport,
+   which is browser-level and untouchable from CSS. The transform below is what
+   actually fixes it. */
 body.m-mode .content:has(.m-community) { min-height: 0; }
 body.m-mode:has(.m-community) { overflow: hidden; }
 html:has(body.m-mode .m-community) { overflow: hidden; }
+
+/* FOLLOW THE PAN. --m-vvtop is visualViewport.offsetTop, published by MOBILE_UI
+   whenever the visible window moves. Translating the top bar and the chat column
+   by it keeps both glued to the visible area however far the keyboard pushes it
+   down — so the subject bar stays put, the composer's emoji row stops falling
+   off the bottom edge, and dragging reveals more chat rather than empty page.
+   Only while .m-kb: with no keyboard the offset is always 0, and an always-on
+   transform would make these elements a containing block for nothing. */
+body.m-mode.m-kb .m-top,
+body.m-mode.m-kb .m-community { transform: translateY(var(--m-vvtop, 0px)); }
+body.m-mode.m-kb .m-community { will-change: transform; }
 body.m-mode .m-chatbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 body.m-mode .m-chatbody .wc-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 body.m-mode .m-chatbody .wc-hdr { display: none; }   /* replaced by .m-chat-head */

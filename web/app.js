@@ -10546,6 +10546,7 @@ const MOBILE_UI = (() => {
 
     document.documentElement.style.setProperty("--m-vvh", h + "px");
     document.body.classList.toggle("m-kb", open);
+    publishPan();
 
     requestAnimationFrame(() => {
       lists.forEach(({ n, atEnd }) => { if (atEnd) n.scrollTop = n.scrollHeight; });
@@ -10553,18 +10554,40 @@ const MOBILE_UI = (() => {
       // .m-kb in styles.css); an empty box has to be let go of its inline height
       // for that to take, which is what autoGrowTa does with an empty value.
       document.querySelectorAll(".wc-ta").forEach(autoGrowTa);
-      // Undo any pan the WebView already did before we resized: with the layout
-      // now fitting, page scroll must be zero or the top bar stays hidden.
-      if (open && window.scrollY) window.scrollTo(0, 0);
     });
+  }
+
+  // ⚠ THE ONE THAT MATTERED (2026-08-20, after 9.34 was tested on a phone).
+  // When the keyboard opens, Chrome does not scroll the DOCUMENT to reveal the
+  // focused input — it pans the VISUAL viewport inside a layout viewport that
+  // is still a full screen tall. Nothing in CSS can prevent that, `overflow:
+  // hidden` included, and `window.scrollTo(0, 0)` does not undo it either
+  // (which is what 9.32-9.34 tried, and why they all failed the same way).
+  //
+  // So the chat FOLLOWS the pan instead of fighting it. --m-vvtop is how far
+  // the visible window has been pushed down; .m-top and .m-community are
+  // translated by exactly that, so both stay glued to the visible area however
+  // far the user drags. Without it the column was drawn at document y=0 while
+  // the visible window started lower, putting its bottom edge — the composer's
+  // emoji/attach row — exactly that far below the fold.
+  //
+  // ⚠ The layout viewport cannot be shrunk from here, so this is not a
+  // workaround for something better: interactive-widget in the viewport meta is
+  // honoured at navigation time and index.html is not in publish_update.py's
+  // UI_FILES, and the Capacitor Keyboard plugin's setResizeMode() is literally
+  // `call.unimplemented()` on Android. Following the pan is the whole fix.
+  function publishPan() {
+    const vv = window.visualViewport;
+    const top = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
+    document.documentElement.style.setProperty("--m-vvtop", top + "px");
+  }
+  if (window.visualViewport) {
+    // Cheap on purpose: a pan fires this continuously under the finger, so it
+    // writes one custom property and does no measuring and no layout reads.
+    window.visualViewport.addEventListener("scroll", publishPan);
   }
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", applyViewport);
-    // A pan the browser performs itself moves the offset, not the height — and
-    // it is precisely the pan that hides the subject bar.
-    window.visualViewport.addEventListener("scroll", () => {
-      if (document.body.classList.contains("m-kb") && window.scrollY) window.scrollTo(0, 0);
-    });
   }
   // A rotation changes what "full height" even means, so the remembered
   // baseline has to go with it.
@@ -10577,6 +10600,7 @@ const MOBILE_UI = (() => {
     if (!kb || !kb.addListener) return;
     kb.addListener("keyboardWillShow", (info) => {
       kbPluginH = (info && info.keyboardHeight) || 0;
+      window.__waKbH = kbPluginH;   // read by the Settings keyboard diagnostics
       applyViewport();
     });
     kb.addListener("keyboardDidShow", (info) => {
@@ -14579,6 +14603,50 @@ const MOBILE_UI = (() => {
       // will be reorganised later). Two slide switches; off = right side.
       const prose = document.querySelector(".content .prose");
       if (!prose || document.getElementById("m-display-box")) return;
+
+      // ---- Keyboard diagnostics -------------------------------------------
+      // TEMPORARY (2026-08-20). Three attempts at the chat-composer keyboard
+      // bug were each written from a guess about what this phone reports, and
+      // each was wrong in a different way. This prints the actual numbers so
+      // the next fix is written from evidence: tap the box, screenshot, done.
+      // Remove it once the chat layout is settled.
+      const kb = el(`<div class="sync-box" id="m-kbdiag-box">
+        <h3 style="margin-top:0">Keyboard diagnostics</h3>
+        <div class="m-hint">Tap the box below to raise the keyboard, then screenshot this card.</div>
+        <textarea id="m-kbdiag-ta" rows="2" placeholder="tap here"
+          style="width:100%;margin:8px 0;padding:8px;font-size:15px"></textarea>
+        <pre id="m-kbdiag-out" style="font:600 11.5px ui-monospace,monospace;white-space:pre-wrap;margin:0"></pre>
+      </div>`);
+      prose.appendChild(kb);
+      const out = kb.querySelector("#m-kbdiag-out");
+      const paintDiag = () => {
+        const vv = window.visualViewport;
+        const cs = getComputedStyle(document.documentElement);
+        const rows = [
+          ["innerHeight", window.innerHeight],
+          ["visualViewport.h", vv ? Math.round(vv.height) : "none"],
+          ["visualViewport.top", vv ? Math.round(vv.offsetTop) : "none"],
+          ["vv.scale", vv ? (Math.round(vv.scale * 100) / 100) : "none"],
+          ["--m-vvh", (cs.getPropertyValue("--m-vvh") || "unset").trim()],
+          ["--m-vvtop", (cs.getPropertyValue("--m-vvtop") || "unset").trim()],
+          ["body.m-kb", document.body.classList.contains("m-kb")],
+          ["plugin kbHeight", window.__waKbH === undefined ? "no event yet" : window.__waKbH],
+          ["docScrollTop", Math.round((document.scrollingElement || {}).scrollTop || 0)],
+          ["doc scrollHeight", document.documentElement.scrollHeight],
+          ["dpr", window.devicePixelRatio],
+          ["viewport meta", (document.querySelector('meta[name=viewport]') || {}).content || "?"],
+        ];
+        out.textContent = rows.map(([k, v]) => k.padEnd(17) + " " + v).join(String.fromCharCode(10));
+      };
+      paintDiag();
+      const t = kb.querySelector("#m-kbdiag-ta");
+      t.addEventListener("focus", () => setTimeout(paintDiag, 350));
+      t.addEventListener("input", paintDiag);
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", () => setTimeout(paintDiag, 60));
+        window.visualViewport.addEventListener("scroll", paintDiag);
+      }
+      setInterval(paintDiag, 1000);
 
       // ---- Notifications ---------------------------------------------------
       // DISCUSSION pushes are the only ones with a switch: daily / Special /
