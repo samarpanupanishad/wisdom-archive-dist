@@ -2330,6 +2330,46 @@ function openChatStream(wid, msgsEl, ctx) {
   });
 }
 
+// ---- composer helpers, shared by every chat surface -----------------------
+// Grow with the text, then scroll internally. An EMPTY box goes back to no
+// inline height at all rather than to a measured one, so the resting size is
+// whatever CSS says right now — which matters because .m-kb shrinks the
+// composer while the keyboard is up, and a leftover inline height would pin it
+// to the taller size and eat the message space the shrink was there to buy.
+const TA_MAX = 160;
+function autoGrowTa(ta) {
+  if (!ta) return;
+  if (!ta.value) { ta.style.height = ""; return; }
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, TA_MAX) + "px";
+}
+
+// Tapping a composer control must NOT move focus off the textarea: Android
+// hides the keyboard the instant the text field blurs, so after tapping Send
+// (or Bold, or the emoji button) a member had to tap the box again before they
+// could type the next line — the thing WhatsApp never makes you do.
+// preventDefault on pointerdown suppresses the focus transfer and the
+// compatibility mouse events; the CLICK still fires, so the handlers below are
+// untouched. mousedown is the desktop fallback for shells without pointer
+// events. ⚠ Not for the attach/camera buttons: those hand off to a system
+// picker, which takes the keyboard down anyway.
+function keepsKeyboard(el) {
+  if (!el) return;
+  el.addEventListener("pointerdown", (e) => e.preventDefault());
+  el.addEventListener("mousedown", (e) => e.preventDefault());
+}
+
+// A half-written reflection is the most expensive thing on this screen to lose,
+// and leaving a chat (a notification, the back button) used to throw it away.
+// Kept PER THREAD — one global draft would resurface your Anubhuti sharing
+// inside Admin Talks. Text only: a pending photo lives in a blob URL that dies
+// with the page, and a restored reply-to could point at a deleted message.
+const DRAFT_KEY = (wid) => "wa:draft:" + wid;
+function chatDraftGet(wid) { try { return localStorage.getItem(DRAFT_KEY(wid)) || ""; } catch { return ""; } }
+function chatDraftSet(wid, text) {
+  try { if (text && text.trim()) localStorage.setItem(DRAFT_KEY(wid), text); else localStorage.removeItem(DRAFT_KEY(wid)); } catch {}
+}
+
 // `label` overrides the header title — Special Telegram / Letterpad messages
 // pass their own subject, since "Guru's msg #special:2564" is meaningless.
 //
@@ -2628,7 +2668,12 @@ async function renderWisdomChat(body, wid, label, opts) {
     }
     CHAT_EMOJIS.forEach((emoji) => {
       const b = el(`<button class="wc-emoji-item">${emoji}</button>`);
-      b.addEventListener("click", () => { insertAtCursor(footEl.querySelector("#wc-ta"), emoji); closeEmojiPicker(); });
+      b.addEventListener("click", () => {
+        const t = footEl.querySelector("#wc-ta");
+        insertAtCursor(t, emoji);
+        t.dispatchEvent(new Event("input"));   // grow, repaint Send, save the draft
+        closeEmojiPicker();
+      });
       picker.appendChild(b);
     });
     footEl.querySelector(".wc-emoji-btn").addEventListener("click", (e) => {
@@ -2641,19 +2686,30 @@ async function renderWisdomChat(body, wid, label, opts) {
 
     // Format buttons
     footEl.querySelectorAll(".wc-tb-btn[data-wrap]").forEach((btn) => {
-      btn.addEventListener("click", () => { const [b, a] = btn.dataset.wrap.split("||"); wrapSelection(footEl.querySelector("#wc-ta"), b, a); });
+      btn.addEventListener("click", () => {
+        const [b, a] = btn.dataset.wrap.split("||");
+        const t = footEl.querySelector("#wc-ta");
+        wrapSelection(t, b, a);
+        t.dispatchEvent(new Event("input"));   // grow, repaint Send, save the draft
+      });
     });
 
     // Send
     const ta = footEl.querySelector("#wc-ta");
     const sendBtn = footEl.querySelector("#wc-send");
-    // Grow with the text, then scroll internally — the CSS min-height sets the
-    // resting size, this only takes it up to the cap.
-    const TA_MAX = 160;
-    const autoGrow = () => {
-      ta.style.height = "auto";
-      ta.style.height = Math.min(ta.scrollHeight, TA_MAX) + "px";
+    const autoGrow = () => autoGrowTa(ta);
+    // A Send that does nothing reads as a broken Send. doSend() returns silently
+    // on an empty box, so the button says so before it is tapped.
+    const paintSendState = () => {
+      sendBtn.classList.toggle("wc-send-idle", !ta.value.trim() && !pending.length);
     };
+    // Restore whatever was left half-written here last time.
+    const savedDraft = chatDraftGet(wid);
+    if (savedDraft) { ta.value = savedDraft; autoGrow(); }
+    // Every control INSIDE the composer keeps the keyboard up (see keepsKeyboard).
+    keepsKeyboard(sendBtn);
+    keepsKeyboard(footEl.querySelector(".wc-emoji-btn"));
+    footEl.querySelectorAll(".wc-tb-btn[data-wrap]").forEach(keepsKeyboard);
     // Typing + presence share one strip above the composer. Presence only shows
     // when someone else is actually here, and typing outranks it — "Anjali is
     // typing…" is the more useful of the two when both are true.
@@ -2670,9 +2726,22 @@ async function renderWisdomChat(body, wid, label, opts) {
 
     wireMentions(ta, msgsEl);
 
+    // Saving on every keystroke is a synchronous localStorage write per key, so
+    // it waits for a pause in the typing instead. The send path clears the draft
+    // itself, and cancels this, so a timer in flight cannot resurrect a sent
+    // message as a draft.
+    let draftTimer = 0;
+    const saveDraft = () => {
+      clearTimeout(draftTimer);
+      draftTimer = setTimeout(() => chatDraftSet(wid, ta.value), 400);
+    };
+    const forgetDraft = () => { clearTimeout(draftTimer); chatDraftSet(wid, ""); };
+
     let lastPing = 0;
     ta.addEventListener("input", () => {
       autoGrow();
+      paintSendState();
+      saveDraft();
       // Throttled to one broadcast per 2s per member — a keystroke-per-event
       // stream would be the noisiest thing on the socket by far.
       const now = Date.now();
@@ -2707,6 +2776,7 @@ async function renderWisdomChat(body, wid, label, opts) {
     const fileEl = footEl.querySelector("#wc-file");
     const paintTray = () => {
       trayEl.hidden = !pending.length;
+      paintSendState();
       trayEl.innerHTML = pending.map((p, i) => `<div class="wc-tray-item">
           ${p.url ? `<img src="${p.url}" alt="">` : `<span class="wc-tray-doc">📄</span>`}
           <span class="wc-tray-name">${escapeHtml(p.name)}</span>
@@ -2741,6 +2811,7 @@ async function renderWisdomChat(body, wid, label, opts) {
         paintTray();
       }
     };
+    paintSendState();
     const camEl = footEl.querySelector("#wc-cam");
     footEl.querySelector(".wc-attach-btn").addEventListener("click", () => fileEl.click());
     footEl.querySelector(".wc-cam-btn").addEventListener("click", () => camEl.click());
@@ -2775,6 +2846,12 @@ async function renderWisdomChat(body, wid, label, opts) {
       const reply = replyTo;
       ta.value = "";
       ta.style.height = "";              // back to the resting height, not the grown one
+      forgetDraft();                     // it is sent (or about to be) — not a draft any more
+      paintSendState();
+      // Belt and braces behind keepsKeyboard(sendBtn): still inside the tap's
+      // own call stack, which is the only place a focus() is allowed to raise
+      // the keyboard on Android. Everything above this line is synchronous.
+      if (document.activeElement !== ta) ta.focus();
       clearReply();
       const tmpId = files.length ? "" : "tmp:" + (++tmpSeq);
       if (tmpId) {
@@ -2815,6 +2892,8 @@ async function renderWisdomChat(body, wid, label, opts) {
         // failure here, and clearing it optimistically means putting it back by
         // hand. Anything typed in the meantime wins; nothing is overwritten.
         if (!ta.value.trim()) { ta.value = text; autoGrow(); }
+        chatDraftSet(wid, ta.value);     // back in the box, so back in the draft too
+        paintSendState();
         if (reply && !replyTo) ctx.setReply(reply);
         if (files.length) { pending = files.concat(pending); paintTray(); }
         toast(err.message || "Could not send message."); sendBtn.disabled = false;
@@ -5161,9 +5240,11 @@ function refreshAnyMsgDot() {
   };
   group("[data-satsang-group-badge]", satsang + anubhuti);
   group("[data-gurumsg-group-badge]", special + letterpad);
-  // Admin Announcements sits in More, and Admin Talks is nested one level deeper
-  // inside More's own Sutradhar group — so More carries both.
-  group("[data-more-group-badge]", broadcast + admintalk);
+  // More holds Admin Announcements and nothing else that counts. It used to
+  // carry admintalk too, because the Sutradhar group was nested inside it —
+  // that group is now top-level (2026-08-20), so More must NOT keep counting
+  // it, or a moderator sees a number on More and finds nothing behind it.
+  group("[data-more-group-badge]", broadcast);
   group("[data-sutradhar-group-badge]", admintalk);
 }
 
@@ -10259,11 +10340,11 @@ const MOBILE_UI = (() => {
               from the rows inside it. Without that, a new Satsang message would
               be invisible behind a collapsed group — the badge is the whole
               reason someone opens the drawer.
-           4. The Sutradhar group is nested INSIDE More, as asked, so the tools
-              sit where an admin looks for them and nowhere a member's eye goes.
-              Its .m-mod-only is on the BUTTON only, never on its submenu:
-              openDrawer() sets hidden = !isModerator() on every .m-mod-only,
-              which on a submenu would force it permanently OPEN for moderators.
+           4. The Sutradhar group is the LAST top-level entry, below More
+              (operator, 2026-08-20 — it used to be nested inside More). It is
+              the one group an ordinary member never sees at all, so it is also
+              the one that must not cost an admin three taps. See its own
+              comment below for the two traps that come with hiding it.
            5. This is inside a TEMPLATE LITERAL — a backtick here ends the string
               and takes the whole app down with it. Not a hypothetical: writing
               one pair of them around a code fragment in THIS comment produced a
@@ -10301,18 +10382,33 @@ const MOBILE_UI = (() => {
           <a href="#/m/contact"><span class="mi">✉️</span> Msg to Admin</a>
           <a href="#/settings"><span class="mi">⚙️</span> Settings</a>
           <a href="#/about"><span class="mi">🕉️</span> About Us</a>
-          <!-- The admin tools: Moderator, the private Admin Talks room, and the
-               statistics (which members no longer see at all — operator, 2026-08
-               -19). As with every .m-mod-only, the hiding is COURTESY: Postgres
-               is what keeps the room shut (add_admin_talks.sql) and what refuses
-               a non-moderator's writes. -->
-          <button class="m-menu-group m-subgroup m-mod-only" data-group="sutradhar" hidden><span class="mi">🛡️</span> Sutradhar
-            <span class="m-badge" data-sutradhar-group-badge hidden></span><span class="m-caret">▾</span></button>
-          <div class="m-submenu m-subsub" data-sub="sutradhar" hidden>
-            <a href="#/moderator"><span class="mi">🛡️</span> Moderator</a>
-            <a href="#/m/admintalks"><span class="mi">🔒</span> Admin Talks <span class="m-badge" data-admintalk-badge hidden></span></a>
-            <a href="#/stats"><span class="mi">📊</span> Statistics</a>
-          </div>
+        </div>
+        <!-- The admin tools: Moderator, the private Admin Talks room, and the
+             statistics (which members no longer see at all — operator, 2026-08
+             -19). As with every .m-mod-only, the hiding is COURTESY: Postgres
+             is what keeps the room shut (add_admin_talks.sql) and what refuses
+             a non-moderator's writes.
+
+             MOVED OUT OF 'More' to the drawer's top level, last (operator,
+             2026-08-20): three taps to reach the moderation queue was two too
+             many. .m-adminsec draws the rule above it, so the divider hides and
+             shows WITH the button and there is no second element to keep in
+             sync with isModerator().
+
+             ⚠ .m-mod-only is on the BUTTON only, never on its submenu:
+             openDrawer() sets hidden = !isModerator() on every .m-mod-only,
+             which on a submenu would force it permanently OPEN for moderators.
+             ⚠ A hidden .m-menu-group needs .m-menu .m-menu-group[hidden] in
+             styles.css to actually disappear — the group's own display:flex is
+             an author rule and beats the UA sheet's [hidden]. Without it this
+             button showed to EVERY member (found 2026-08-20), same trap the
+             .m-menu a[hidden] rule already documents. -->
+        <button class="m-menu-group m-adminsec m-mod-only" data-group="sutradhar" hidden><span class="mi">🛡️</span> Sutradhar
+          <span class="m-badge" data-sutradhar-group-badge hidden></span><span class="m-caret">▾</span></button>
+        <div class="m-submenu" data-sub="sutradhar" hidden>
+          <a href="#/moderator"><span class="mi">🛡️</span> Moderator</a>
+          <a href="#/m/admintalks"><span class="mi">🔒</span> Admin Talks <span class="m-badge" data-admintalk-badge hidden></span></a>
+          <a href="#/stats"><span class="mi">📊</span> Statistics</a>
         </div>
       </nav>
     </aside>
@@ -10380,6 +10476,124 @@ const MOBILE_UI = (() => {
   const goBack = () => { if (_pageBackHook && _pageBackHook()) return; history.back(); };
   $("m-back").addEventListener("click", goBack);
   $("m-panel-back").addEventListener("click", goBack);
+
+  // ---- the soft keyboard, and the height it leaves behind -------------------
+  // THE BUG (operator, 2026-08-20): typing in a satsang pushed the subject bar
+  // and the whole top bar off the screen. The chat column is sized
+  // `calc(100vh - ...)`, a height that does not move when the keyboard opens,
+  // so the composer ended up BEHIND the keyboard and the WebView scrolled the
+  // page up to reveal it — taking .m-chat-head and the fixed .m-top with it.
+  //
+  // The fix is to publish the height that is actually VISIBLE as --m-vvh and let
+  // the chat column be that tall, so the flex layout re-fits instead of the page
+  // scrolling: header pinned, message list shrinks, composer rides on top of the
+  // keyboard. Exactly what WhatsApp does.
+  //
+  // ⚠ TWO SIGNALS, because neither is trustworthy alone on this app's targets:
+  //   · visualViewport moves only when the WebView is genuinely resized. On
+  //     Android 15 (targetSdk 35) edge-to-edge, the IME often does NOT resize
+  //     the window, and it reports nothing at all.
+  //   · The Capacitor Keyboard plugin reports the keyboard height directly and
+  //     is right in exactly that case — but exists only inside the APK, so it
+  //     is useless in the browser test shell.
+  // So the viewport is asked FIRST and the plugin is the fallback — see the
+  // trap noted on the branch itself; the two must never both be subtracted.
+  // Read through Capacitor.Plugins rather than an import, so this ships over
+  // the air like the rest of app.js.
+  const KB_MIN = 120;   // less than this is a toolbar/URL bar, not a keyboard
+  let kbPluginH = 0;    // keyboard height per the plugin, 0 when it says nothing
+  let kbFullH = 0;      // tallest viewport ever seen = the no-keyboard height
+  function applyViewport() {
+    const vv = window.visualViewport;
+    const cur = window.innerHeight || document.documentElement.clientHeight;
+    const seen = Math.min(cur, vv ? vv.height : cur);
+    // Only believe a NEW full height while we have no reason to think a
+    // keyboard is up, or the shrunken height becomes the baseline and every
+    // later measurement is judged against it.
+    if (!kbPluginH) kbFullH = Math.max(kbFullH, cur);
+    const full = kbFullH || cur;
+
+    // ⚠ THE TRAP: do NOT just subtract the plugin's keyboardHeight. In the
+    // plugin's default `native` resize mode it has ALREADY resized the WebView,
+    // so innerHeight is short and subtracting again would halve the chat. Use
+    // the reported height only when the viewport did not move on its own —
+    // which is the Android 15 edge-to-edge case the plugin exists to cover.
+    let h, open;
+    if (full - seen > KB_MIN) { h = seen; open = true; }                 // viewport already shrank
+    else if (kbPluginH > KB_MIN) { h = full - kbPluginH; open = true; }  // it did not; the plugin saw it
+    else { h = seen; open = false; }
+    h = Math.max(160, Math.min(h, full));
+
+    // Measure BEFORE the height changes: a list sitting at the newest message
+    // must still be there afterwards, or opening the keyboard silently scrolls
+    // the conversation backwards. A reader parked in the middle of the history
+    // is left exactly where they were.
+    const lists = [...document.querySelectorAll(".wc-msgs")].map((n) => ({
+      n, atEnd: n.scrollHeight - n.scrollTop - n.clientHeight < 80,
+    }));
+
+    document.documentElement.style.setProperty("--m-vvh", h + "px");
+    document.body.classList.toggle("m-kb", open);
+
+    requestAnimationFrame(() => {
+      lists.forEach(({ n, atEnd }) => { if (atEnd) n.scrollTop = n.scrollHeight; });
+      // The composer's resting height is smaller while the keyboard is up (see
+      // .m-kb in styles.css); an empty box has to be let go of its inline height
+      // for that to take, which is what autoGrowTa does with an empty value.
+      document.querySelectorAll(".wc-ta").forEach(autoGrowTa);
+      // Undo any pan the WebView already did before we resized: with the layout
+      // now fitting, page scroll must be zero or the top bar stays hidden.
+      if (open && window.scrollY) window.scrollTo(0, 0);
+    });
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", applyViewport);
+    // A pan the browser performs itself moves the offset, not the height — and
+    // it is precisely the pan that hides the subject bar.
+    window.visualViewport.addEventListener("scroll", () => {
+      if (document.body.classList.contains("m-kb") && window.scrollY) window.scrollTo(0, 0);
+    });
+  }
+  // A rotation changes what "full height" even means, so the remembered
+  // baseline has to go with it.
+  window.addEventListener("orientationchange", () => {
+    kbFullH = 0;
+    setTimeout(applyViewport, 120);
+  });
+  (function wireKeyboardPlugin() {
+    const kb = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard;
+    if (!kb || !kb.addListener) return;
+    kb.addListener("keyboardWillShow", (info) => {
+      kbPluginH = (info && info.keyboardHeight) || 0;
+      applyViewport();
+    });
+    kb.addListener("keyboardDidShow", (info) => {
+      kbPluginH = (info && info.keyboardHeight) || kbPluginH;
+      applyViewport();
+    });
+    kb.addListener("keyboardWillHide", () => { kbPluginH = 0; applyViewport(); });
+    kb.addListener("keyboardDidHide", () => { kbPluginH = 0; applyViewport(); });
+  })();
+  applyViewport();
+
+  // Swiping DOWN over a conversation puts the keyboard away — WhatsApp's
+  // gesture, and the only way to see more of the thread without hunting for a
+  // Back press. Passive: this never calls preventDefault, so it cannot cost the
+  // list its native scrolling.
+  let _kbSwipe = null;
+  document.addEventListener("touchstart", (e) => {
+    const list = e.target.closest && e.target.closest(".wc-msgs");
+    _kbSwipe = list && e.touches[0] ? { y: e.touches[0].clientY } : null;
+  }, { passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (!_kbSwipe || !document.body.classList.contains("m-kb")) return;
+    if (e.touches[0] && e.touches[0].clientY - _kbSwipe.y > 44) {
+      _kbSwipe = null;
+      const ta = document.querySelector(".wc-ta");
+      if (ta) ta.blur();
+    }
+  }, { passive: true });
+  document.addEventListener("touchend", () => { _kbSwipe = null; }, { passive: true });
 
   // ---- top-bar right-hand action ------------------------------------------
   // One reusable slot (currently the Samuhik Satsang "+"). setChrome() clears it

@@ -2028,13 +2028,18 @@ body.m-mode .page-head { padding-top: 4px; }
    (2026-08-19). It sits straight after the label; the caret keeps its
    margin-left:auto above and so stays pinned to the right edge. */
 .m-menu-group .m-badge { margin-left: 6px; }
-/* One more level: the Sutradhar group lives INSIDE More, so its header indents
-   to the depth of More's own rows and its rows indent past that. Two levels is
-   the limit this styling is written for — a third would need its own rule and
-   would be a sign the drawer is holding too much. */
-.m-submenu .m-menu-group { padding-left: 38px; font-size: 14.5px; }
-.m-subsub { border-top: 1px solid var(--border); }
-.m-subsub a { padding-left: 56px; }
+/* ⚠ THE SAME TRAP as .m-menu a[hidden] twenty lines up, and it was live: the
+   group's own display:flex is an AUTHOR rule, so it beats the UA stylesheet's
+   [hidden] { display: none }. Without this, the Sutradhar group header — the
+   one thing in the drawer marked .m-mod-only — was visible to every ordinary
+   member who opened More, and expanded to show Moderator / Admin Talks /
+   Statistics. Postgres refused them the data (RLS), so nothing leaked; the menu
+   was simply showing a door that is not theirs. Found + fixed 2026-08-20. */
+.m-menu .m-menu-group[hidden] { display: none !important; }
+/* The Sutradhar group is the last entry and the only admin one, so it wears a
+   rule above it. Carried by the BUTTON rather than a separate <hr>, so the
+   divider hides and shows with the button and cannot drift out of sync. */
+.m-adminsec { margin-top: 6px; border-top: 1px solid var(--border); padding-top: 15px; }
 
 /* community chat header: human date + subject, tap to change */
 .m-chat-head {
@@ -2049,8 +2054,17 @@ body.m-mode .page-head { padding-top: 4px; }
    — starting a new satsang moved to the top bar's "+", and the header itself now
    simply opens the message.) */
 
-/* WhatsApp-style chat: fill the viewport, messages scroll, composer pinned */
-body.m-mode .m-community { display: flex; flex-direction: column; height: calc(100vh - 78px - env(safe-area-inset-top)); min-height: 0; }
+/* WhatsApp-style chat: fill the viewport, messages scroll, composer pinned.
+   --m-vvh is the height actually VISIBLE right now, published by MOBILE_UI's
+   keyboard watcher (see app.js). It falls back to 100vh, so a shell without
+   visualViewport and without the Keyboard plugin behaves exactly as before.
+   ⚠ 100vh does NOT shrink when the keyboard opens — that is the whole reason
+   this variable exists. Sizing the column to it is what keeps the subject bar
+   on screen instead of the page scrolling up to find the composer. */
+body.m-mode .m-community {
+  display: flex; flex-direction: column; min-height: 0;
+  height: calc(var(--m-vvh, 100vh) - 78px - env(safe-area-inset-top));
+}
 body.m-mode .m-chatbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 body.m-mode .m-chatbody .wc-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 body.m-mode .m-chatbody .wc-hdr { display: none; }   /* replaced by .m-chat-head */
@@ -2060,6 +2074,15 @@ body.m-mode .m-chatbody .wc-foot { flex: none; }
    asked for a composer noticeably bigger than the usual chat app's (~44px). */
 body.m-mode .m-chatbody .wc-ta { min-height: 88px; font-size: 15.5px; }
 body.m-mode .m-chatbody .wc-send { width: 46px; height: 46px; font-size: 18px; }
+/* … but with the keyboard up, that generous resting height plus the keyboard
+   leaves almost no conversation visible. So it rests small while typing and
+   grows with the words instead (autoGrowTa); the roomy version is what you get
+   back the moment the keyboard goes away. */
+body.m-mode.m-kb .m-chatbody .wc-ta { min-height: 44px; }
+/* Nothing to send yet. doSend() returns silently on an empty box, and a tap
+   that does nothing reads as a broken button — so the arrow says so first. */
+.wc-send.wc-send-idle { opacity: .42; }
+.wc-send.wc-send-idle:hover { filter: none; }
 
 /* ---- zoom mode: double-tap a Guru's msg image ---- */
 body.m-mode.m-zoom .m-top, body.m-mode.m-zoom .m-bottom,
