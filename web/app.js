@@ -3641,7 +3641,20 @@ function renderInfo(kind) {
     about: `${OUR_GOAL.map((para) => `<p>${escapeHtml(para)}</p>`).join("")}<p style="margin-top:22px;color:var(--muted,#888);font-size:13px">Samarpan Upanishad · version <span id="wa-version">…</span></p>`,
     help: `<h3>Help &amp; Support</h3><p>Search any word in English or Hindi from the bar at the top — matching Guru's msgs appear with the word highlighted in yellow. Click a result to read it in full, with both images and transcripts.</p><ul><li><strong>Add to Favorites</strong> to save an entry; find them under Favorites.</li><li>Write private notes under <strong>My Comments</strong> on any entry.</li><li><strong>Browse</strong> by Date, Month, or Year from the sidebar.</li></ul>`,
   }[kind];
-  $view.innerHTML = `<div class="page-title">${title}</div><div class="prose">${body}</div>`;
+  // ⚠ On a PHONE the shell already paints this page's name in the top bar
+  // (MOBILE_UI.fallthrough -> setChrome, from PAGE_TITLES), so this heading is a
+  // second copy of it a few pixels below. That was tolerable while the page had a
+  // body under it; once Our Goal was emptied down to the version line the
+  // duplicate was most of the page, and the operator asked for it gone
+  // (2026-08-20).
+  //
+  // Conditional rather than deleted: the DESKTOP has no such bar, so there this
+  // is the page's only heading and removing it would leave an untitled page.
+  // Scoped to `about` alone — settings and help have the same duplication, but
+  // they still have real content under it and were not part of the ask.
+  const showTitle = !(kind === "about" && MOBILE_UI.active);
+  $view.innerHTML = (showTitle ? `<div class="page-title">${title}</div>` : "") +
+                    `<div class="prose">${body}</div>`;
   if (kind === "about") {
     // Fill the version number. On desktop this is the VERSION file via the API.
     // On the phone, an OTA UI update bumps the RUNNING ui (app.js/styles.css)
