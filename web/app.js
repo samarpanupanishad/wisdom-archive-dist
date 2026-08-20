@@ -6338,20 +6338,18 @@ const MSG_CORPUS = (() => {
 // WebView-private and invisible to the launcher process.
 //
 // Everything interesting therefore stays OTA-editable here: which messages
-// qualify, how far ahead the daily msgs are pre-computed, the language, the
-// text length and the tap target. Only the painting is frozen in the APK.
+// qualify, how many of them, the language, the text length and the tap
+// target. Only the painting is frozen in the APK.
 // ==========================================================================
 const WIDGET = (() => {
   const PREF_KEY = "wa:widget:on";          // master switch (this side)
   const SNAP_KEY = "wa_widget_snapshot";    // Preferences key the widget reads
 
   // ---- OTA-TUNABLE knobs ---------------------------------------------------
-  // Daily msgs are pre-resolved this many days AHEAD so the widget stays
-  // correct even if the app is not opened for a fortnight. This is the whole
-  // reason the widget can be reliable: Android defers widget refresh under Doze
-  // and cannot be trusted to run on any schedule, so the snapshot must already
-  // hold tomorrow's answer before tomorrow arrives.
-  const DAYS_AHEAD = 14;
+  // How many of the newest Guru's msgs go into the snapshot. Same count Home
+  // asks for (/api/latest?limit=14), so the widget's list of days matches the
+  // list the app itself opens on.
+  const DAILY_COUNT = 14;
   const BODY_CHARS = 400;   // RemoteViews crosses an IPC binder limit; stay lean
   const MAX_ITEMS = 60;
   // ⚠ Newest-first ALONE silently drops whole sections. Measured against the
@@ -6409,44 +6407,40 @@ const WIDGET = (() => {
     return out;
   }
 
-  // ---- the daily Guru's msg, resolved for the days ahead -------------------
+  // ---- the newest Guru's msgs ----------------------------------------------
+  // ⚠ This used to mirror /api/daily — "today's msg" resolved by MONTH-DAY
+  // across all years, newest year winning — and it pre-resolved a fortnight
+  // AHEAD so the widget stayed right while the app went unopened. Both are
+  // gone, and neither should come back:
+  //
+  //  · Nothing in the app uses /api/daily. Home opens /api/latest (newest entry
+  //    by date), and so does the daily-msg notification, which lands on
+  //    "#/?latest=1". The month-day rule made the widget show a DIFFERENT
+  //    message from the app on the same day.
+  //  · Pre-resolving turned that into a wrong DATE as well. A msg is ingested on
+  //    the day it is published, so no future day has one yet: every day computed
+  //    ahead fell back to LAST YEAR's entry for that month-day and was written
+  //    into the snapshot stamped with this year's date. Reported 2026-08-21 —
+  //    the widget showed the 21 Aug 2025 msg dated 21 Aug 2026.
+  //
+  // So: the newest entries, each at its own real date, nothing dated ahead and
+  // nothing re-dated. The cost is that these rows now only change when the app
+  // is opened (the snapshot is rewritten on boot) — an honestly older message
+  // rather than a fresh-looking wrong one, which is the right way round.
   async function dailyItems(L) {
-    let periods = [];
-    try { periods = (await api("/api/browse?group=date")).periods || []; } catch { return []; }
-    // ⚠ /api/daily resolves "today's msg" by MONTH-DAY across all years, newest
-    // year winning — NOT by exact date. Mirror that rule here; a widget showing
-    // a different msg than the home screen on the same day is a visible bug.
-    const byMd = new Map();
-    for (const p of periods) {
-      const d = p.period || "";
-      if (d.length < 10) continue;
-      const md = d.slice(5);
-      if (!byMd.has(md) || d > byMd.get(md)) byMd.set(md, d);
-    }
-    const today = new Date();
+    let rows = [];
+    try { rows = (await api("/api/latest?limit=" + DAILY_COUNT)).results || []; }
+    catch { return []; }
     const out = [];
-    for (let i = 0; i < DAYS_AHEAD; i++) {
-      const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
-      const showOn = isoOf(day);
-      const src = byMd.get(showOn.slice(5));
-      if (!src) continue;                      // no msg for that month-day at all
-      let rows = [];
-      try { rows = (await api("/api/browse?date=" + encodeURIComponent(src))).results || []; }
-      catch { continue; }
-      if (!rows.length) continue;
-      const r = rows[0];
+    for (const r of rows) {
+      if (!r || !r.date) continue;             // undated entries sort nowhere
       const en = L === "en";
       const title = (en ? (r.topic_en || r.topic_hi) : (r.topic_hi || r.topic_en)) || "";
       const body = (en ? (r.preview_en || r.preview_hi) : (r.preview_hi || r.preview_en)) || "";
       if (!title && !body) continue;
       out.push({
         kind: "daily",
-        // Sorted as if it were posted on the day it surfaces, so today's daily
-        // ranks alongside anything else that arrived today.
-        at: showOn,
-        // Not to be painted before its day: the snapshot deliberately runs ahead
-        // of the calendar, and without this the widget leaks next week's msg.
-        showOn,
+        at: r.date,
         title: clip(title), body: clip(body),
         href: "#/entry/" + encodeURIComponent(r.id),
       });
@@ -6471,9 +6465,10 @@ const WIDGET = (() => {
     // row pins itself to the top of the widget and stays there — outranking
     // every genuinely new message until its date finally arrives.
     //
-    // Clamping (rather than hiding it, as the daily msgs are hidden by showOn)
-    // is the deliberate choice: a just-arrived announcement must still appear
-    // today, it simply must not outrank the rest of today.
+    // Clamping rather than hiding is the deliberate choice: a just-arrived
+    // announcement must still appear today, it simply must not outrank the rest
+    // of today. (The snapshot no longer runs ahead of the calendar at all — see
+    // dailyItems — so nothing here is waiting for its date to arrive.)
     const key = (i) => (i.at > today ? today : i.at);
     items.sort((a, b) => {
       const ka = key(a), kb = key(b);
@@ -6536,6 +6531,14 @@ const WIDGET = (() => {
   // App.getLaunchUrl() on a cold start and the appUrlOpen event when the app was
   // already running. The widget registers NO intent-filter — the launch Intent
   // is explicit — so this is the only path the route arrives by.
+  //
+  // ⚠ The warm half of that only works on an APK where the row's Intent carries
+  // ACTION_VIEW: @capacitor/app's handleOnNewIntent drops anything else, while
+  // the cold path (Bridge reads getIntent().getData() with no action check)
+  // never cared. Reported 2026-08-21 as "works when the app is closed, does
+  // nothing when it is already running" — and the fix is in the APK
+  // (WaWidgetProvider), not here, because Bridge.intentUri is captured once at
+  // startup and no later intent is readable from JavaScript at all.
   const ROUTE_PREFIX = "samarpan-widget://";
   // ⚠ Allowlist, not a sanitiser. The route is only ever one of this app's own
   // hash routes; anything else means something other than the widget put it
@@ -6549,9 +6552,13 @@ const WIDGET = (() => {
     try { h = new URLSearchParams(String(u).slice(q + 1)).get("h") || ""; } catch (_) { return ""; }
     return ROUTE_OK.test(h) ? h : "";
   }
+  // go(), not a bare `location.hash =`: tapping the row for the message already
+  // on screen sets an unchanged hash, which fires no hashchange and so would
+  // route nowhere. That is the common case on a warm resume — the app is very
+  // often already sitting on the message the widget row points at.
   function follow(hash) {
     if (!hash) return false;
-    try { location.hash = hash.slice(1); } catch (_) { return false; }
+    try { go(hash); } catch (_) { return false; }
     return true;
   }
   // ⚠ Call this AFTER the auth gate has let the user through, not at module
