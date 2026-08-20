@@ -590,9 +590,9 @@ const NAV = [
   { route: "dhyan", label: "Personal Dhyan Diary", hash: "#/dhyan", icon: "dhyan" },
   { route: "browse-date", label: "Browse by Date", hash: "#/browse/date", icon: "calendar" },
   { route: "random", label: "Your Lucky Msg for Today", hash: "#/random", icon: "shuffle" },
-  { route: "broadcast", label: "Important Updates", hash: "#/broadcast", icon: "spark" },
+  { route: "broadcast", label: "Admin Announcements", hash: "#/broadcast", icon: "spark" },
   { route: "special", label: "Special Telegram Messages", hash: "#/special", icon: "spark" },
-  { route: "letterpad", label: "Guru's Letterpad Messages", hash: "#/letterpad", icon: "letter" },
+  { route: "letterpad", label: "Letterhead Messages", hash: "#/letterpad", icon: "letter" },
   { route: "anubhuti", label: "Anubhuti Sharing", hash: "#/anubhuti", icon: "lotus" },
   { divider: true },
   { route: "admin", label: "Add Guru's Msg", hash: "#/admin", icon: "upload" },
@@ -600,7 +600,7 @@ const NAV = [
   { route: "admintalks", label: "Admin Talks", hash: "#/admintalks", icon: "lock", modOnly: true },
   { route: "stats", label: "Statistics", hash: "#/stats", icon: "pie" },
   { route: "settings", label: "Settings", hash: "#/settings", icon: "gear" },
-  { route: "about", label: "About", hash: "#/about", icon: "info" },
+  { route: "about", label: "About Us", hash: "#/about", icon: "info" },
   { route: "help", label: "Help & Support", hash: "#/help", icon: "help" },
 ];
 function buildNav() {
@@ -1007,7 +1007,7 @@ let _stageId = null;         // the wisdom currently shown on the home stage
 // Cleared on every navigation by route(), like _stageId.
 let _chatCtx = null;   // { wid, title, dateLabel, back } | null
 const CHAT_NS_RE = /^(special|letterpad):(.+)$/;
-const CHAT_NS_LABEL = { special: "Special Telegram Msg", letterpad: "Guru's Letterpad Msg" };
+const CHAT_NS_LABEL = { special: "Special Telegram Msg", letterpad: "Letterhead Msg" };
 
 // Anubhuti Sharing threads ("anubhuti:7"). Deliberately NOT part of CHAT_NS_RE:
 // that regex means "this chat has a reader page at #/m/<section>/<id>", and a
@@ -3101,7 +3101,7 @@ function renderThumbList(items, opts) {
 // can never disagree about whether a message contains a word.
 const DESK_SEARCH_SECS = [
   { key: "special", label: "Special Telegram Msg", icon: "✨", href: "#/special" },
-  { key: "letterpad", label: "Guru's Letterpad Msg", icon: "✍️", href: "#/letterpad" },
+  { key: "letterpad", label: "Letterhead Msg", icon: "✍️", href: "#/letterpad" },
   // Anushthan messages ARE Letterpad messages shown in a second section (see
   // MSG_CORPUS.anushthanRows), so its rows open the Letterpad page.
   { key: "anushthan", label: "Anushthan Msg", icon: "🪔", href: "#/letterpad" },
@@ -3531,7 +3531,7 @@ async function renderStats() {
 }
 
 function renderInfo(kind) {
-  const title = { settings: "Settings", about: "About", help: "Help & Support" }[kind];
+  const title = { settings: "Settings", about: "About Us", help: "Help & Support" }[kind];
   const body = {
     settings: `<h3>Settings</h3><p>Samarpan Upanishad runs locally on your computer. There is no account — your <strong>favorites</strong> and <strong>notes</strong> are stored privately in this browser.</p><ul><li>Use the « / » button to collapse or expand the sidebar.</li><li>Dark mode is coming soon.</li><li>To add a new day's Guru's msg, open <strong>Add Guru's Msg</strong> in the sidebar and drop in that day's files — it appears instantly, no restart needed.</li><li>To bulk-rebuild from all folders at once, you can still run the importer (<code>reimport.bat</code>).</li></ul>
       <div class="sync-box">
@@ -3540,7 +3540,7 @@ function renderInfo(kind) {
         <button class="btn primary" id="sync-now-btn">Sync now</button>
         <div id="sync-status" class="sync-status"></div>
       </div>`,
-    about: `<h3>About</h3><p>Samarpan Upanishad is a digital library of daily spiritual Guru's msgs, searchable across English and Hindi transcripts. Each entry preserves the original images and their transcribed text.</p><p style="font-family:var(--serif);font-size:17px;color:var(--accent)">“The purpose of life is realisation of the Self.”<br>— Baba Swami</p><p style="margin-top:22px;color:var(--muted,#888);font-size:13px">Samarpan Upanishad · version <span id="wa-version">…</span></p>`,
+    about: `<h3>About Us</h3><p>Samarpan Upanishad is a digital library of daily spiritual Guru's msgs, searchable across English and Hindi transcripts. Each entry preserves the original images and their transcribed text.</p><p style="font-family:var(--serif);font-size:17px;color:var(--accent)">“The purpose of life is realisation of the Self.”<br>— Baba Swami</p><p style="margin-top:22px;color:var(--muted,#888);font-size:13px">Samarpan Upanishad · version <span id="wa-version">…</span></p>`,
     help: `<h3>Help &amp; Support</h3><p>Search any word in English or Hindi from the bar at the top — matching Guru's msgs appear with the word highlighted in yellow. Click a result to read it in full, with both images and transcripts.</p><ul><li><strong>Add to Favorites</strong> to save an entry; find them under Favorites.</li><li>Write private notes under <strong>My Comments</strong> on any entry.</li><li><strong>Browse</strong> by Date, Month, or Year from the sidebar.</li></ul>`,
   }[kind];
   $view.innerHTML = `<div class="page-title">${title}</div><div class="prose">${body}</div>`;
@@ -5130,15 +5130,41 @@ const SPECIAL = (() => {
 // time either refreshBadges() actually runs, the whole module has finished
 // initializing.
 function refreshAnyMsgDot() {
-  const n = (typeof SPECIAL !== "undefined" ? SPECIAL.unread() : 0) +
-            (typeof LETTERPAD !== "undefined" ? LETTERPAD.unread() : 0) +
-            (typeof BROADCAST !== "undefined" ? BROADCAST.unread() : 0) +
-            (typeof SATSANG !== "undefined" ? SATSANG.unread() : 0) +
-            (typeof ANUBHUTI !== "undefined" ? ANUBHUTI.unread() : 0) +
-            // Only ever non-zero for a moderator — ADMINTALK zeroes itself for
-            // everyone else, so this adds nothing to a member's dot.
-            (typeof ADMINTALK !== "undefined" ? ADMINTALK.unread() : 0);
+  const u = (m) => (typeof m !== "undefined" && m ? m.unread() : 0);
+  const special = u(typeof SPECIAL !== "undefined" ? SPECIAL : null);
+  const letterpad = u(typeof LETTERPAD !== "undefined" ? LETTERPAD : null);
+  const broadcast = u(typeof BROADCAST !== "undefined" ? BROADCAST : null);
+  const satsang = u(typeof SATSANG !== "undefined" ? SATSANG : null);
+  const anubhuti = u(typeof ANUBHUTI !== "undefined" ? ANUBHUTI : null);
+  // Only ever non-zero for a moderator — ADMINTALK zeroes itself for everyone
+  // else, so this adds nothing to a member's dot.
+  const admintalk = u(typeof ADMINTALK !== "undefined" ? ADMINTALK : null);
+  const n = special + letterpad + broadcast + satsang + anubhuti + admintalk;
   document.querySelectorAll("[data-anymsg-dot]").forEach((b) => { b.hidden = !n; });
+
+  // ---- the drawer's GROUP badges (2026-08-19) ------------------------------
+  // The menu is accordions now, so an unread message can sit behind a collapsed
+  // group with nothing to say it is there. Each group therefore carries the sum
+  // of the rows inside it, and it is painted HERE rather than in a new function
+  // because every module already calls this one from its refreshBadges — a
+  // second funnel would be a second thing to forget.
+  //
+  // ⚠ Keep these sums matching the drawer's actual grouping. A group whose badge
+  // counts the wrong rows is worse than no badge: it sends people opening it to
+  // look for something that is not in there. Anushthan has no unread state of
+  // its own, which is why "Guru's Msg" is only Special + Letterhead.
+  const group = (sel, count) => {
+    document.querySelectorAll(sel).forEach((b) => {
+      b.hidden = !count;
+      b.textContent = count > 99 ? "99+" : String(count);
+    });
+  };
+  group("[data-satsang-group-badge]", satsang + anubhuti);
+  group("[data-gurumsg-group-badge]", special + letterpad);
+  // Admin Announcements sits in More, and Admin Talks is nested one level deeper
+  // inside More's own Sutradhar group — so More carries both.
+  group("[data-more-group-badge]", broadcast + admintalk);
+  group("[data-sutradhar-group-badge]", admintalk);
 }
 
 // ==========================================================================
@@ -5466,7 +5492,7 @@ const SATSANG_NS_RE = /^(special|letterpad|anushthan|anubhuti):(.+)$/;
 const SATSANG_SECTIONS = [
   { key: "daily", label: "Daily Samuhik Satsang", icon: "🌺" },
   { key: "special", label: "Special Telegram Satsang", icon: "✨" },
-  { key: "letterpad", label: "Guru's Letterpad Satsang", icon: "✍️" },
+  { key: "letterpad", label: "Letterhead Satsang", icon: "✍️" },
   { key: "anushthan", label: "Anushthan Satsang", icon: "🪔" },
 ];
 function satsangSectionOf(wid) {
@@ -6141,7 +6167,10 @@ const MSG_CORPUS = (() => {
         date: ((r.posted_at || r.created_at || "").slice(0, 10)),
         title: r.title || "",
         body: r.body || "",
-        foot: r.author_name ? "— " + r.author_name : "",
+        // The team, never the person who typed it — see BC_BYLINE. A search
+        // result row is one of the two places a MEMBER sees a byline, so it has
+        // to agree with the reader.
+        foot: "— " + BC_BYLINE,
       };
     }
     // Letterpad + BORROWED anushthan rows share the letterpad shape; literal
@@ -6157,6 +6186,17 @@ const MSG_CORPUS = (() => {
   }
   function textOf(key, r, lang) {
     const f = fieldsOf(key, r, lang);
+    // ⚠ An announcement's foot is a CONSTANT byline (BC_BYLINE), not content.
+    // Matching on it would make EVERY announcement a hit for "samarpan",
+    // "upanishad" or "team" — three words a searcher in this app is unusually
+    // likely to type. Every other section's foot is real content (a signature, a
+    // place) and stays searchable.
+    //
+    // The cost, accepted: a moderator can no longer find an announcement by
+    // typing the name of the admin who wrote it. That name is no longer shown to
+    // anyone but admins anyway, so searching by it was becoming a way to learn
+    // something the byline deliberately stopped saying.
+    if (key === "broadcast") return [f.title, f.body].join("\n");
     return [f.title, f.body, f.foot].join("\n");
   }
   // `term` must already be lower-cased by the caller (it is matched against many
@@ -6482,7 +6522,7 @@ async function renderLetterpadInto(container, getLang) {
 
 async function renderLetterpad() {
   const nav = _nav;
-  $view.innerHTML = `<div class="lp-page"><h2 class="lp-headline">✍️ Guru's Letterpad Messages</h2>
+  $view.innerHTML = `<div class="lp-page"><h2 class="lp-headline">✍️ Letterhead Messages</h2>
     <div class="lp-list"></div></div>`;
   if (!current(nav)) return;
   const lpList = $view.querySelector(".lp-list");
@@ -6779,6 +6819,30 @@ async function renderAdminTalks() {
 // phones — an approximation would be worse than showing nothing, because it
 // would be believed. Change one, change both.
 const BC_TITLE_MAX = 80, BC_BODY_MAX = 140;
+// Who an announcement is FROM, as a reader sees it (operator, 2026-08-19).
+// Whoever actually wrote it — a moderator or the sutradhar — an announcement
+// speaks for the whole team, so the byline is the team and never a person.
+//
+// ⚠ DISPLAY ONLY, and only on the two screens a MEMBER sees (the reader's
+// footer and the list card's). The real `broadcasts.author_name` is untouched in
+// the database and still shown on all four admin workflow screens — the approval
+// queue, the review view, the send-confirm and the decline form. That is
+// deliberate: an approver is putting their name behind someone else's words and
+// a sent-back draft returns to a person, so both need to say who. Postgres
+// enforces the two-person rule either way (approved_by <> author_id), but a
+// human can only exercise judgment about a draft whose author they can see.
+//
+// ⚠ Not a privacy boundary. `author_name` is a plain column in _BROADCAST_COLS,
+// so a member's app still downloads it and anyone reading the API can see who
+// wrote what. Making it genuinely unreadable means a member-facing view or
+// column privileges plus a Supabase deploy — asked and declined on 2026-08-19,
+// the goal being one voice rather than concealed identities. Don't describe this
+// as hiding the author.
+//
+// Left in Latin script in both languages: it is a proper name, and the operator
+// writes their own Hindi copy.
+const BC_BYLINE = "Samarpan Upanishad Team";
+
 const BC_FALLBACK_TITLE = "महत्वपूर्ण सूचना";
 const BC_FALLBACK_BODY = "एक नई महत्वपूर्ण सूचना आई है";
 function bcTrayPreview(row) {
@@ -7005,7 +7069,7 @@ function openBroadcastComposer(row, onDone) {
     paintAtts();
   });
 
-  const { close } = bcSheet(editing ? "Edit update" : "New Important Update", body, bar);
+  const { close } = bcSheet(editing ? "Edit update" : "New Admin Announcement", body, bar);
 
   saveBtn.addEventListener("click", async () => {
     const text = bEl.value.trim();
@@ -7062,7 +7126,7 @@ function bcConfirmSend(row, onDone) {
       <div class="bc-c-lead">This will notify <span class="bc-c-n">…</span> and cannot be undone.</div>
       <div class="bc-c-label">Exactly how it will appear in the notification tray</div>
       <div class="bc-c-tray">
-        <div class="bc-c-tray-app">Samarpan Upanishad · Important Updates</div>
+        <div class="bc-c-tray-app">Samarpan Upanishad · Admin Announcements</div>
         <div class="bc-c-tray-t">${escapeHtml(tray.title)}</div>
         <div class="bc-c-tray-b">${escapeHtml(tray.body)}</div>
       </div>
@@ -7266,12 +7330,12 @@ function bcOpenUpdate(row) {
       ${row.title ? `<div class="bc-r-title">${escapeHtml(row.title)}</div>` : ""}
       <div class="bc-r-body">${bcLinkify(row.body || "")}</div>
       ${bcAttachmentsHtml(row.attachments)}
-      ${row.author_name ? `<div class="bc-r-by">— ${escapeHtml(row.author_name)}</div>` : ""}
+      <div class="bc-r-by">— ${escapeHtml(BC_BYLINE)}</div>
     </div>`);
   const bar = el(`<div class="bc-bar-inner">
       <button type="button" class="bc-btn bc-primary bc-close">Close</button>
     </div>`);
-  const { close } = bcSheet("Important Update", body, bar);
+  const { close } = bcSheet("Admin Announcement", body, bar);
   bcPaintAttachments(body, row.attachments || []);
   body.addEventListener("click", (ev) => {
     const b = ev.target.closest(".bc-att-img, .bc-att-doc");
@@ -7405,7 +7469,7 @@ async function mountBroadcastAdmin(node, onChanged) {
 async function renderBroadcast() {
   const nav = _nav;
   $view.innerHTML = `<div class="sp-page bc-page">
-      <h2 class="sp-head">📢 Important Updates</h2>
+      <h2 class="sp-head">📢 Admin Announcements</h2>
       <div class="bc-admin-slot"></div>
       <div class="bc-newbar" hidden></div>
       <div class="sp-list bc-list"></div>
@@ -7448,7 +7512,7 @@ async function renderBroadcast() {
         ${r.title ? `<div class="sp-title bc-c-title">${escapeHtml(r.title)}</div>` : ""}
         <div class="sp-body bc-c-body">${bcLinkify(r.body || "")}</div>
         ${bcAttachmentsHtml(r.attachments)}
-        <div class="bc-c-foot">${escapeHtml(r.author_name ? "— " + r.author_name : "")}${
+        <div class="bc-c-foot">${escapeHtml("— " + BC_BYLINE)}${
           r.edited_at ? " · edited" : ""}${
           isModerator() && r.notified_devices != null
             ? ` · sent to ${r.notified_devices} device${r.notified_devices === 1 ? "" : "s"}` : ""
@@ -7809,7 +7873,7 @@ function openDhyanSetup(onStarted) {
   async function paintMode() {
     ov.querySelectorAll("[data-m]").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
     if (mode !== "guru") {
-      note.textContent = "Silence throughout, then the closing dhun.";
+      note.textContent = "Silence throughout, then the closing Om.";
       wheel.setValues(DHYAN_MINUTES, mins);
       return;
     }
@@ -7825,7 +7889,7 @@ function openDhyanSetup(onStarted) {
     // so guru mode cannot be set shorter than the recitation itself (plan §5).
     const floor = Math.ceil(m.sec / 60);
     const allowed = DHYAN_MINUTES.filter((v) => v >= floor);
-    note.textContent = `Guru's mantra (${Math.round(m.sec / 60)} min) plays first, then silence.`;
+    note.textContent = `Guru's mantra (${Math.round(m.sec / 60)} min) plays first, then silence, then the Om.`;
     wheel.setValues(allowed.length ? allowed : DHYAN_MINUTES, mins);
   }
   ov.querySelectorAll("[data-m]").forEach((b) => b.addEventListener("click", () => {
@@ -8573,7 +8637,7 @@ function ddRemindersEl(onChanged) {
       <div class="dd-backup-h">Sitting reminder</div>
       <div class="dd-rem-list"></div>
       ${rs.length < DHYAN_REMIND.MAX ? `<button class="btn dd-rem-add" data-add>+ Remind me to sit</button>` : ""}
-      <div class="dd-backup-note" data-note></div>
+      <div class="dd-backup-note" data-remnote></div>
     </div>`);
   const list = wrap.querySelector(".dd-rem-list");
 
@@ -8595,7 +8659,7 @@ function ddRemindersEl(onChanged) {
     }));
   }
 
-  const note = wrap.querySelector("[data-note]");
+  const note = wrap.querySelector("[data-remnote]");
   if (!DHYAN_REMIND.available()) {
     note.textContent = "Reminders work in the phone app. On a computer this is only a setting.";
   } else {
@@ -9998,51 +10062,77 @@ const MOBILE_UI = (() => {
     <div class="m-scrim" id="m-scrim" hidden></div>
     <aside class="m-drawer" id="m-drawer" aria-label="Menu">
       <a class="m-account" id="m-account-row" href="#/m/account"></a>
+      <!-- ⚠ REORDERED AND REGROUPED on the operator's spec (2026-08-19). Five
+           things to know before rearranging it again:
+
+           1. The drawer went from a flat list of eleven rows to five entries and
+              three accordions, because a flat list of everything the app can do
+              is a list nobody reads. The groups (Satsang / Guru's Msg / More)
+              are the operator's own words for how these belong together.
+           2. RENAMES ARE COPY ONLY. "Upanishad Ganga" is #/m/gyan, "Letterhead
+              Msg" is #/m/letterpad, "Admin Announcements" is #/m/broadcast. The
+              routes, the channel ids, the CSS classes and the table names all
+              keep the old words, because live FCM payloads carry those routes
+              and a notification already sitting in someone's tray cannot be
+              rewritten. Same rule as "Samuhik Satsang" / #/m/community.
+           3. Every group carries its own badge, painted by refreshAnyMsgDot()
+              from the rows inside it. Without that, a new Satsang message would
+              be invisible behind a collapsed group — the badge is the whole
+              reason someone opens the drawer.
+           4. The Sutradhar group is nested INSIDE More, as asked, so the tools
+              sit where an admin looks for them and nowhere a member's eye goes.
+              Its .m-mod-only is on the BUTTON only, never on its submenu:
+              openDrawer() sets hidden = !isModerator() on every .m-mod-only,
+              which on a submenu would force it permanently OPEN for moderators.
+           5. This is inside a TEMPLATE LITERAL — a backtick here ends the string
+              and takes the whole app down with it. Not a hypothetical: writing
+              one pair of them around a code fragment in THIS comment produced a
+              blank app and a "missing ) after argument list" pointing at an
+              innocent line 300 rows above (2026-08-19). Quote code with nothing,
+              or with 'single quotes'. -->
       <nav class="m-menu">
-        <a href="#/m/search"><span class="mi">🔍</span> Search By</a>
-        <!-- Important Updates — the operator's announcement channel. ⚠ Placed
-             HIGH, above the discussion sections, on purpose: it is an
-             announcement channel, not a conversation. The identifier stays
-             "broadcast" everywhere (BROADCAST_PLAN.md §0) — and note this is
-             inside a TEMPLATE LITERAL, so a backtick here would end the
-             string and take the whole app down. -->
-        <a href="#/m/broadcast"><span class="mi">📢</span> Important Updates <span class="m-badge" data-broadcast-badge hidden></span></a>
-        <a href="#/m/community"><span class="mi">💬</span> Samuhik Satsang <span class="m-badge" data-satsang-badge hidden></span></a>
-        <a href="#/m/anubhuti"><span class="mi">🪷</span> Anubhuti Sharing <span class="m-badge" data-anubhuti-badge hidden></span></a>
-        <a href="#/m/special"><span class="mi">✨</span> Special Telegram Msg <span class="m-badge" data-special-badge hidden></span></a>
-        <a href="#/m/letterpad"><span class="mi">✍️</span> Guru's Letterpad Msg <span class="m-badge" data-letterpad-badge hidden></span></a>
-        <a href="#/m/anushthan"><span class="mi">🪔</span> Anushthan Msg</a>
-        <!-- Upanishad Gyan: the hourly two-line thought, for the eighteen minutes
-             it lives (2026-08-19 — it used to keep every one ever sent). In the
-             main list, not under More — a notification tap lands here thirteen
-             times a day, so it must be findable without one. -->
-        <a href="#/m/gyan"><span class="mi">📿</span> Upanishad Gyan</a>
+        <a href="#/m/search"><span class="mi">🔍</span> Search</a>
+        <button class="m-menu-group" data-group="satsang"><span class="mi">💬</span> Satsang
+          <span class="m-badge" data-satsang-group-badge hidden></span><span class="m-caret">▾</span></button>
+        <div class="m-submenu" data-sub="satsang" hidden>
+          <a href="#/m/community"><span class="mi">💬</span> Samuhik Satsang <span class="m-badge" data-satsang-badge hidden></span></a>
+          <a href="#/m/anubhuti"><span class="mi">🪷</span> Anubhuti Sharing <span class="m-badge" data-anubhuti-badge hidden></span></a>
+        </div>
+        <button class="m-menu-group" data-group="gurumsg"><span class="mi">✨</span> Guru's Msg
+          <span class="m-badge" data-gurumsg-group-badge hidden></span><span class="m-caret">▾</span></button>
+        <div class="m-submenu" data-sub="gurumsg" hidden>
+          <a href="#/m/special"><span class="mi">✨</span> Special Telegram Msg <span class="m-badge" data-special-badge hidden></span></a>
+          <a href="#/m/letterpad"><span class="mi">✍️</span> Letterhead Msg <span class="m-badge" data-letterpad-badge hidden></span></a>
+          <a href="#/m/anushthan"><span class="mi">🪔</span> Anushthan Msg</a>
+        </div>
         <!-- Personal Dhyan Diary: private, on-device, and used daily — so it
-             belongs in the main list rather than under More, for the same
-             reason Upanishad Gyan does. It needs no role and no network, so
-             it is deliberately NOT gated like the community rows. -->
+             stays in the main list rather than under More. It needs no role and
+             no network, so it is deliberately NOT gated like the community rows. -->
         <a href="#/m/dhyan"><span class="mi">🧘</span> Personal Dhyan Diary</a>
-        <!-- Moderator tools. The desktop nav has had these since the start; the
-             phone had no entry point at all, which left a sutradhar (the sole
-             owner) unable to approve anyone from the device they actually use.
-             Visibility is re-evaluated on every drawer open, so a role change
-             lands without a restart. -->
-        <a href="#/moderator" class="m-mod-only" hidden><span class="mi">🛡️</span> Moderator</a>
         <a href="#/random" class="m-lucky"><span class="mi m-lucky-ico">🌟</span>
           <span class="m-lucky-text">Your Lucky Msg for Today</span>
           <span class="m-lucky-spark s1">✨</span><span class="m-lucky-spark s2">✨</span><span class="m-lucky-spark s3">⭐</span></a>
-        <button class="m-menu-group" data-group="more"><span class="mi">➕</span> More <span class="m-caret">▾</span></button>
+        <button class="m-menu-group" data-group="more"><span class="mi">➕</span> More
+          <span class="m-badge" data-more-group-badge hidden></span><span class="m-caret">▾</span></button>
         <div class="m-submenu" data-sub="more" hidden>
           <a href="#/favorites"><span class="mi">♥</span> Favorites</a>
-          <a href="#/stats"><span class="mi">📊</span> Statistics</a>
-          <a href="#/m/contact"><span class="mi">✉️</span> Message to Admin</a>
-          <!-- Admin Talks: the sutradhar + moderators' private room. Same
-               .m-mod-only visibility mechanism as the Moderator row above, and
-               like it, the hiding is courtesy only — Postgres is what keeps the
-               room shut (add_admin_talks.sql). -->
-          <a href="#/m/admintalks" class="m-mod-only" hidden><span class="mi">🔒</span> Admin Talks <span class="m-badge" data-admintalk-badge hidden></span></a>
+          <a href="#/m/gyan"><span class="mi">📿</span> Upanishad Ganga</a>
+          <a href="#/m/broadcast"><span class="mi">📢</span> Admin Announcements <span class="m-badge" data-broadcast-badge hidden></span></a>
+          <a href="#/m/contact"><span class="mi">✉️</span> Msg to Admin</a>
           <a href="#/settings"><span class="mi">⚙️</span> Settings</a>
-          <a href="#/about"><span class="mi">🕉️</span> About</a>
+          <a href="#/about"><span class="mi">🕉️</span> About Us</a>
+          <!-- The admin tools: Moderator, the private Admin Talks room, and the
+               statistics (which members no longer see at all — operator, 2026-08
+               -19). As with every .m-mod-only, the hiding is COURTESY: Postgres
+               is what keeps the room shut (add_admin_talks.sql) and what refuses
+               a non-moderator's writes. -->
+          <button class="m-menu-group m-subgroup m-mod-only" data-group="sutradhar" hidden><span class="mi">🛡️</span> Sutradhar
+            <span class="m-badge" data-sutradhar-group-badge hidden></span><span class="m-caret">▾</span></button>
+          <div class="m-submenu m-subsub" data-sub="sutradhar" hidden>
+            <a href="#/moderator"><span class="mi">🛡️</span> Moderator</a>
+            <a href="#/m/admintalks"><span class="mi">🔒</span> Admin Talks <span class="m-badge" data-admintalk-badge hidden></span></a>
+            <a href="#/stats"><span class="mi">📊</span> Statistics</a>
+          </div>
         </div>
       </nav>
     </aside>
@@ -10290,7 +10380,19 @@ const MOBILE_UI = (() => {
   // "Notifications (debug)" card can show exactly where it fails on-device
   // (the WebView isn't USB-debuggable in the release build). Temporary
   // instrumentation — trim once push is confirmed working.
-  // ---- Upanishad Gyan preferences (device-level) --------------------------
+  // ---- Upanishad Ganga preferences (device-level) -------------------------
+  // ⚠ THE NAME IS NOT THE IDENTIFIER (renamed 2026-08-19). Users see "Upanishad
+  // Ganga"; every identifier stays `gyan` — the route #/m/gyan, the Android
+  // channel id `upanishad_gyan`, the GYAN store, the wa:notif:* keys, the
+  // thought_slots table, send-push's `thought` kind. That is not laziness: live
+  // FCM payloads already on phones carry `#/m/gyan` in their route, and a
+  // notification sitting in someone's tray cannot be rewritten. Renaming the
+  // identifiers would strand every one of them.
+  //
+  // Same split as "Samuhik Satsang" / #/m/community and "Admin Announcements" /
+  // `broadcast`: rename copy, not identifiers. The comments below therefore go on
+  // saying Gyan, because they are about the code.
+  //
   // The hourly thought is the only notification a device can turn off without
   // an account, and the only one with a language of its own — both because it
   // is addressed to the DEVICE (see supabase/add_guru_thoughts.sql). The
@@ -10442,7 +10544,7 @@ const MOBILE_UI = (() => {
       } catch (e) { _pdiag({ channel: "createChannel failed: " + (e && e.message || e) }); }
       try {
         await Push.createChannel({
-          id: "letterpad_messages", name: "Guru's Letterpad Messages",
+          id: "letterpad_messages", name: "Letterhead Messages",
           description: "New handwritten letterpad messages from Baba Swami", importance: 5, visibility: 1,
         });
         _pdiag({ channelLetterpad: "created" });
@@ -10475,9 +10577,9 @@ const MOBILE_UI = (() => {
       // supabase/add_guru_thoughts.sql.
       try {
         await Push.createChannel({
-          id: "upanishad_gyan", name: "Upanishad Gyan",
+          id: "upanishad_gyan", name: "Upanishad Ganga",
           // ⚠ No hours in the description any more: since 2026-08-19 they are the
-          // user's own (Settings › Upanishad Gyan), and a channel created once at
+          // user's own (Settings › Upanishad Ganga), and a channel created once at
           // 6 AM - 6 PM would go on telling everyone the wrong thing for ever —
           // the description is fixed at creation and this line only re-runs for
           // devices that do not have the channel yet.
@@ -10503,7 +10605,7 @@ const MOBILE_UI = (() => {
       // settings switch of its own for it.
       try {
         await Push.createChannel({
-          id: "broadcast_messages", name: "Important Updates",
+          id: "broadcast_messages", name: "Admin Announcements",
           description: "Announcements from the Samarpan Upanishad admin",
           importance: 5, visibility: 1,
         });
@@ -12331,7 +12433,7 @@ const MOBILE_UI = (() => {
     return [
       { label: "Daily Msg", count: dailyRows.length, rows: dailyRows },
       g("Special Telegram Msg", MSG_SECTIONS.special),
-      g("Guru's Letterpad Msg", MSG_SECTIONS.letterpad),
+      g("Letterhead Msg", MSG_SECTIONS.letterpad),
       g("Anushthan Msg", ANUSHTHAN_SEARCH_SEC),
     ];
   }
@@ -13117,8 +13219,8 @@ const MOBILE_UI = (() => {
     },
     letterpad: {
       key: "letterpad", icon: "✍️",
-      title: "Letterpad Message", listTitle: "Guru's Letterpad Messages", hindi: "गुरुजी का पत्र संदेश",
-      barTitle: "Guru's Letterpad Msg",   // see MSG_SECTIONS.special.barTitle
+      title: "Letterhead Message", listTitle: "Letterhead Messages", hindi: "गुरुजी का पत्र संदेश",
+      barTitle: "Letterhead Msg",   // see MSG_SECTIONS.special.barTitle
       emptyMsg: "No letterpad messages yet. Guru's handwritten messages will appear here.",
       idOf: (m) => m.id,
       cached: () => LETTERPAD.items(),
@@ -13154,9 +13256,9 @@ const MOBILE_UI = (() => {
     // BROADCAST_PLAN.md §0 — "update" already means the OTA machinery here.
     broadcast: {
       key: "broadcast", icon: "📢",
-      title: "Important Update", listTitle: "Important Updates", hindi: "महत्वपूर्ण सूचना",
-      barTitle: "Important Updates",
-      emptyMsg: "No important updates yet. Announcements from the admin will appear here.",
+      title: "Admin Announcement", listTitle: "Admin Announcements", hindi: "महत्वपूर्ण सूचना",
+      barTitle: "Admin Announcements",
+      emptyMsg: "No announcements yet. Announcements from the admin will appear here.",
       idOf: (r) => String(r.id),
       cached: () => BROADCAST.cached(),
       refresh: () => BROADCAST.sync(),
@@ -13187,8 +13289,11 @@ const MOBILE_UI = (() => {
       // `hasEn: false` is what keeps the reader's English toggle from appearing
       // on a section that has no translation to toggle to.
       norm(r, lang) {
+        // ⚠ THE PHONE READER'S BYLINE — the one a member actually reads, since
+        // this section's reader is built from norm() and not from the desktop
+        // sheet. The team, never the writer (see BC_BYLINE).
         const foot = [
-          r.author_name ? "— " + r.author_name : "",
+          "— " + BC_BYLINE,
           r.edited_at ? "(edited)" : "",
         ].filter(Boolean).join(" ");
         return {
@@ -13803,7 +13908,7 @@ const MOBILE_UI = (() => {
   }
   async function gyanPage(params) {
     const node = el(`<div class="m-gyan"></div>`);
-    pageFrame("Upanishad Gyan", node);
+    pageFrame("Upanishad Ganga", node);
 
     // Set by a notification tap (send-push puts the slot in the route). It is no
     // longer needed to FIND the thought among many — there is at most one — but it
@@ -13921,7 +14026,7 @@ const MOBILE_UI = (() => {
 
   async function contactPage() {
     const node = el(`<div class="m-contact"></div>`);
-    pageFrame("Message to Admin", node);
+    pageFrame("Msg to Admin", node);
     if (!isSignedIn()) {
       node.innerHTML = `<p class="m-hint" style="margin-bottom:14px">Sign in to send a message to the admin.</p>` + modSignInHtml();
       wireModSignIn(node, () => contactPage());
@@ -13986,8 +14091,8 @@ const MOBILE_UI = (() => {
 
   // ---- router --------------------------------------------------------------
   const PAGE_TITLES = { favorites: "Favorites", browse: "Browse by Date", random: "Your Lucky Msg for Today",
-    stats: "Statistics", settings: "Settings", about: "About", help: "Help & Support",
-    moderator: "Moderator", admin: "Add Guru's Msg", search: "Search", gyan: "Upanishad Gyan" };
+    stats: "Statistics", settings: "Settings", about: "About Us", help: "Help & Support",
+    moderator: "Moderator", admin: "Add Guru's Msg", search: "Search", gyan: "Upanishad Ganga" };
 
   return {
     active,
@@ -14108,8 +14213,8 @@ const MOBILE_UI = (() => {
           : !isCommunityMember()
             ? "You'll start receiving these once a moderator approves your Samuhik Satsang access."
             : nsw.checked
-              ? "New messages in the Samuhik Satsang and Anubhuti Sharing notify you. Guru's daily, Special and Letterpad messages always notify."
-              : "Samuhik Satsang and Anubhuti Sharing stay quiet. Guru's daily, Special and Letterpad messages always notify.";
+              ? "New messages in the Samuhik Satsang and Anubhuti Sharing notify you. Guru's daily, Special and Letterhead messages always notify."
+              : "Samuhik Satsang and Anubhuti Sharing stay quiet. Guru's daily, Special and Letterhead messages always notify.";
       };
       paintHint();
       nsw.addEventListener("change", async () => {
@@ -14150,12 +14255,12 @@ const MOBILE_UI = (() => {
       // below, which says so rather than offering a switch that silently does
       // nothing.
       const gbox = el(`<div class="sync-box" id="m-gyan-box">
-        <h3 style="margin-top:0">Upanishad Gyan</h3>
+        <h3 style="margin-top:0">Upanishad Ganga</h3>
         <label class="m-switchrow">Hourly thought from the Guru
           <span class="m-switch"><input type="checkbox" id="m-gyan-on"><i></i></span></label>
         <div class="m-hint" id="m-gyan-subhint"></div>
         <div class="m-seg-row" id="m-gyan-langrow" style="justify-content:flex-start;margin:14px 0 0">
-          <div class="m-langseg m-searchseg" id="m-gyan-lang" role="group" aria-label="Upanishad Gyan language">
+          <div class="m-langseg m-searchseg" id="m-gyan-lang" role="group" aria-label="Upanishad Ganga language">
             <button data-lang="hi" type="button">हिंदी</button>
             <button data-lang="en" type="button">English</button>
           </div>
@@ -14227,8 +14332,8 @@ const MOBILE_UI = (() => {
               // thought is let go after eighteen minutes, and this line is the
               // only place the app explains that, so it must say it plainly
               // rather than leave someone hunting for yesterday's thought.
-              ? `A thought arrives each hour between ${span}. Each one stays for eighteen minutes — on your lock screen and in Upanishad Gyan — and is then let go.`
-              : "No hourly notifications. You'll see a thought only if you open Upanishad Gyan while one is there.";
+              ? `A thought arrives each hour between ${span}. Each one stays for eighteen minutes — on your lock screen and in Upanishad Ganga — and is then let go.`
+              : "No hourly notifications. You'll see a thought only if you open Upanishad Ganga while one is there.";
       };
       paintGyanHint();
 
@@ -14238,7 +14343,7 @@ const MOBILE_UI = (() => {
         try {
           await WA.setThoughtPrefs(null, want);
           GYAN.setOn(want);          // local mirror only AFTER the server took it
-          toast(want ? "Upanishad Gyan on" : "Upanishad Gyan off");
+          toast(want ? "Upanishad Ganga on" : "Upanishad Ganga off");
         } catch (e) {
           gsw.checked = !want;       // never leave the switch claiming something untrue
           toast(e.message);
@@ -14293,7 +14398,7 @@ const MOBILE_UI = (() => {
         paintGyanLang();
         try {
           await WA.setThoughtPrefs(want, null);
-          toast(want === "en" ? "Upanishad Gyan in English" : "उपनिषद ज्ञान हिंदी में");
+          toast(want === "en" ? "Upanishad Ganga in English" : "उपनिषद गंगा हिंदी में");
         } catch (err) {
           GYAN.setLang(had);
           paintGyanLang();
@@ -14316,7 +14421,7 @@ const MOBILE_UI = (() => {
         <h3 style="margin-top:0">Home Screen Widget</h3>
         <label class="m-switchrow">Show messages in the widget
           <span class="m-switch"><input type="checkbox" id="m-widget-on"><i></i></span></label>
-        <div class="m-hint">Guru's daily, Special, Letterpad and Anusthan messages, newest first. Switching this off leaves the widget on your home screen but blank — to remove it, press and hold it and drag it away.</div>
+        <div class="m-hint">Guru's daily, Special, Letterhead and Anusthan messages, newest first. Switching this off leaves the widget on your home screen but blank — to remove it, press and hold it and drag it away.</div>
       </div>`);
       prose.appendChild(wbox);
       const wsw = wbox.querySelector("#m-widget-on");

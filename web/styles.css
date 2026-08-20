@@ -2024,6 +2024,17 @@ body.m-mode .page-head { padding-top: 4px; }
 .m-menu-group.open .m-caret { transform: rotate(180deg); }
 .m-submenu { background: var(--bg); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .m-submenu a { padding-left: 38px; font-size: 14.5px; }
+/* An unread count on a GROUP header, standing for the rows folded inside it
+   (2026-08-19). It sits straight after the label; the caret keeps its
+   margin-left:auto above and so stays pinned to the right edge. */
+.m-menu-group .m-badge { margin-left: 6px; }
+/* One more level: the Sutradhar group lives INSIDE More, so its header indents
+   to the depth of More's own rows and its rows indent past that. Two levels is
+   the limit this styling is written for — a third would need its own rule and
+   would be a sign the drawer is holding too much. */
+.m-submenu .m-menu-group { padding-left: 38px; font-size: 14.5px; }
+.m-subsub { border-top: 1px solid var(--border); }
+.m-subsub a { padding-left: 56px; }
 
 /* community chat header: human date + subject, tap to change */
 .m-chat-head {

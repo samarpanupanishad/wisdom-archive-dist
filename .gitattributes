@@ -1,1 +1,9 @@
 * -text
+
+# Managed by mobile/publish_ui_only.py - do not remove.
+# The update payload is byte-exact: web/** is hashed per file and
+# manifest.json is signed over its literal bytes. Any text conversion here
+# makes every phone reject the payload, silently.
+manifest.json      -text
+manifest.json.sig  -text
+web/**             -text
