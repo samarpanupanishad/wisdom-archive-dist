@@ -7895,7 +7895,13 @@ const SIT_AUDIO = (() => {
   //
   // Its own short-lived AudioContext, created inside the tap that called it, so
   // it can never disturb the context an in-progress sitting is holding.
-  async function testOm() {
+  // fadeMs > 0 eases the Om in instead of starting at full level. Used for the
+  // LATE Om (the one that sounds when the phone is unlocked after a sitting
+  // already ended): the operator had the volume high and it "rang heavily",
+  // which is startling rather than refreshing. The Om at the natural end of a
+  // sitting is deliberately NOT faded - it arrives into a quiet room and is
+  // meant to be heard.
+  async function testOm(fadeMs) {
     let c = null;
     try { c = new (window.AudioContext || window.webkitAudioContext)(); }
     catch (_) { return { ok: false, why: "this device has no Web Audio" }; }
@@ -7905,7 +7911,17 @@ const SIT_AUDIO = (() => {
       const buf = await fetch(assetUrl(DHUN_FILE)).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()));
       const ab = await c.decodeAudioData(buf);
       const n = c.createBufferSource();
-      n.buffer = ab; n.connect(c.destination); n.start();
+      n.buffer = ab;
+      if (fadeMs > 0) {
+        const g = c.createGain();
+        const t = c.currentTime;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(1, t + fadeMs / 1000);
+        n.connect(g); g.connect(c.destination);
+      } else {
+        n.connect(c.destination);
+      }
+      n.start();
       src = "file";
       setTimeout(() => { try { c.close(); } catch (_) {} }, (ab.duration + 1) * 1000);
     } catch (_) {
@@ -7941,10 +7957,15 @@ const SIT_AUDIO = (() => {
     try { return !!(ctx && omAt !== null && ctx.currentTime >= omAt); } catch (_) { return false; }
   }
   function markOmPlayed() { omPlayed = true; }
+  // The late Om, eased in over ~1.8s so it does not slam at whatever volume the
+  // phone happens to be at.
   async function playOmNow() {
-    if (omPlayed) return false;
+    // Checks omHasPlayed(), not the raw flag: the clock is the authority on
+    // whether the scheduled Om already sounded, so a caller that forgets to
+    // guard still cannot lay a second Om over the first.
+    if (omHasPlayed()) return false;
     omPlayed = true;
-    const r = await testOm();
+    const r = await testOm(1800);
     return !!(r && r.ok);
   }
 
