@@ -7829,7 +7829,49 @@ const SIT_AUDIO = (() => {
     ctx = null;
   }
 
-  return { arm, disarm, mantraReady, assetUrl, MANTRA_FILE, DHUN_FILE };
+  // Play the closing Om right now, on the same media stream and through the same
+  // decode path a real sitting uses. Exists to make one question answerable in
+  // seconds instead of five minutes: "I heard nothing" has two very different
+  // causes, and only this separates them.
+  //
+  //   plays here but not after a locked sitting -> the OEM killed our
+  //     background audio, which is the media-foreground-service case
+  //   does not play here either -> media volume or routing, nothing to do
+  //     with backgrounding
+  //
+  // Its own short-lived AudioContext, created inside the tap that called it, so
+  // it can never disturb the context an in-progress sitting is holding.
+  async function testOm() {
+    let c = null;
+    try { c = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (_) { return { ok: false, why: "this device has no Web Audio" }; }
+    try { if (c.state === "suspended") await c.resume(); } catch (_) {}
+    let src = "synth";
+    try {
+      const buf = await fetch(assetUrl(DHUN_FILE)).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()));
+      const ab = await c.decodeAudioData(buf);
+      const n = c.createBufferSource();
+      n.buffer = ab; n.connect(c.destination); n.start();
+      src = "file";
+      setTimeout(() => { try { c.close(); } catch (_) {} }, (ab.duration + 1) * 1000);
+    } catch (_) {
+      // Same fallback the sitting uses, so this button never reports silence
+      // when a real sitting would have made a sound.
+      const t = c.currentTime;
+      for (const [f, a] of [[210, 1], [420, 0.5], [631, 0.28]]) {
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = "sine"; o.frequency.value = f;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.22 * a, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 6);
+        o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 6.2);
+      }
+      setTimeout(() => { try { c.close(); } catch (_) {} }, 7000);
+    }
+    return { ok: true, src, state: c.state };
+  }
+
+  return { arm, disarm, mantraReady, assetUrl, testOm, MANTRA_FILE, DHUN_FILE };
 })();
 
 // Offered durations. 30 is the prescription the diary presents; the rest is
@@ -7856,6 +7898,7 @@ function openDhyanSetup(onStarted) {
           <div class="dd-spin-unit">minutes</div>
         </div>
         <div class="dd-note" data-note></div>
+        <button class="dd-link" data-hear>Hear the Om</button>
         <div class="dd-sheet-btns">
           <button class="btn" data-cancel>Cancel</button>
           <button class="btn primary" data-begin>Begin</button>
@@ -7904,6 +7947,21 @@ function openDhyanSetup(onStarted) {
   document.addEventListener("keydown", onKey);
   ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
   ov.querySelector("[data-cancel]").addEventListener("click", close);
+
+  // ⚠ Handled in the tap itself, not after an await: a user gesture is what
+  // unlocks audio, and a context created later starts suspended.
+  ov.querySelector("[data-hear]").addEventListener("click", async (e) => {
+    e.preventDefault();
+    const b = e.currentTarget;
+    b.textContent = "Playing…";
+    const r = await SIT_AUDIO.testOm();
+    b.textContent = r.ok ? "Hear the Om again" : "Hear the Om";
+    // Says which sound it was, because "the synthesized bell" and "the Om" mean
+    // different things when someone is telling us what they heard.
+    if (!r.ok) toast("Couldn't play: " + r.why);
+    else if (r.src === "synth") toast("Played the fallback bell — the Om file didn't load.");
+    else toast("Playing the Om. If you hear nothing, raise the MEDIA volume.");
+  });
 
   ov.querySelector("[data-begin]").addEventListener("click", async () => {
     const minutes = wheel.value();
