@@ -7703,7 +7703,7 @@ function makeWheel(host, opts) {
 // sitting ends silently — and the RECORD is still correct, because it never
 // depended on the sound.
 const SIT_AUDIO = (() => {
-  let ctx = null, bed = null, dhun = null, mantra = null, decoded = null;
+  let ctx = null, bed = null, bedEl = null, dhun = null, mantra = null, decoded = null;
 
   // Assets ship over the air like artwork, so on a phone they live wherever the
   // frozen shell put them. ⚠ wa-boot only republishes downloaded files to CSS
@@ -7762,20 +7762,67 @@ const SIT_AUDIO = (() => {
     return decoded;
   }
 
+  // A one-second WAV of NEAR-silence: real samples, alternating +/-1 out of
+  // 32767, which is about -90 dB and inaudible on any device.
+  //
+  // WARNING It must not be digital silence, and that distinction is the whole
+  // bug. The first version used ctx.createBuffer(), which returns a buffer of
+  // ZEROS - so the sitting was rendering nothing audible. Android had no media
+  // session to respect and Chrome had no reason to keep the AudioContext
+  // running once the page was hidden, so on a locked phone currentTime stopped
+  // advancing and the Om that had been scheduled on it never arrived. Confirmed
+  // twice on a real phone, unmuted, 5 minutes of maun, no Om.
+  function nearSilentWav() {
+    const rate = 8000, n = rate;                 // one second
+    const bytes = 44 + n * 2;
+    const b = new ArrayBuffer(bytes), v = new DataView(b);
+    const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    str(0, "RIFF"); v.setUint32(4, bytes - 8, true); str(8, "WAVEfmt ");
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, "data"); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, i % 2 ? 1 : -1, true);
+    let bin = "";
+    const u8 = new Uint8Array(b);
+    for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+    return "data:audio/wav;base64," + btoa(bin);
+  }
+
+  // Holds the audio session open for the whole sitting.
+  //
+  // An <audio> element playing real media is what Android actually respects -
+  // it creates a media session, which is the same mechanism that lets a music
+  // app keep playing with the screen off. Routing it INTO the AudioContext ties
+  // the context's fate to live media playback too, so the Om scheduled on that
+  // context's hardware clock still has a clock to be scheduled on.
   function startBed() {
-    // One second of digital silence on a loop. Cheap, and it is the whole
-    // reason a locked maun sitting can still be heard from.
-    const b = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
-    bed = ctx.createBufferSource();
-    bed.buffer = b; bed.loop = true;
-    bed.connect(ctx.destination);
-    bed.start();
+    try {
+      bedEl = new Audio(nearSilentWav());
+      bedEl.loop = true;
+      bedEl.volume = 1;                 // the samples are already ~-90 dB
+      bedEl.setAttribute("playsinline", "");
+      const src = ctx.createMediaElementSource(bedEl);
+      src.connect(ctx.destination);
+      bedEl.play().catch(() => {});
+    } catch (_) {
+      // Last resort: at least render something non-zero through the context.
+      const b = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+      const d = b.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (i % 2 ? 1 : -1) / 32767;
+      bed = ctx.createBufferSource();
+      bed.buffer = b; bed.loop = true;
+      bed.connect(ctx.destination);
+      bed.start();
+    }
   }
 
   // ⚠ MUST be called from inside the Start tap — a user gesture is what
   // unlocks audio, and a context created later starts suspended.
   async function arm(msUntilEnd, opts) {
     disarm();
+    omPlayed = false;
+    omAt = null;
     try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
     catch (_) { ctx = null; return { bell: false, mantra: false }; }
     try { if (ctx.state === "suspended") await ctx.resume(); } catch (_) {}
@@ -7789,10 +7836,15 @@ const SIT_AUDIO = (() => {
         dhun = ctx.createBufferSource();
         dhun.buffer = buf;
         dhun.connect(ctx.destination);
+        // onended fires when the engine really played it, which is what tells
+        // the recovery path below that no second attempt is needed.
+        dhun.onended = () => markOmPlayed();
+        omAt = at;                      // context-clock time the Om is due
         dhun.start(at);
         bellFile = true;
       } else {
         scheduleSynthBell(at);
+        omAt = at;
       }
     }
 
@@ -7825,6 +7877,8 @@ const SIT_AUDIO = (() => {
     dhun = null;
     try { if (bed) bed.stop(); } catch (_) {}
     bed = null;
+    try { if (bedEl) { bedEl.pause(); bedEl.loop = false; bedEl.src = ""; } } catch (_) {}
+    bedEl = null;
     try { if (ctx) ctx.close(); } catch (_) {}
     ctx = null;
   }
@@ -7871,7 +7925,49 @@ const SIT_AUDIO = (() => {
     return { ok: true, src, state: c.state };
   }
 
-  return { arm, disarm, mantraReady, assetUrl, testOm, MANTRA_FILE, DHUN_FILE };
+  // Belt and braces for the case the audio clock was frozen after all: the sit
+  // screen calls this if it finds the sitting finished while the Om had not
+  // sounded. Late is better than never - the user has just picked the phone up
+  // and is looking at the screen, so a sound now still tells them what happened.
+  let omPlayed = false, omAt = null;
+  // WARNING Read the CONTEXT CLOCK, not an onended callback. onended fires when
+  // the Om FINISHES - fifteen seconds after it starts - so a completion check at
+  // endAt would see "not played yet" and play a second one over the top of it.
+  // ctx.currentTime is also the right signal for the failure we are guarding
+  // against: if the OS parked the context, that clock is exactly what stopped
+  // advancing, so it correctly reports the Om as never having sounded.
+  function omHasPlayed() {
+    if (omPlayed) return true;
+    try { return !!(ctx && omAt !== null && ctx.currentTime >= omAt); } catch (_) { return false; }
+  }
+  function markOmPlayed() { omPlayed = true; }
+  async function playOmNow() {
+    if (omPlayed) return false;
+    omPlayed = true;
+    const r = await testOm();
+    return !!(r && r.ok);
+  }
+
+  // Nudge the context back if the OS parked it while we were hidden. Cheap, and
+  // it runs on every resume rather than only on the one that matters.
+  function resumeIfParked() {
+    try { if (ctx && ctx.state === "suspended") ctx.resume(); } catch (_) {}
+    try { if (bedEl && bedEl.paused) bedEl.play().catch(() => {}); } catch (_) {}
+  }
+
+  // Support hook: what the audio layer thinks is going on. If the clock has not
+  // advanced anywhere near the elapsed wall time, the OS parked us and no
+  // scheduled sound could have fired - which is the whole question.
+  function diag() {
+    let st = "none", now = null;
+    try { if (ctx) { st = ctx.state; now = +ctx.currentTime.toFixed(2); } } catch (_) {}
+    return { ctxState: st, ctxClock: now, omDueAt: omAt,
+             bed: bedEl ? "media element" : (bed ? "buffer fallback" : "none"),
+             bedPlaying: !!(bedEl && !bedEl.paused), omPlayed: omHasPlayed() };
+  }
+
+  return { arm, disarm, mantraReady, assetUrl, testOm, playOmNow, omHasPlayed,
+           markOmPlayed, resumeIfParked, diag, MANTRA_FILE, DHUN_FILE };
 })();
 
 // Offered durations. 30 is the prescription the diary presents; the rest is
@@ -8018,6 +8114,7 @@ function openSitScreen(armed) {
   function paint() {
     const live = SADHANA.activeState();
     if (!live) { finish(true); return; }
+    try { SIT_AUDIO.resumeIfParked(); } catch (_) {}
     const total = Math.max(1, (live.a.targetMin || 1) * 60);
     const left = Math.max(0, live.remainSec == null ? total : live.remainSec);
     const m = Math.floor(left / 60), s = left % 60;
@@ -8031,6 +8128,10 @@ function openSitScreen(armed) {
   // up four minutes later did not sit for thirty-four minutes.
   function complete() {
     done = true;
+    // WARNING If the sitting finished while we were backgrounded and the audio
+    // clock had been parked, the Om never sounded. The user is looking at the
+    // screen right now, so play it late rather than not at all.
+    try { if (!SIT_AUDIO.omHasPlayed()) SIT_AUDIO.playOmNow(); } catch (_) {}
     const a = SADHANA.active();
     const rec = SADHANA.stop({ actualSec: (a && a.targetMin ? a.targetMin : 0) * 60 });
     ov.classList.add("dd-sit-done");
