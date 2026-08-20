@@ -10553,14 +10553,28 @@ const MOBILE_UI = (() => {
     if (!kbPluginH) kbFullH = Math.max(kbFullH, cur);
     const full = kbFullH || cur;
 
-    // ⚠ THE TRAP: do NOT just subtract the plugin's keyboardHeight. In the
-    // plugin's default `native` resize mode it has ALREADY resized the WebView,
-    // so innerHeight is short and subtracting again would halve the chat. Use
-    // the reported height only when the viewport did not move on its own —
-    // which is the Android 15 edge-to-edge case the plugin exists to cover.
+    // ⚠ visualViewport.height OVER-REPORTS by the height of the system
+    // navigation bar. Measured on the operator's phone (2026-08-20):
+    //
+    //     innerHeight 805 · screen.height 853 · nav bar 48
+    //     keyboard top, read off a screenshot        = 495 from the screen top
+    //     visualViewport.height                      = 543   <- 48 too generous
+    //     screen.height - plugin kbHeight (853 - 358) = 495   <- exact
+    //
+    // So the plugin's number is not the keyboard alone: it is keyboard PLUS nav
+    // bar, measured from the bottom of the SCREEN. Against screen.height it is
+    // exact; against innerHeight (which excludes the nav bar) it double-counts,
+    // and that is what made 9.32's arithmetic too tall in the first place.
+    //
+    // Both signals are kept and the SMALLER wins, because over-reporting is the
+    // only dangerous direction - too small leaves a strip of background under
+    // the composer, too large puts the emoji row behind the keyboard, which is
+    // the bug the operator reported four times running.
+    const screenH = (window.screen && window.screen.height) || 0;
+    const byPlugin = (kbPluginH > KB_MIN && screenH > full) ? screenH - kbPluginH : Infinity;
     let h, open;
-    if (full - seen > KB_MIN) { h = seen; open = true; }                 // viewport already shrank
-    else if (kbPluginH > KB_MIN) { h = full - kbPluginH; open = true; }  // it did not; the plugin saw it
+    if (full - seen > KB_MIN) { h = Math.min(seen, byPlugin); open = true; }
+    else if (byPlugin !== Infinity) { h = byPlugin; open = true; }
     else { h = seen; open = false; }
     h = Math.max(160, Math.min(h, full));
 
@@ -10574,7 +10588,7 @@ const MOBILE_UI = (() => {
 
     // Learn this device's real keyboard height the first time it is genuinely
     // measured, so the next focus can pre-shrink to the exact value.
-    if (open && vv && full - vv.height > KB_MIN) rememberKb(full - vv.height);
+    if (open && full - h > KB_MIN) rememberKb(full - h);
 
     const wasOpen = document.body.classList.contains("m-kb");
     setViewportVars(h, open);

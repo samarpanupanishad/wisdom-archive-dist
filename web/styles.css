@@ -2098,6 +2098,21 @@ html:has(body.m-mode .m-community) { overflow: hidden; }
    transform would make these elements a containing block for nothing. */
 body.m-mode.m-kb .m-top,
 body.m-mode.m-kb .m-community { transform: translateY(var(--m-vvtop, 0px)); }
+
+/* ONLY THE CONVERSATION MAY BE DRAGGED (operator, 2026-08-20: "chats only
+   should be scrollable"). With the keyboard up the layout viewport is still
+   805px tall while ~495px is visible, so a drag anywhere — on the composer, on
+   the subject bar — pans the VISUAL viewport and takes the whole screen with
+   it. That pan is browser-level: overflow:hidden does not reach it, and the
+   transform above trails it by a frame, which is the flicker.
+   touch-action DOES reach it. Denying the gesture on the chat container, and
+   handing it back only to the message list and the textarea, means a drag
+   outside those two does nothing at all — so the screen cannot be panned, and
+   there is nothing left to flicker. Only while .m-kb: with no keyboard there is
+   nothing to pan and normal touch behaviour is left alone. */
+body.m-mode.m-kb .m-community { touch-action: none; }
+body.m-mode.m-kb .m-community .wc-msgs { touch-action: pan-y; }
+body.m-mode.m-kb .m-community .wc-ta { touch-action: pan-y; }
 /* ⚠ No will-change here. Promoting the column to its own layer while the
    variable was being rewritten on every scroll event was part of the flicker
    (2026-08-20). With pre-shrink the offset stays 0 and this transform is inert,
