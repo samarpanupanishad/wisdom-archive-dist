@@ -1946,11 +1946,94 @@ body.m-mode .content:has(.m-page-scroll) { min-height: 0; }
 .m-msgfrom { font: 700 13.5px var(--sans); color: var(--accent); margin-bottom: 4px; }
 .m-msgtext { font: 400 14.5px var(--sans); color: var(--text); white-space: pre-wrap; }
 .m-msgts { margin-top: 6px; font: 400 12px var(--sans); color: var(--muted); }
-/* Upanishad Gyan (#/m/gyan) — the hourly thought's archive. It reuses the
-   .m-msgitem card wholesale; the only thing it adds is a marker for the one
-   thought a notification tap arrived for, which the page also scrolls to. */
+/* Upanishad Ganga (#/m/gyan) — the last five thoughts, then room for the
+   instructions, then the member's own box. It reuses the .m-msgitem card
+   wholesale; .m-gyan-hit rings the NEWEST of the five (see the note in app.js —
+   it used to ring the one a notification tap arrived for, back when the screen
+   showed exactly one). */
 .m-gyan { min-height: 40vh; }
 .m-gyan-hit { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft, #e3f2fd); }
+/* Only a moderator or the sutradhar ever sees this — the server blanks it for
+   everybody else (wa_recent_thoughts), so there is no CSS-level hiding here and
+   there must not be one: a display:none would put the name on the wire. */
+.m-ganga-credit { color: var(--accent); }
+
+/* ⚠ FOUR LINES OF ROOM, held open whether or not there are words in it
+   (operator, 2026-08-20). The min-height is the whole point — the instructions
+   are coming later and the box below must not jump up the screen when they
+   arrive. Don't collapse this when it is empty. */
+.m-ganga-instr {
+  min-height: calc(4 * 1.55em); margin: 18px 2px 14px;
+  font: 400 14.5px/1.55 var(--sans); color: var(--muted); white-space: pre-wrap;
+}
+.m-ganga-box { margin-bottom: 18px; }
+.m-ganga-box textarea {
+  width: 100%; padding: 12px 14px; font: 15px var(--sans); resize: vertical;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); color: var(--text);
+}
+.m-ganga-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-top: 10px;
+}
+.m-ganga-count { font: 400 12.5px var(--sans); color: var(--muted); }
+/* The counter turns at the cap, because maxlength swallows the keystroke in
+   silence and a phone keyboard gives no other sign that it did. */
+.m-ganga-count.full { color: var(--accent); font-weight: 700; }
+.m-ganga-mine { margin-top: 20px; }
+.m-ganga-mine-h { font: 700 13.5px var(--sans); color: var(--muted); margin-bottom: 8px; }
+.m-ganga-mine-row {
+  background: var(--surface); border: 1px solid var(--border-soft); border-radius: 12px;
+  padding: 10px 12px; margin-bottom: 8px;
+}
+.m-ganga-mine-t { font: 400 14px var(--sans); color: var(--text); white-space: pre-wrap; }
+.m-ganga-mine-s { margin-top: 5px; font: 700 12px var(--sans); color: var(--muted); }
+.m-ganga-why { margin-top: 3px; font: 400 12.5px var(--sans); color: var(--muted); }
+
+/* Upanishad Ganga Review (#/m/gyanreview) — the admins' queue. */
+.m-gr { min-height: 40vh; }
+.gr-h {
+  font: 700 15px var(--sans); color: var(--text);
+  margin: 4px 0 10px; display: flex; align-items: center; gap: 8px;
+}
+.gr-count {
+  background: var(--accent); color: #fff; border-radius: 999px;
+  padding: 1px 8px; font: 700 12px var(--sans);
+}
+.gr-box { margin: 22px 0; }
+.gr-row {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 12px;
+}
+.gr-who { font: 700 13.5px var(--sans); color: var(--accent); margin-bottom: 6px; }
+.gr-when { font: 400 12px var(--sans); color: var(--muted); margin-left: 8px; }
+.gr-text, .gr-box textarea {
+  width: 100%; padding: 10px 12px; font: 15px var(--sans); resize: vertical;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+}
+.gr-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.gr-why { display: flex; gap: 8px; margin-top: 10px; }
+.gr-why input {
+  flex: 1; min-width: 0; padding: 10px 12px; font: 14.5px var(--sans);
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+}
+/* The duplicate warning is ADVISORY — it offers "Add anyway" and never blocks.
+   Styled as a note rather than an error for exactly that reason. */
+.gr-dupe {
+  margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+  background: var(--accent-soft); border: 1px solid var(--accent-2);
+}
+.gr-dupe-h { font: 700 12.5px var(--sans); color: var(--text); margin-bottom: 6px; }
+.gr-dupe-row { font: 400 13.5px var(--sans); color: var(--text); margin-bottom: 4px; }
+.gr-dupe-n { font: 400 11.5px var(--sans); color: var(--muted); margin-left: 8px; }
+.gr-dupe-a { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.gr-log-row { padding: 10px 0; border-bottom: 1px solid var(--border-soft); }
+.gr-log-row:last-child { border-bottom: 0; }
+.gr-log-t { font: 400 14px var(--sans); color: var(--text); white-space: pre-wrap; }
+.gr-log-s { margin-top: 4px; font: 700 12px var(--sans); color: var(--muted); }
+.gr-log-why { margin-top: 2px; font: 400 12.5px var(--sans); color: var(--muted); }
 
 .m-acc-card { display: flex; align-items: center; gap: 16px; padding: 18px 4px; margin-bottom: 14px; }
 .m-community { min-height: 60vh; }

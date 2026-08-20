@@ -210,6 +210,24 @@ function _broadcastMissing(error) {
     ? "Important Updates aren't set up on the server yet. (Admin: run supabase/add_broadcast.sql.)"
     : null;
 }
+// The same service for the Upanishad Ganga suggestions. Everything the member's
+// box and the review screen do goes through an RPC, so a server that has not run
+// the SQL answers "function not found" to all of them — which is a sentence
+// nobody outside this repo can act on. Name the file instead.
+//
+// ⚠ Matches on the FUNCTION NAMES rather than on the word "ganga", because
+// several of these RPCs (wa_recent_thoughts) are not named for the feature and a
+// genuine constraint violation mentioning "ganga_declined_has_reason" must be
+// shown to the admin as itself, not rewritten into "run the SQL".
+function _gangaErr(error) {
+  const m = (error && error.message) || "";
+  const missing = /submit_ganga|approve_ganga|decline_ganga|add_ganga|list_ganga|my_ganga|ganga_char_limit|ganga_similar/i.test(m)
+    && /does not exist|not find|schema cache/i.test(m);
+  return missing
+    ? "Upanishad Ganga suggestions aren't set up on the server yet. (Admin: run supabase/add_ganga_suggestions.sql.)"
+    : m;
+}
+
 // ⚠ ONE language, exactly as typed — no _hi/_en pair, deliberately unlike
 // _SPECIAL_COLS. See BROADCAST_PLAN.md §2.1; don't "fix" the missing pair.
 const _BROADCAST_COLS =
@@ -1448,29 +1466,143 @@ const WA = {
   // guru's word for any hour, and showing the whole pool would turn a quiet
   // hourly gift into a scrollable list of everything coming.
   //
-  // ⚠ created_at comes back as `ts` and the screen cannot work without it
-  // (2026-08-19): a thought now lives eighteen minutes and is then gone from the
-  // screen as well as from the tray, and created_at — the moment thought-pick
-  // claimed the hour, which is the moment the push went out — is what that is
-  // measured from. Never the top of the hour: cron can be up to ten minutes late
-  // and a late thought must still get its full eighteen minutes.
+  // ⚠ THROUGH AN RPC, not a table read (2026-08-20), and the reason is the one
+  // field the table read cannot give safely: `name`, the member who suggested the
+  // line. The operator's rule is that only a moderator or the sutradhar ever sees
+  // it, and a client-side `if (isModerator())` is a decoration — anybody can read
+  // the network. wa_recent_thoughts() asks Postgres who is calling and returns an
+  // empty string to everyone else. See add_ganga_suggestions.sql section 9.
+  //
+  // ⚠ `limit` is a number of SLOTS to look back over, NOT the number shown. The
+  // screen keeps the last five that fall inside this device's chosen hours, so it
+  // asks for a couple of days' worth and filters. Asking for five would show one
+  // thought to somebody whose window is an hour wide.
+  //
+  // ⚠ created_at still comes back as `ts`. It is no longer an expiry clock (the
+  // eighteen-minute rule was withdrawn 2026-08-20) but it is still what "2 hours
+  // ago" is measured from, and it is the moment the push actually went out rather
+  // than the top of the hour — cron can be ten minutes late.
   //
   // The rows are NOT deleted server-side and must never be. thought_slots'
   // primary key (slot_date, slot) is the only thing stopping the every-ten-minutes
-  // cron from re-picking and re-sending an hour it has already served, so
-  // "deleted after eighteen minutes" is a rule about what is SHOWN.
+  // cron from re-picking and re-sending an hour it has already served, so "only
+  // the last five" is a rule about what is SHOWN.
   async recentThoughts(limit) {
-    const { data, error } = await _sb.from("thought_slots")
-      .select("slot_date,slot,created_at,thoughts(id,text_hi,text_en)")
-      .order("slot_date", { ascending: false })
-      .order("slot", { ascending: false })
-      .limit(Math.min(Math.max(limit || 60, 1), 300));
-    if (error) throw new Error(error.message);
+    const n = Math.min(Math.max(limit || 24, 1), 100);
+    const { data, error } = await _sb.rpc("wa_recent_thoughts", { n: n });
+    if (error) {
+      // ⚠ ORDERING INSURANCE. An app that updated before the SQL was run would
+      // otherwise show "couldn't reach the server" on a screen whose thoughts are
+      // sitting right there. Fall back to the old table read, which loses only
+      // the admin credit line.
+      if (/wa_recent_thoughts|schema cache|does not exist|not find/i.test(error.message || "")) {
+        const r2 = await _sb.from("thought_slots")
+          .select("slot_date,slot,created_at,thoughts(id,text_hi,text_en)")
+          .order("slot_date", { ascending: false })
+          .order("slot", { ascending: false })
+          .limit(n);
+        if (r2.error) throw new Error(r2.error.message);
+        return (r2.data || []).map((r) => ({
+          date: r.slot_date, slot: r.slot, ts: r.created_at || "",
+          hi: (r.thoughts && r.thoughts.text_hi) || "",
+          en: (r.thoughts && r.thoughts.text_en) || "",
+          name: "",
+        })).filter((t) => t.hi || t.en);
+      }
+      throw new Error(error.message);
+    }
     return (data || []).map((r) => ({
-      date: r.slot_date, slot: r.slot, ts: r.created_at || "",
-      hi: (r.thoughts && r.thoughts.text_hi) || "",
-      en: (r.thoughts && r.thoughts.text_en) || "",
+      date: r.slot_date, slot: r.slot, ts: r.ts || "",
+      hi: r.text_hi || "", en: r.text_en || "",
+      name: r.suggested_name || "",
     })).filter((t) => t.hi || t.en);
+  },
+
+  // ---- Upanishad Ganga: the members' own suggestions (2026-08-20) --------
+  // A member writes one short line, the admins approve or return it, and an
+  // approved line jumps to the front of the hourly queue. Every rule that
+  // matters — the daily cap, the character limit, who may decide — lives in
+  // Postgres (supabase/add_ganga_suggestions.sql); these are the doors.
+  //
+  // ⚠ Every one of them can be called against a server where the SQL has not
+  // been run yet, and "function not found" is a useless thing to show a member.
+  // _gangaErr turns it into a sentence naming the file the operator must run.
+  async gangaCharLimit() {
+    const { data, error } = await _sb.rpc("ganga_char_limit");
+    if (error) return 100;               // a missing RPC must not disable the box
+    const n = parseInt(data, 10);
+    return n >= 1 ? n : 100;
+  },
+  async setGangaCharLimit(n) {
+    const { error } = await _sb.rpc("set_ganga_char_limit", { n: n });
+    if (error) throw new Error(_gangaErr(error));
+    return { ok: true, limit: n };
+  },
+
+  // The member's send. Returns the new row's id, which is what the caller hands
+  // to notifyGangaPending.
+  async submitGangaSuggestion(text) {
+    const { data, error } = await _sb.rpc("submit_ganga_suggestion", { t: text });
+    if (error) throw new Error(_gangaErr(error));
+    return data || {};
+  },
+  // Every moderator and the sutradhar. Fire-and-forget, like every other ping in
+  // this file: the row is already in the queue, and a lost notification only
+  // means it is seen when they next open the review screen.
+  notifyGangaPending(id) {
+    _firePush({ kind: "ganga_pending", id: id });
+  },
+
+  // The member's own record: pending / accepted / returned-with-a-reason, and
+  // once it has gone out, the hour it went.
+  async myGangaSuggestions(limit) {
+    const { data, error } = await _sb.rpc("my_ganga_suggestions",
+      { n: Math.min(Math.max(limit || 20, 1), 100) });
+    if (error) throw new Error(_gangaErr(error));
+    return data || [];
+  },
+
+  // ---- the admins' side -------------------------------------------------
+  async listGangaSuggestions(status, limit) {
+    const { data, error } = await _sb.rpc("list_ganga_suggestions",
+      { want_status: status || "pending", n: Math.min(Math.max(limit || 100, 1), 500) });
+    if (error) throw new Error(_gangaErr(error));
+    return data || [];
+  },
+  // `finalText` is the typo fix — null keeps the member's words exactly.
+  async approveGangaSuggestion(id, finalText) {
+    const { data, error } = await _sb.rpc("approve_ganga_suggestion",
+      { sid: id, final_text: finalText || null });
+    if (error) throw new Error(_gangaErr(error));
+    return data || {};
+  },
+  async declineGangaSuggestion(id, reason) {
+    const { data, error } = await _sb.rpc("decline_ganga_suggestion",
+      { sid: id, reason: reason });
+    if (error) throw new Error(_gangaErr(error));
+    return data || {};
+  },
+  // Tell the member. Fire-and-forget for the same reason as every other decision
+  // ping — the decision is already written, and the screen shows it either way.
+  notifyGangaDecision(id, approved) {
+    _firePush({ kind: approved ? "ganga_approved" : "ganga_declined", id: id });
+  },
+
+  // The admin's own line, straight into the pool. `origin` is 'member' (someone
+  // suggested it outside the app — it jumps the queue) or 'admin' (joins the
+  // rotation). See add_ganga_suggestions.sql section 7.
+  async addGangaThought(text, origin) {
+    const { data, error } = await _sb.rpc("add_ganga_thought",
+      { t: text, origin: origin === "member" ? "member" : "admin" });
+    if (error) throw new Error(_gangaErr(error));
+    return data || {};
+  },
+  // Lines already in the pool that look like this one — an advisory warning
+  // before approving, never a block.
+  async gangaSimilarThoughts(text) {
+    const { data, error } = await _sb.rpc("ganga_similar_thoughts", { t: text });
+    if (error) return [];                // a warning that fails is simply no warning
+    return data || [];
   },
 
   // Samuhik Satsang notifications on/off for THIS ACCOUNT (all their devices).

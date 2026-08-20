@@ -10391,6 +10391,7 @@ const MOBILE_UI = (() => {
           <span class="m-badge" data-sutradhar-group-badge hidden></span><span class="m-caret">▾</span></button>
         <div class="m-submenu" data-sub="sutradhar" hidden>
           <a href="#/moderator"><span class="mi">🛡️</span> Moderator</a>
+          <a href="#/m/gyanreview"><span class="mi">📿</span> Upanishad Ganga Review</a>
           <a href="#/m/admintalks"><span class="mi">🔒</span> Admin Talks <span class="m-badge" data-admintalk-badge hidden></span></a>
           <a href="#/stats"><span class="mi">📊</span> Statistics</a>
         </div>
@@ -10917,19 +10918,25 @@ const MOBILE_UI = (() => {
   // mirror the Settings card paints from, so the switch is correct instantly
   // and offline instead of waiting on a round trip.
   //
-  // Language DEFAULTS to the हिंदी/English choice already on the device
-  // (wa:searchLang, the one the home-screen widget reuses) but is stored
-  // separately: someone who types their searches in English has not thereby
-  // asked for the guru's words in English on their lock screen.
-  // A thought's whole life, on the lock screen and on the Upanishad Gyan screen
-  // alike (operator, 2026-08-19). Eighteen minutes after it arrives it is gone
-  // from both: Android removes the notification by itself (setTimeoutAfter, see
-  // mobile/android/.../WaMessagingService.java) and this screen stops showing it.
+  // ⚠ HINDI ONLY since 2026-08-20. The per-device language is gone from this
+  // store and from the Settings card with it: Upanishad Ganga is the guru's
+  // words in Hindi, full stop, and there is no English pool to choose between.
+  // device_tokens.notify_lang still exists server-side and is simply no longer
+  // read; registration keeps sending "hi" so a device that once chose English
+  // drifts back on its next launch.
   //
-  // ⚠ Measured from when the thought was SENT (thought_slots.created_at, which
-  // WA.recentThoughts returns as `ts`), never from the top of its hour — cron can
-  // be up to ten minutes late and a late thought still gets its full eighteen.
-  const GYAN_LIVE_MS = 18 * 60 * 1000;
+  // ⚠ THE EIGHTEEN-MINUTE LIFE IS WITHDRAWN (operator, 2026-08-20), reversing
+  // 2026-08-19 in full. A thought is no longer let go at minute eighteen — the
+  // screen keeps the last FIVE and the notification stays in the tray until the
+  // next hour's replaces it. GYAN_LIVE_MS, GYAN.live() and GYAN.minutesLeft()
+  // were deleted rather than left unused; if the countdown is ever wanted back,
+  // it is in git at af96ada.
+  //
+  // Five is the whole rule: when the sixth arrives the oldest drops off the
+  // bottom. Nothing is deleted server-side and nothing here ever should be —
+  // thought_slots' primary key is what stops the ten-minute cron re-sending an
+  // hour it has already served.
+  const GYAN_KEEP = 5;
 
   // The widest window a device may choose, IST hours, inclusive. ⚠ The same two
   // numbers are the check constraint in supabase/add_gyan_window.sql and
@@ -10943,14 +10950,6 @@ const MOBILE_UI = (() => {
   const GYAN_GRACE_MIN = 12;
 
   const GYAN = {
-    lang() {
-      try {
-        const v = localStorage.getItem("wa:notif:lang");
-        if (v === "hi" || v === "en") return v;
-        return HindiType.mode() === "en" ? "en" : "hi";
-      } catch (_) { return "hi"; }
-    },
-    setLang(l) { try { localStorage.setItem("wa:notif:lang", l === "en" ? "en" : "hi"); } catch (_) {} },
     on() { try { return localStorage.getItem("wa:notif:thought") !== "0"; } catch (_) { return true; } },
     setOn(v) { try { localStorage.setItem("wa:notif:thought", v ? "1" : "0"); } catch (_) {} },
 
@@ -10990,26 +10989,20 @@ const MOBILE_UI = (() => {
       return ((d.getUTCHours() * 60 + d.getUTCMinutes()) + 330) % 1440;
     },
 
-    // The one thought this screen may show, or null. `items` is newest-first, and
-    // only the newest can be live — they are an hour apart and live eighteen
-    // minutes, so at most one is ever inside its own lifetime.
+    // The five this screen shows, newest first.
     //
-    // ⚠ Leans on the phone's clock being roughly right, which is the same thing
-    // every "x minutes ago" in this app already assumes. A badly wrong clock
-    // shows nothing rather than something stale.
-    live(items) {
-      const t = (items || [])[0];
-      if (!t || !t.ts) return null;
-      const born = Date.parse(t.ts);
-      if (!(born > 0)) return null;
-      if (Date.now() - born >= GYAN_LIVE_MS) return null;
-      return GYAN.covers(t.slot) ? t : null;
-    },
-    // Whole minutes of life left in a live thought, at least 1.
-    minutesLeft(t) {
-      const born = Date.parse(t && t.ts);
-      if (!(born > 0)) return 0;
-      return Math.max(1, Math.ceil((GYAN_LIVE_MS - (Date.now() - born)) / 60000));
+    // ⚠ FILTERED BY THIS DEVICE'S HOURS, then cut to five — never the other way
+    // round (operator, 2026-08-20). The thought itself is the same for everyone
+    // in a given hour; the LIST is what differs. Somebody whose window starts at
+    // 9 AM never received the 8 AM thought, so it must not appear in their list
+    // as though they had missed it. Cutting first would leave that person with
+    // four.
+    //
+    // This is why WA.recentThoughts is asked for a couple of days of slots and
+    // not for five: a device awake for one hour a day needs to look back five
+    // DAYS to find five of its own.
+    recent(items) {
+      return (items || []).filter((t) => GYAN.covers(t.slot)).slice(0, GYAN_KEEP);
     },
 
     // What to say while nothing is live: {hour, tomorrow, coming}. `coming` means
@@ -11147,7 +11140,11 @@ const MOBILE_UI = (() => {
           if (window.WA_BOOT && WA_BOOT.shellVersion) shellVer = WA_BOOT.shellVersion() || "";
         } catch (_) {}
         try {
-          await WA.registerDeviceToken(t.value, "android", GYAN.lang(), undefined,
+          // ⚠ "hi" is now a CONSTANT, not a preference (2026-08-20). Upanishad
+          // Ganga is Hindi only and the language segment is gone from Settings,
+          // so every launch re-asserts Hindi — which is also how a device that
+          // chose English before the change drifts back without a migration.
+          await WA.registerDeviceToken(t.value, "android", "hi", undefined,
                                        GYAN.from(), GYAN.to(), shellVer);
           _pdiag({ supabase: "OK", shell: shellVer || "(none)" });
         }
@@ -14383,38 +14380,62 @@ const MOBILE_UI = (() => {
   }
 
   // ---- Message to Admin ----------------------------------------------------
-  // ---- Upanishad Gyan — the hourly thought, while it lasts -----------------
+  // ---- Upanishad Ganga — the last five, and the members' own words ---------
   // Where a notification tap lands.
   //
-  // ⚠ NO LONGER AN ARCHIVE (operator, 2026-08-19), and that reversal is the whole
-  // design of this screen. It used to keep every thought ever sent, which is what
-  // made the notifications safe to collapse into one another. Now a thought lives
-  // eighteen minutes — the same eighteen minutes it lives on the lock screen — and
-  // then this screen shows the hour of the next one instead. The operator's reason
-  // is that the thing recurs every hour: a line meant to be sat with for a few
-  // minutes becomes a list to scroll once it is kept, and thirteen of those a day
-  // is a backlog, not a gift.
+  // ⚠ REVERSED AGAIN (operator, 2026-08-20). On 2026-08-19 this screen was cut
+  // down to ONE thought that vanished at minute eighteen. It now keeps the last
+  // FIVE, and when the sixth arrives the oldest drops off the bottom. The
+  // countdown, the "next thought arrives at…" empty state and the eighteen-minute
+  // expiry are gone; so is the auto-dismiss on the lock screen (send-push no
+  // longer sets timeoutMs). Don't reinstate any of them from the git history
+  // without asking — this is the third design of this screen.
   //
-  // So for most of every hour this screen is deliberately EMPTY of thoughts. That
-  // is not a bug to fix by lengthening the window or keeping "just the last one".
+  // ⚠ Nothing is deleted server-side, and nothing here should ever start
+  // deleting. thought_slots' primary key (slot_date, slot) is the only thing
+  // stopping the every-ten-minutes cron from re-picking and re-sending an hour it
+  // has already served. "Only the last five" is a rule about what is SHOWN.
   //
-  // ⚠ Nothing is deleted server-side, and nothing here should ever start deleting.
-  // thought_slots' primary key (slot_date, slot) is the only thing stopping the
-  // every-ten-minutes cron from re-picking and re-sending an hour it has already
-  // served — delete the row at minute eighteen and the twenty-minute tick sends
-  // that hour a second time, with a different thought. "Deleted" is a rule about
-  // what is SHOWN. See WA.recentThoughts.
+  // Below the five, in this order:
+  //   1. four lines of room for instructions the operator will write (empty for
+  //      now, and reserving the space is the point — see GANGA_INSTRUCTIONS);
+  //   2. a box in which a member writes one short line, capped at a length the
+  //      admins set from the review screen;
+  //   3. Send to Admin — and NO Clear button (operator, 2026-08-20). It was in
+  //      the first spec and taken out of it; a button that destroys what somebody
+  //      just typed, sitting next to Send, is a trap. Don't add it back.
+  //   4. what became of the lines this member has already sent.
   //
-  // Reads thought_slots (what was actually SENT), never the thoughts pool —
-  // showing the pool would hand every reader tomorrow's thought today.
-  //
-  // Cached in localStorage and painted from cache FIRST, so the screen opens
-  // instantly and still reads on a phone with no signal — the same offline
-  // stance as the message sections. A cache older than eighteen minutes paints
-  // nothing, which is correct: it IS out of date.
+  // ⚠ THE COMPOSE BOX IS NOT INSIDE THE REPAINTED REGION. The list refreshes on
+  // a timer while the screen is open, and rewriting innerHTML over a textarea
+  // throws away what is being typed — on the one screen where somebody is
+  // choosing a hundred characters carefully. That is why this page is four
+  // separately-painted panes and not one render() over the whole node.
   const GYAN_CACHE = "wa:gyan:cache";
+  // The character limit, mirrored locally so the box and its counter can be drawn
+  // instantly and offline. The SERVER is the authority (submit_ganga_suggestion
+  // re-checks it); this is only what the counter counts against.
+  const GANGA_LIMIT_KEY = "wa:ganga:limit";
+
+  // ⚠ FOUR LINES OF ROOM, deliberately empty (operator, 2026-08-20 — "keep a 4
+  // line space for instructions, the instructions will be provided soon"). The
+  // words are coming later; the space is reserved now so the screen does not
+  // jump when they arrive, and so the box below never sits directly under the
+  // guru's words with nothing to explain it.
+  //
+  // To fill it: put one string per line in here and change nothing else. The
+  // block keeps four lines' height whether it is empty or full.
+  const GANGA_INSTRUCTIONS = [];
+
   function gyanCached() {
     try { return JSON.parse(localStorage.getItem(GYAN_CACHE) || "[]"); } catch (_) { return []; }
+  }
+  function gangaLimitCached() {
+    try {
+      const n = parseInt(localStorage.getItem(GANGA_LIMIT_KEY), 10);
+      if (n >= 1) return n;
+    } catch (_) {}
+    return 100;
   }
   function gyanSlotLabel(slot) {
     const h = Number(slot);
@@ -14423,122 +14444,589 @@ const MOBILE_UI = (() => {
     const h12 = h % 12 === 0 ? 12 : h % 12;
     return `${h12} ${ampm}`;
   }
+  // "11 AM" for one that arrived today, "8 PM · yesterday" for one that did not.
+  // The list can now span days — a device awake for two hours a day takes three
+  // days to collect five — so the hour alone is genuinely ambiguous.
+  //
+  // ⚠ The IST date is computed from the EPOCH, not from the phone's own calendar
+  // — Date.prototype.getTime() is already UTC-anchored, so adding 5½ hours and
+  // reading the UTC date is the whole conversion. Reaching for
+  // getTimezoneOffset() here is a double correction and lands a day out for
+  // anyone west of UTC, which is the same trap GYAN.istMinutes() sidesteps.
+  function gyanWhen(t) {
+    const at = gyanSlotLabel(t.slot);
+    const istNow = new Date(Date.now() + 330 * 60000);
+    const today = istNow.toISOString().slice(0, 10);
+    if (!t.date || t.date === today) return at;
+    const y = new Date(istNow.getTime() - 86400000).toISOString().slice(0, 10);
+    if (t.date === y) return `${at} · yesterday`;
+    return `${at} · ${t.date}`;
+  }
+
   async function gyanPage(params) {
     const node = el(`<div class="m-gyan"></div>`);
     pageFrame("Upanishad Ganga", node);
 
-    // Set by a notification tap (send-push puts the slot in the route). It is no
-    // longer needed to FIND the thought among many — there is at most one — but it
-    // is still what tells an expired tap apart from an idle visit, which are two
-    // different sentences. Mostly it matters on an APK too old to dismiss its own
-    // notification: there the notification can still be sitting in the tray at
-    // minute forty, and the tap must not land on a screen that looks broken.
-    const wantSlot = params && params.get("s");
+    node.innerHTML =
+      `<div id="m-gyan-list"></div>` +
+      `<div class="m-ganga-instr" id="m-ganga-instr"></div>` +
+      `<div id="m-ganga-compose"></div>` +
+      `<div id="m-ganga-mine"></div>`;
+    const listEl = node.querySelector("#m-gyan-list");
+    const instrEl = node.querySelector("#m-ganga-instr");
+    const composeEl = node.querySelector("#m-ganga-compose");
+    const mineEl = node.querySelector("#m-ganga-mine");
 
-    // The words of the ONE live thought. A thought with no translation in the
-    // chosen language is shown in the one it has — the same fallback the reader
-    // makes. Silence would be the worse answer, and it is the guru's word either
-    // way.
-    const wordsOf = (t) => {
-      const L = GYAN.lang();
-      return (L === "en" ? (t.en || t.hi) : (t.hi || t.en)) || "";
-    };
-
-    // What the screen says for the other forty-odd minutes of the hour.
-    const waitingHtml = (note) => {
-      if (note) return `<div class="m-hint">${escapeHtml(note)}</div>`;
-      const n = GYAN.next();
-      const at = gyanSlotLabel(n.hour);
-      let line = n.coming
-        ? `The thought for ${at} is on its way.`
-        : n.tomorrow
-          ? `The next thought arrives tomorrow at ${at}.`
-          : `The next thought arrives at ${at}.`;
-      // Said once, plainly, and only here: this is the screen where someone
-      // wonders where the earlier ones went.
-      const why = wantSlot && !n.coming
-        ? "That thought's time has passed. Each one stays for eighteen minutes and is then let go."
-        : "Each thought stays for eighteen minutes and is then let go.";
-      return `<div class="m-hint">${escapeHtml(line)}</div>` +
-             `<div class="m-hint" style="margin-top:8px">${escapeHtml(why)}</div>` +
-             (GYAN.on() ? "" : `<div class="m-hint" style="margin-top:8px">` +
-               escapeHtml("Notifications for these are switched off, so you'll only see one if you open this screen while it is here.") +
-               `</div>`);
-    };
+    // ---- 1. the five ------------------------------------------------------
+    // A thought with no Hindi falls back to whatever it has. There is no English
+    // pool any more, but rows written before 2026-08-20 may still carry text_en
+    // and the guru's word is the guru's word.
+    const wordsOf = (t) => (t.hi || t.en) || "";
 
     // ⚠ Repaints only when what is on screen would actually differ. The timer
-    // below runs every half minute for as long as the screen is open, and
-    // rewriting innerHTML on each tick would drop the reader's text selection
-    // mid-thought — on the one screen whose whole purpose is to be read slowly.
+    // below runs every minute for as long as the screen is open, and rewriting
+    // innerHTML on each tick would drop the reader's text selection mid-thought.
     let lastSig = null;
-    const render = (items, note) => {
-      const t = GYAN.live(items);
-      const text = t ? wordsOf(t) : "";
-      if (!t || !text) {
-        const n = GYAN.next();
-        const sig = `wait:${note}:${n.hour}:${n.coming}:${n.tomorrow}`;
-        if (sig === lastSig) return;
-        lastSig = sig;
-        node.innerHTML = waitingHtml(note);
-        return;
-      }
-      const left = GYAN.minutesLeft(t);
-      const sig = `live:${t.date}:${t.slot}:${left}:${GYAN.lang()}`;
+    const renderList = (items, note) => {
+      const five = GYAN.recent(items);
+      const sig = five.map((t) => `${t.date}:${t.slot}:${t.name || ""}`).join("|") + "|" + (note || "");
       if (sig === lastSig) return;
       lastSig = sig;
-      node.innerHTML =
-        `<div class="m-msgitem m-gyan-hit">` +
-          `<div class="m-msgtext" style="font-family:var(--serif);font-size:17px;line-height:1.6">${escapeHtml(text)}</div>` +
-          `<div class="m-msgts">${escapeHtml(gyanSlotLabel(t.slot))} · ` +
-            escapeHtml(left === 1 ? "here for another minute" : `here for another ${left} minutes`) +
-          `</div>` +
-        `</div>`;
+
+      if (!five.length) {
+        // Nothing yet — a fresh install, or a window whose hours have not come
+        // round since it was chosen. Say when the next one is due rather than
+        // showing an empty box.
+        const n = GYAN.next();
+        const at = gyanSlotLabel(n.hour);
+        const line = n.coming
+          ? `The thought for ${at} is on its way.`
+          : n.tomorrow
+            ? `The next thought arrives tomorrow at ${at}.`
+            : `The next thought arrives at ${at}.`;
+        listEl.innerHTML = `<div class="m-hint">${escapeHtml(note || line)}</div>` +
+          (GYAN.on() ? "" : `<div class="m-hint" style="margin-top:8px">` +
+            escapeHtml("Notifications for these are switched off in Settings.") + `</div>`);
+        return;
+      }
+
+      listEl.innerHTML =
+        (note ? `<div class="m-hint" style="margin-bottom:10px">${escapeHtml(note)}</div>` : "") +
+        // ⚠ .m-gyan-hit goes on the NEWEST only. It used to mark the one thought
+        // a notification tap arrived for, back when the screen showed one; put it
+        // on all five and every card wears an accent ring, which marks nothing.
+        five.map((t, i) =>
+          `<div class="m-msgitem${i === 0 ? " m-gyan-hit" : ""}">` +
+            `<div class="m-msgtext" style="font-family:var(--serif);font-size:17px;line-height:1.6">` +
+              escapeHtml(wordsOf(t)) +
+            `</div>` +
+            `<div class="m-msgts">${escapeHtml(gyanWhen(t))}` +
+              // ⚠ Present ONLY for a moderator or the sutradhar, and that is
+              // decided by Postgres, not here: wa_recent_thoughts() returns an
+              // empty string for everybody else (add_ganga_suggestions.sql
+              // section 9). Hiding it with an isModerator() test in the client
+              // would put the name on the wire for anyone who looked.
+              (t.name ? ` · <span class="m-ganga-credit">${escapeHtml("सुझाव: " + t.name)}</span>` : "") +
+            `</div>` +
+          `</div>`).join("");
     };
 
     // Painted from cache first, but ONLY if there is one: an empty cache would
     // otherwise flash "the next thought arrives at 9 AM" for as long as the fetch
-    // takes, and then be contradicted by a thought that was there all along.
+    // takes, and then be contradicted by thoughts that were there all along.
     let items = gyanCached();
-    // `note` outlives one paint on purpose: the timer below repaints every half
-    // minute, and a note that lived only inside the failing call would be wiped
-    // thirty seconds later — telling someone still offline that their thought
-    // arrives at nine.
+    // `note` outlives one paint on purpose: the timer repaints every minute, and
+    // a note that lived only inside the failing call would be wiped sixty seconds
+    // later — telling someone still offline that their thought arrives at nine.
     let note = "";
-    const paint = () => render(items, note);
+    const paint = () => renderList(items, note);
     if (items.length) paint();
 
     let lastFetch = 0;
     const refresh = async () => {
       lastFetch = Date.now();
       try {
-        items = await WA.recentThoughts(4);
+        // SLOTS to look back over, not the five that are shown — GYAN.recent()
+        // filters to this device's hours first. 48 is two days for a phone that
+        // wants them all, and about a fortnight for one that wants one an hour a
+        // day. See WA.recentThoughts.
+        items = await WA.recentThoughts(48);
         try { localStorage.setItem(GYAN_CACHE, JSON.stringify(items)); } catch (_) {}
         note = "";
       } catch (e) {
         // Offline is only worth saying when there is nothing at all to show —
-        // otherwise the live thought is on screen and the message would be noise.
-        note = GYAN.live(items)
+        // otherwise the five are on screen and the message would be noise.
+        note = GYAN.recent(items).length
           ? ""
-          : "Couldn't reach the server just now. The thought will appear when you're back online.";
+          : "Couldn't reach the server just now. The thoughts will appear when you're back online.";
       }
       paint();
     };
     await refresh();
 
-    // Repaint while the screen is open: the countdown moves, a thought expires
-    // mid-read, and — inside the cron's slack — one arrives without the page
-    // being reopened. Half a minute is fine for all three.
+    // ---- 2. the room for the instructions ---------------------------------
+    instrEl.innerHTML = GANGA_INSTRUCTIONS.length
+      ? GANGA_INSTRUCTIONS.map((l) => `<div>${escapeHtml(l)}</div>`).join("")
+      : "";
+
+    // ---- 3. the member's box ----------------------------------------------
+    // Painted once and never repainted while the screen is open — see the trap at
+    // the top of this section. Everything that changes afterwards (the counter,
+    // the button's disabled state, the confirmation) is a targeted write.
+    let limit = gangaLimitCached();
+    const paintCompose = () => {
+      if (!isSignedIn()) {
+        composeEl.innerHTML =
+          `<div class="m-ganga-box">` +
+            `<div class="m-hint" style="margin-bottom:12px">` +
+            escapeHtml("Sign in to send a thought of your own to the admins.") + `</div>` +
+          `</div>`;
+        const box = composeEl.querySelector(".m-ganga-box");
+        box.insertAdjacentHTML("beforeend", modSignInHtml());
+        wireModSignIn(box, () => gyanPage(params));
+        return;
+      }
+      composeEl.innerHTML =
+        `<div class="m-ganga-box">` +
+          `<textarea id="m-ganga-ta" rows="3" maxlength="${limit}" ` +
+            `placeholder="${escapeHtml("अपना विचार लिखें…")}"></textarea>` +
+          `<div class="m-ganga-row">` +
+            `<span class="m-ganga-count" id="m-ganga-count">0 / ${limit}</span>` +
+            `<button class="btn primary" id="m-ganga-send" disabled>Send to Admin</button>` +
+          `</div>` +
+        `</div>`;
+
+      const ta = composeEl.querySelector("#m-ganga-ta");
+      const count = composeEl.querySelector("#m-ganga-count");
+      const send = composeEl.querySelector("#m-ganga-send");
+
+      const sync = () => {
+        const n = ta.value.length;
+        count.textContent = `${n} / ${limit}`;
+        // At the cap the counter turns, because maxlength stops the keystroke
+        // silently and a phone keyboard gives no other sign that it did.
+        count.classList.toggle("full", n >= limit);
+        send.disabled = !ta.value.trim();
+      };
+      ta.addEventListener("input", sync);
+      sync();
+
+      send.addEventListener("click", async () => {
+        const text = ta.value.trim();
+        if (!text) return;
+        send.disabled = true;
+        const had = send.textContent;
+        send.textContent = "Sending…";
+        try {
+          const res = await WA.submitGangaSuggestion(text);
+          // The ping to the admins is fire-and-forget by design: the row is in
+          // the queue either way, and a failed notification must not make a sent
+          // thought look unsent.
+          if (res && res.id) WA.notifyGangaPending(res.id);
+          ta.value = "";
+          sync();
+          toast("Sent to the admins 🙏");
+          loadMine();
+        } catch (e) {
+          toast((e && e.message) || "Couldn't send that just now.");
+        } finally {
+          send.textContent = had;
+          sync();
+        }
+      });
+    };
+    paintCompose();
+
+    // The authoritative limit, fetched after the box is already usable. Repainting
+    // is safe here and only here: it happens once, within a second of opening,
+    // before anybody has finished a sentence — and only when the number actually
+    // moved, which is almost never.
+    if (isSignedIn()) {
+      (async () => {
+        try {
+          const n = await WA.gangaCharLimit();
+          if (n && n !== limit) {
+            limit = n;
+            try { localStorage.setItem(GANGA_LIMIT_KEY, String(n)); } catch (_) {}
+            const ta = composeEl.querySelector("#m-ganga-ta");
+            // Don't destroy a half-typed line to widen a box. If they have
+            // started, the new limit applies to their NEXT one.
+            if (!ta || !ta.value) paintCompose();
+          }
+        } catch (_) {}
+      })();
+    }
+
+    // ---- 4. what became of the ones they sent -----------------------------
+    // The single biggest reason this feature encourages anybody: a line that is
+    // approved and then goes out to everyone is a public event, and being told
+    // about it is the whole reward. A decline that nobody can re-read is just a
+    // line that vanished.
+    const STATUS = {
+      pending:  { icon: "⏳", label: "With the admins" },
+      approved: { icon: "🌸", label: "Accepted" },
+      declined: { icon: "↩️", label: "Returned" },
+    };
+    const loadMine = async () => {
+      if (!isSignedIn()) { mineEl.innerHTML = ""; return; }
+      let rows;
+      try { rows = await WA.myGangaSuggestions(20); }
+      catch (_) { mineEl.innerHTML = ""; return; }   // silent: it is a footnote
+      if (!rows.length) { mineEl.innerHTML = ""; return; }
+      mineEl.innerHTML =
+        `<div class="m-ganga-mine">` +
+          `<div class="m-ganga-mine-h">Your thoughts</div>` +
+          rows.map((r) => {
+            const st = STATUS[r.status] || STATUS.pending;
+            const words = r.approved_text || r.text || "";
+            let tail = "";
+            if (r.status === "declined" && r.decline_reason) {
+              tail = `<div class="m-ganga-why">${escapeHtml("Reason: " + r.decline_reason)}</div>`;
+            } else if (r.status === "approved") {
+              // first_sent is null until the pick has actually chosen it. Saying
+              // "shared at 11 AM" before that has happened would be a promise,
+              // and the point of this line is that it is a fact.
+              tail = r.first_sent
+                ? `<div class="m-ganga-why">${escapeHtml(
+                    "🌊 Shared with everyone at " + gyanSlotLabel(r.first_slot) +
+                    (r.first_slot_date ? " on " + r.first_slot_date : ""))}</div>`
+                : `<div class="m-ganga-why">${escapeHtml("Waiting its turn — it goes out at the top of an hour.")}</div>`;
+            }
+            return `<div class="m-ganga-mine-row">` +
+              `<div class="m-ganga-mine-t">${escapeHtml(words)}</div>` +
+              `<div class="m-ganga-mine-s">${st.icon} ${escapeHtml(st.label)}</div>` +
+              tail +
+            `</div>`;
+          }).join("") +
+        `</div>`;
+    };
+    loadMine();
+
+    // A tap on an approved/declined/sent notification lands here with ?mine=1 —
+    // bring the answer into view rather than leaving them looking at five
+    // thoughts wondering which one it was about.
+    if (params && params.get("mine")) {
+      setTimeout(() => {
+        try { mineEl.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+      }, 300);
+    }
+
+    // ---- the timer --------------------------------------------------------
+    // Repaint while the screen is open: a thought arrives without the page being
+    // reopened, and "yesterday" becomes true at midnight.
     //
     // ⚠ Stops itself when the node leaves the document. This page has no teardown
     // hook, so the guard IS the teardown: without it every visit would leave a
     // timer painting into a detached element for the rest of the session.
+    //
+    // ⚠ It repaints the LIST only. Touching composeEl here would throw away
+    // whatever is half-typed in the box.
     const tick = setInterval(() => {
       if (!node.isConnected) { clearInterval(tick); return; }
       paint();
-      // Nothing live and the hour's thought still due — ask the server again,
-      // but no more than once a minute.
-      if (!GYAN.live(items) && GYAN.next().coming && Date.now() - lastFetch > 60000) refresh();
-    }, 30000);
+      if (GYAN.next().coming && Date.now() - lastFetch > 60000) refresh();
+    }, 60000);
+  }
+
+  // ---- Upanishad Ganga Review — the admins' side (2026-08-20) --------------
+  // Under Sutradhar in the drawer. Four things, in the order an admin uses them:
+  //
+  //   1. the queue of member suggestions, each with Approve / Return-with-a-reason;
+  //   2. the admin's own box — a line straight into the pool, tagged as having
+  //      come from a member (jumps the queue) or from the admin (joins the
+  //      rotation). NO Clear button, the same as the member's box;
+  //   3. how long a member's line may be, which the operator may move at will;
+  //   4. what has been decided lately, so a decision can be re-read.
+  //
+  // ⚠ Approving INSERTS INTO THE POOL. That is the entire point of this screen —
+  // before it existed, a thought could only be added by opening the Supabase
+  // dashboard. It also means an approval is a publication: the line goes out to
+  // every phone at the top of the next hour, ahead of everything else.
+  //
+  // ⚠ Hiding this route from members is COURTESY, not security. Every RPC it
+  // calls re-checks wa_is_mod() in Postgres, and the anon key ships in
+  // wa-supabase.js — so the queue is shut by the database, not by the drawer.
+  //
+  // ⚠ The duplicate check is ADVISORY and must stay that way. It compares
+  // punctuation-stripped text (ganga_norm), which will both miss real duplicates
+  // and flag lines that merely share a phrase. Blocking on it would put the admin
+  // in an argument with a regex about the guru's words.
+  const GR_STATUS = {
+    pending:  { icon: "⏳", label: "Waiting" },
+    approved: { icon: "🌸", label: "Approved" },
+    declined: { icon: "↩️", label: "Returned" },
+  };
+
+  async function gangaReviewPage() {
+    const node = el(`<div class="m-gr"></div>`);
+    pageFrame("Upanishad Ganga Review", node);
+
+    if (!isModerator()) {
+      node.innerHTML = `<div class="m-hint">${escapeHtml(
+        "This screen is for the sutradhar and the moderators.")}</div>`;
+      return;
+    }
+
+    node.innerHTML =
+      `<div id="gr-queue"><div class="loading">Loading…</div></div>` +
+      `<div id="gr-compose"></div>` +
+      `<div id="gr-limit"></div>` +
+      `<div id="gr-log"></div>`;
+    const queueEl = node.querySelector("#gr-queue");
+    const composeEl = node.querySelector("#gr-compose");
+    const limitEl = node.querySelector("#gr-limit");
+    const logEl = node.querySelector("#gr-log");
+
+    // Shown under a row or under the admin's box when a similar line already
+    // exists. Returns true if the caller should stop and let the admin look.
+    const warnDuplicates = async (host, text) => {
+      let hits = [];
+      try { hits = await WA.gangaSimilarThoughts(text); } catch (_) { return false; }
+      if (!hits.length) return false;
+      host.innerHTML =
+        `<div class="gr-dupe">` +
+          `<div class="gr-dupe-h">${escapeHtml(
+            hits.length === 1 ? "A similar line is already in the pool:"
+                              : "Similar lines are already in the pool:")}</div>` +
+          hits.map((h) => `<div class="gr-dupe-row">${escapeHtml(h.text_hi)}` +
+            `<span class="gr-dupe-n">${escapeHtml(
+              h.active ? `sent ${h.sent_count}×` : "withdrawn")}</span></div>`).join("") +
+          `<div class="gr-dupe-a">` +
+            `<button class="btn" data-dupe="cancel">Look again</button>` +
+            `<button class="btn primary" data-dupe="go">Add anyway</button>` +
+          `</div>` +
+        `</div>`;
+      return true;
+    };
+
+    // ---- 1. the queue -----------------------------------------------------
+    const loadQueue = async () => {
+      let rows;
+      try { rows = await WA.listGangaSuggestions("pending", 100); }
+      catch (e) { queueEl.innerHTML = `<div class="m-hint">${escapeHtml(e.message)}</div>`; return; }
+
+      if (!rows.length) {
+        queueEl.innerHTML = `<div class="gr-h">Waiting for you</div>` +
+          `<div class="m-hint">${escapeHtml("Nothing is waiting right now.")}</div>`;
+        return;
+      }
+
+      queueEl.innerHTML = `<div class="gr-h">Waiting for you` +
+        `<span class="gr-count">${rows.length}</span></div>` +
+        rows.map((r) =>
+          `<div class="gr-row" data-id="${escapeHtml(String(r.id))}">` +
+            `<div class="gr-who">${escapeHtml(r.username || "A member")}` +
+              `<span class="gr-when">${escapeHtml(timeAgo(r.created_at))}</span></div>` +
+            // ⚠ A TEXTAREA, not static text: the admin may fix a typo before
+            // approving, and the alternative is returning a hundred-character
+            // line and asking somebody to retype the whole thing. What is sent
+            // is whatever is in this box; what the member wrote is kept
+            // untouched in the row (approve_ganga_suggestion keeps both).
+            `<textarea class="gr-text" rows="2">${escapeHtml(r.text || "")}</textarea>` +
+            `<div class="gr-warn"></div>` +
+            `<div class="gr-acts">` +
+              `<button class="btn" data-act="decline">Return…</button>` +
+              `<button class="btn primary" data-act="approve">Approve</button>` +
+            `</div>` +
+            `<div class="gr-why" hidden>` +
+              `<input class="gr-reason" type="text" maxlength="200" ` +
+                `placeholder="${escapeHtml("Why are you returning it? The member is shown this.")}">` +
+              `<button class="btn" data-act="decline-send">Send back</button>` +
+            `</div>` +
+          `</div>`).join("");
+    };
+
+    // One delegated handler for the whole queue — the rows are rebuilt after
+    // every decision, so per-row listeners would have to be rewired each time.
+    queueEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-act], button[data-dupe]");
+      if (!btn) return;
+      const row = btn.closest(".gr-row");
+      if (!row) return;
+      const id = Number(row.dataset.id);
+      const ta = row.querySelector(".gr-text");
+      const warn = row.querySelector(".gr-warn");
+      const why = row.querySelector(".gr-why");
+      const text = (ta.value || "").trim();
+
+      const approve = async () => {
+        if (!text) { toast("There is nothing to approve."); return; }
+        row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+        try {
+          await WA.approveGangaSuggestion(id, text);
+          // Tell the member. Fire-and-forget: the approval is written either way.
+          WA.notifyGangaDecision(id, true);
+          toast("Approved — it goes out at the top of the next hour 🌸");
+          await loadQueue();
+          loadLog();
+        } catch (err) {
+          toast((err && err.message) || "Couldn't approve that.");
+          row.querySelectorAll("button").forEach((b) => (b.disabled = false));
+        }
+      };
+
+      if (btn.dataset.dupe === "cancel") { warn.innerHTML = ""; return; }
+      if (btn.dataset.dupe === "go") { warn.innerHTML = ""; return approve(); }
+
+      if (btn.dataset.act === "approve") {
+        // Advisory only — if something similar is already in the pool, say so and
+        // let the admin decide. "Add anyway" comes straight back here.
+        if (await warnDuplicates(warn, text)) return;
+        return approve();
+      }
+
+      if (btn.dataset.act === "decline") {
+        why.hidden = !why.hidden;
+        if (!why.hidden) why.querySelector(".gr-reason").focus();
+        return;
+      }
+
+      if (btn.dataset.act === "decline-send") {
+        const reason = (why.querySelector(".gr-reason").value || "").trim();
+        // Postgres refuses a blank reason too (ganga_declined_has_reason), but
+        // saying so here saves a round trip and names the field.
+        if (!reason) { toast("Please give a reason — the member is shown it."); return; }
+        row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+        try {
+          await WA.declineGangaSuggestion(id, reason);
+          WA.notifyGangaDecision(id, false);
+          toast("Sent back with your reason.");
+          await loadQueue();
+          loadLog();
+        } catch (err) {
+          toast((err && err.message) || "Couldn't return that.");
+          row.querySelectorAll("button").forEach((b) => (b.disabled = false));
+        }
+      }
+    });
+
+    // ---- 2. the admin's own box -------------------------------------------
+    composeEl.innerHTML =
+      `<div class="gr-box">` +
+        `<div class="gr-h">Add a thought yourself</div>` +
+        `<div class="m-hint" style="margin-bottom:10px">${escapeHtml(
+          "Goes straight into the pool. “From a member” jumps the queue and is sent " +
+          "at the top of the next hour; “From admin” joins the ordinary rotation.")}</div>` +
+        `<textarea id="gr-new" rows="3" placeholder="${escapeHtml("विचार लिखें…")}"></textarea>` +
+        `<div class="gr-warn" id="gr-new-warn"></div>` +
+        `<div class="gr-acts">` +
+          `<button class="btn" id="gr-add-member">Send by member</button>` +
+          `<button class="btn primary" id="gr-add-admin">Send by admin</button>` +
+        `</div>` +
+      `</div>`;
+    const newTa = composeEl.querySelector("#gr-new");
+    const newWarn = composeEl.querySelector("#gr-new-warn");
+
+    // ⚠ No character limit on this box, deliberately. The limit belongs to
+    // MEMBERS (add_ganga_suggestions.sql section 3); an admin writing straight
+    // into the pool is trusted with the length as well as the words.
+    let pendingOrigin = null;
+    const doAdd = async (origin) => {
+      const text = (newTa.value || "").trim();
+      if (!text) { toast("Write something first."); return; }
+      composeEl.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      try {
+        await WA.addGangaThought(text, origin);
+        newTa.value = "";
+        newWarn.innerHTML = "";
+        toast(origin === "member"
+          ? "Added — it goes out at the top of the next hour 🌸"
+          : "Added to the pool.");
+      } catch (err) {
+        toast((err && err.message) || "Couldn't add that.");
+      } finally {
+        composeEl.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      }
+    };
+    composeEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      if (btn.dataset.dupe === "cancel") { newWarn.innerHTML = ""; pendingOrigin = null; return; }
+      if (btn.dataset.dupe === "go") {
+        const o = pendingOrigin; newWarn.innerHTML = ""; pendingOrigin = null;
+        return doAdd(o || "admin");
+      }
+      const origin = btn.id === "gr-add-member" ? "member"
+                   : btn.id === "gr-add-admin" ? "admin" : null;
+      if (!origin) return;
+      const text = (newTa.value || "").trim();
+      if (!text) { toast("Write something first."); return; }
+      pendingOrigin = origin;
+      if (await warnDuplicates(newWarn, text)) return;
+      pendingOrigin = null;
+      return doAdd(origin);
+    });
+
+    // ---- 3. how long a member's line may be -------------------------------
+    // "No minimum and maximum" was the operator's instruction; the 1..5000 the
+    // RPC enforces is the column's own cap, not a policy.
+    const paintLimit = (n) => {
+      limitEl.innerHTML =
+        `<div class="gr-box">` +
+          `<div class="gr-h">How long a member's thought may be</div>` +
+          `<div class="m-hint" style="margin-bottom:10px">${escapeHtml(
+            "The box on the Upanishad Ganga screen stops at this many characters, " +
+            "and the counter under it counts against it.")}</div>` +
+          `<div class="m-inputrow">` +
+            `<input id="gr-lim" type="number" inputmode="numeric" min="1" max="5000" ` +
+              `value="${escapeHtml(String(n))}">` +
+            `<button class="btn primary" id="gr-lim-save">Save</button>` +
+          `</div>` +
+        `</div>`;
+      limitEl.querySelector("#gr-lim-save").addEventListener("click", async () => {
+        const v = parseInt(limitEl.querySelector("#gr-lim").value, 10);
+        if (!(v >= 1 && v <= 5000)) { toast("Give a number between 1 and 5000."); return; }
+        const b = limitEl.querySelector("#gr-lim-save");
+        b.disabled = true;
+        try {
+          await WA.setGangaCharLimit(v);
+          // The member's own screen mirrors this locally so its counter can be
+          // drawn offline; keep this device's copy honest straight away.
+          try { localStorage.setItem(GANGA_LIMIT_KEY, String(v)); } catch (_) {}
+          toast(`Members may now write ${v} characters.`);
+        } catch (err) {
+          toast((err && err.message) || "Couldn't save that.");
+        } finally { b.disabled = false; }
+      });
+    };
+    (async () => {
+      let n = 100;
+      try { n = await WA.gangaCharLimit(); } catch (_) {}
+      paintLimit(n);
+    })();
+
+    // ---- 4. what was decided lately ---------------------------------------
+    // Not a queue — a record. Without it a decision made last week is only
+    // visible to the member it was made about.
+    const loadLog = async () => {
+      let rows;
+      try { rows = await WA.listGangaSuggestions("all", 40); }
+      catch (_) { logEl.innerHTML = ""; return; }
+      const done = rows.filter((r) => r.status !== "pending");
+      if (!done.length) { logEl.innerHTML = ""; return; }
+      logEl.innerHTML =
+        `<div class="gr-box">` +
+          `<div class="gr-h">Decided lately</div>` +
+          done.map((r) => {
+            const st = GR_STATUS[r.status] || GR_STATUS.pending;
+            const words = r.approved_text || r.text || "";
+            const tail = r.status === "declined"
+              ? `<div class="gr-log-why">${escapeHtml("Reason: " + (r.decline_reason || ""))}</div>`
+              : `<div class="gr-log-why">${escapeHtml(
+                  r.sent_count ? `Sent ${r.sent_count}×` : "Waiting its turn")}</div>`;
+            return `<div class="gr-log-row">` +
+              `<div class="gr-log-t">${escapeHtml(words)}</div>` +
+              `<div class="gr-log-s">${st.icon} ${escapeHtml(st.label)} · ` +
+                escapeHtml((r.username || "A member") +
+                  (r.decider_name ? ` → ${r.decider_name}` : "")) +
+              `</div>` + tail +
+            `</div>`;
+          }).join("") +
+        `</div>`;
+    };
+
+    await loadQueue();
+    loadLog();
   }
 
   async function contactPage() {
@@ -14673,6 +15161,11 @@ const MOBILE_UI = (() => {
         return seg[2] ? msgReaderPage(p, decodeURIComponent(seg[2]), params) : msgIndexPage(p, params);
       }
       if (p === "gyan") return gyanPage(params);   // also where a thought notification lands
+      // The admins' queue. ⚠ Its own route rather than a card on #/moderator:
+      // ganga_pending notifications point at it, and a notification must land on
+      // the thing it is about, not on a page to scroll. The page refuses itself
+      // to non-moderators, and Postgres refuses every RPC behind it.
+      if (p === "gyanreview") return gangaReviewPage();
       if (p === "contact") return contactPage();
       if (p === "account") return accountPage();
       return viewer(null, params, true);
@@ -14764,24 +15257,23 @@ const MOBILE_UI = (() => {
       // moved anywhere inside 5 AM - 11 PM. Nobody is asked to accept a
       // notification at an hour they are asleep.
       //
-      // ⚠ All THREE preferences are stored against THIS DEVICE's push token, not
+      // ⚠ BOTH preferences are stored against THIS DEVICE's push token, not
       // the account (supabase/add_guru_thoughts.sql explains why, and
       // add_gyan_window.sql adds the window on the same reasoning). Two
       // consequences visible right here: the card can work with nobody signed in,
       // and it is useless before the device has an FCM token — hence the guard
       // below, which says so rather than offering a switch that silently does
       // nothing.
+      //
+      // ⚠ THE LANGUAGE SEGMENT IS GONE (operator, 2026-08-20). Upanishad Ganga
+      // is Hindi only now — there is no English pool to choose between, so a
+      // toggle here would be a switch that changes nothing. What remains is TWO
+      // preferences, the on/off switch and the hours.
       const gbox = el(`<div class="sync-box" id="m-gyan-box">
         <h3 style="margin-top:0">Upanishad Ganga</h3>
         <label class="m-switchrow">Hourly thought from the Guru
           <span class="m-switch"><input type="checkbox" id="m-gyan-on"><i></i></span></label>
         <div class="m-hint" id="m-gyan-subhint"></div>
-        <div class="m-seg-row" id="m-gyan-langrow" style="justify-content:flex-start;margin:14px 0 0">
-          <div class="m-langseg m-searchseg" id="m-gyan-lang" role="group" aria-label="Upanishad Ganga language">
-            <button data-lang="hi" type="button">हिंदी</button>
-            <button data-lang="en" type="button">English</button>
-          </div>
-        </div>
         <div id="m-gyan-winrow" style="margin:14px 0 0">
           <div class="m-count" style="margin:0 0 6px">The hours you want them in</div>
           <div class="m-inputrow">
@@ -14793,7 +15285,6 @@ const MOBILE_UI = (() => {
       </div>`);
       prose.appendChild(gbox);
       const gsw = gbox.querySelector("#m-gyan-on");
-      const glangRow = gbox.querySelector("#m-gyan-langrow");
       const gwinRow = gbox.querySelector("#m-gyan-winrow");
       const gfrom = gbox.querySelector("#m-gyan-from");
       const gto = gbox.querySelector("#m-gyan-to");
@@ -14828,14 +15319,10 @@ const MOBILE_UI = (() => {
       paintGyanWindow();
 
       gsw.checked = GYAN.on();
-      const paintGyanLang = () => gbox.querySelectorAll("#m-gyan-lang button")
-        .forEach((b) => b.classList.toggle("active", b.dataset.lang === GYAN.lang()));
-      paintGyanLang();
       const paintGyanHint = () => {
-        // The language and the hours are both meaningless while the thoughts are
-        // switched off — hide them rather than leave live-looking controls that
-        // change nothing anyone will see.
-        glangRow.hidden = !gsw.checked;
+        // The hours are meaningless while the thoughts are switched off — hide
+        // them rather than leave a live-looking control that changes nothing
+        // anyone will see.
         gwinRow.hidden = !gsw.checked;
         const span = `${gyanSlotLabel(GYAN.from())} to ${gyanSlotLabel(GYAN.to())}`;
         gsub.textContent = `One short thought every hour, ${span}.`;
@@ -14844,13 +15331,13 @@ const MOBILE_UI = (() => {
           : !gtok
             ? "This device isn't registered for notifications yet. Reopen the app once and this will start working."
             : gsw.checked
-              // ⚠ The old wording promised the opposite ("every one of them stays
-              // in Upanishad Gyan, so nothing is missed"). Since 2026-08-19 a
-              // thought is let go after eighteen minutes, and this line is the
-              // only place the app explains that, so it must say it plainly
-              // rather than leave someone hunting for yesterday's thought.
-              ? `A thought arrives each hour between ${span}. Each one stays for eighteen minutes — on your lock screen and in Upanishad Ganga — and is then let go.`
-              : "No hourly notifications. You'll see a thought only if you open Upanishad Ganga while one is there.";
+              // ⚠ This wording has now been wrong twice. It first promised every
+              // thought was kept forever; from 2026-08-19 it promised each was
+              // let go after eighteen minutes. Since 2026-08-20 the truth is the
+              // last five — say that, and say nothing about how long one lives,
+              // because it no longer has a lifetime.
+              ? `A thought arrives each hour between ${span}. The last five stay in Upanishad Ganga, where you can also send a thought of your own to the admins.`
+              : "No hourly notifications. You can still open Upanishad Ganga any time to read the last five.";
       };
       paintGyanHint();
 
@@ -14904,24 +15391,6 @@ const MOBILE_UI = (() => {
       };
       gfrom.addEventListener("change", () => saveGyanWindow("from"));
       gto.addEventListener("change", () => saveGyanWindow("to"));
-
-      gbox.querySelector("#m-gyan-lang").addEventListener("click", async (e) => {
-        const b = e.target.closest("button[data-lang]");
-        if (!b) return;
-        const want = b.dataset.lang === "en" ? "en" : "hi";
-        const had = GYAN.lang();
-        if (want === had) return;
-        GYAN.setLang(want);          // paint immediately; roll back if the server refuses
-        paintGyanLang();
-        try {
-          await WA.setThoughtPrefs(want, null);
-          toast(want === "en" ? "Upanishad Ganga in English" : "उपनिषद गंगा हिंदी में");
-        } catch (err) {
-          GYAN.setLang(had);
-          paintGyanLang();
-          toast(err.message);
-        }
-      });
 
       // ---- Home screen widget ----------------------------------------------
       // One master switch, default ON. It does NOT control whether the widget
