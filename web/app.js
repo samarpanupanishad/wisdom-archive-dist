@@ -10700,7 +10700,6 @@ const MOBILE_UI = (() => {
     if (!kb || !kb.addListener) return;
     kb.addListener("keyboardWillShow", (info) => {
       kbPluginH = (info && info.keyboardHeight) || 0;
-      window.__waKbH = kbPluginH;   // read by the Settings keyboard diagnostics
       applyViewport();
     });
     kb.addListener("keyboardDidShow", (info) => {
@@ -14691,50 +14690,6 @@ const MOBILE_UI = (() => {
       // will be reorganised later). Two slide switches; off = right side.
       const prose = document.querySelector(".content .prose");
       if (!prose || document.getElementById("m-display-box")) return;
-
-      // ---- Keyboard diagnostics -------------------------------------------
-      // TEMPORARY (2026-08-20). Three attempts at the chat-composer keyboard
-      // bug were each written from a guess about what this phone reports, and
-      // each was wrong in a different way. This prints the actual numbers so
-      // the next fix is written from evidence: tap the box, screenshot, done.
-      // Remove it once the chat layout is settled.
-      const kb = el(`<div class="sync-box" id="m-kbdiag-box">
-        <h3 style="margin-top:0">Keyboard diagnostics</h3>
-        <div class="m-hint">Tap the box below to raise the keyboard, then screenshot this card.</div>
-        <textarea id="m-kbdiag-ta" rows="2" placeholder="tap here"
-          style="width:100%;margin:8px 0;padding:8px;font-size:15px"></textarea>
-        <pre id="m-kbdiag-out" style="font:600 11.5px ui-monospace,monospace;white-space:pre-wrap;margin:0"></pre>
-      </div>`);
-      prose.appendChild(kb);
-      const out = kb.querySelector("#m-kbdiag-out");
-      const paintDiag = () => {
-        const vv = window.visualViewport;
-        const cs = getComputedStyle(document.documentElement);
-        const rows = [
-          ["innerHeight", window.innerHeight],
-          ["visualViewport.h", vv ? Math.round(vv.height) : "none"],
-          ["visualViewport.top", vv ? Math.round(vv.offsetTop) : "none"],
-          ["vv.scale", vv ? (Math.round(vv.scale * 100) / 100) : "none"],
-          ["--m-vvh", (cs.getPropertyValue("--m-vvh") || "unset").trim()],
-          ["--m-vvtop", (cs.getPropertyValue("--m-vvtop") || "unset").trim()],
-          ["body.m-kb", document.body.classList.contains("m-kb")],
-          ["plugin kbHeight", window.__waKbH === undefined ? "no event yet" : window.__waKbH],
-          ["docScrollTop", Math.round((document.scrollingElement || {}).scrollTop || 0)],
-          ["doc scrollHeight", document.documentElement.scrollHeight],
-          ["dpr", window.devicePixelRatio],
-          ["viewport meta", (document.querySelector('meta[name=viewport]') || {}).content || "?"],
-        ];
-        out.textContent = rows.map(([k, v]) => k.padEnd(17) + " " + v).join(String.fromCharCode(10));
-      };
-      paintDiag();
-      const t = kb.querySelector("#m-kbdiag-ta");
-      t.addEventListener("focus", () => setTimeout(paintDiag, 350));
-      t.addEventListener("input", paintDiag);
-      if (window.visualViewport) {
-        window.visualViewport.addEventListener("resize", () => setTimeout(paintDiag, 60));
-        window.visualViewport.addEventListener("scroll", paintDiag);
-      }
-      setInterval(paintDiag, 1000);
 
       // ---- Notifications ---------------------------------------------------
       // DISCUSSION pushes are the only ones with a switch: daily / Special /
