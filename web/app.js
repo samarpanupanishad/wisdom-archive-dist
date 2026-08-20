@@ -600,7 +600,7 @@ const NAV = [
   { route: "admintalks", label: "Admin Talks", hash: "#/admintalks", icon: "lock", modOnly: true },
   { route: "stats", label: "Statistics", hash: "#/stats", icon: "pie" },
   { route: "settings", label: "Settings", hash: "#/settings", icon: "gear" },
-  { route: "about", label: "About Us", hash: "#/about", icon: "info" },
+  { route: "about", label: "Our Goal", hash: "#/about", icon: "info" },
   { route: "help", label: "Help & Support", hash: "#/help", icon: "help" },
 ];
 function buildNav() {
@@ -3609,8 +3609,23 @@ async function renderStats() {
   $view.replaceChildren(wrap);
 }
 
+// ---- "Our Goal" (#/about) ------------------------------------------------
+// ⚠ THE NAME IS NOT THE IDENTIFIER (renamed 2026-08-20, "About Us" -> "Our
+// Goal"). The route stays `#/about` and the kind stays `"about"` — same rule as
+// "Upanishad Ganga" / #/m/gyan and "Samuhik Satsang" / #/m/community: rename
+// copy, not identifiers. Anything already pointing at #/about keeps working.
+//
+// ⚠ EMPTIED ON PURPOSE (operator, 2026-08-20). The page used to carry a
+// description of the archive and a quote from Baba Swami; the operator asked for
+// everything out except the version line, with their own paragraph to follow.
+// Don't restore the old copy from git — it was removed deliberately, not lost.
+//
+// To fill it: one string per paragraph, and change nothing else. The version
+// line stays last, below whatever goes in here.
+const OUR_GOAL = [];
+
 function renderInfo(kind) {
-  const title = { settings: "Settings", about: "About Us", help: "Help & Support" }[kind];
+  const title = { settings: "Settings", about: "Our Goal", help: "Help & Support" }[kind];
   const body = {
     settings: `<h3>Settings</h3><p>Samarpan Upanishad runs locally on your computer. There is no account — your <strong>favorites</strong> and <strong>notes</strong> are stored privately in this browser.</p><ul><li>Use the « / » button to collapse or expand the sidebar.</li><li>Dark mode is coming soon.</li><li>To add a new day's Guru's msg, open <strong>Add Guru's Msg</strong> in the sidebar and drop in that day's files — it appears instantly, no restart needed.</li><li>To bulk-rebuild from all folders at once, you can still run the importer (<code>reimport.bat</code>).</li></ul>
       <div class="sync-box">
@@ -3619,7 +3634,11 @@ function renderInfo(kind) {
         <button class="btn primary" id="sync-now-btn">Sync now</button>
         <div id="sync-status" class="sync-status"></div>
       </div>`,
-    about: `<h3>About Us</h3><p>Samarpan Upanishad is a digital library of daily spiritual Guru's msgs, searchable across English and Hindi transcripts. Each entry preserves the original images and their transcribed text.</p><p style="font-family:var(--serif);font-size:17px;color:var(--accent)">“The purpose of life is realisation of the Self.”<br>— Baba Swami</p><p style="margin-top:22px;color:var(--muted,#888);font-size:13px">Samarpan Upanishad · version <span id="wa-version">…</span></p>`,
+    // ⚠ No <h3> here, unlike `settings` and `help` below. renderInfo already
+    // paints the name as .page-title, so the heading was always a duplicate —
+    // invisible while a paragraph followed it, and glaring once the body was
+    // emptied. Put the operator's words in OUR_GOAL, not in a heading.
+    about: `${OUR_GOAL.map((para) => `<p>${escapeHtml(para)}</p>`).join("")}<p style="margin-top:22px;color:var(--muted,#888);font-size:13px">Samarpan Upanishad · version <span id="wa-version">…</span></p>`,
     help: `<h3>Help &amp; Support</h3><p>Search any word in English or Hindi from the bar at the top — matching Guru's msgs appear with the word highlighted in yellow. Click a result to read it in full, with both images and transcripts.</p><ul><li><strong>Add to Favorites</strong> to save an entry; find them under Favorites.</li><li>Write private notes under <strong>My Comments</strong> on any entry.</li><li><strong>Browse</strong> by Date, Month, or Year from the sidebar.</li></ul>`,
   }[kind];
   $view.innerHTML = `<div class="page-title">${title}</div><div class="prose">${body}</div>`;
@@ -10365,7 +10384,7 @@ const MOBILE_UI = (() => {
           <a href="#/m/broadcast"><span class="mi">📢</span> Admin Announcements <span class="m-badge" data-broadcast-badge hidden></span></a>
           <a href="#/m/contact"><span class="mi">✉️</span> Msg to Admin</a>
           <a href="#/settings"><span class="mi">⚙️</span> Settings</a>
-          <a href="#/about"><span class="mi">🕉️</span> About Us</a>
+          <a href="#/about"><span class="mi">🕉️</span> Our Goal</a>
         </div>
         <!-- The admin tools: Moderator, the private Admin Talks room, and the
              statistics (which members no longer see at all — operator, 2026-08
@@ -15111,7 +15130,7 @@ const MOBILE_UI = (() => {
 
   // ---- router --------------------------------------------------------------
   const PAGE_TITLES = { favorites: "Favorites", browse: "Browse by Date", random: "Your Lucky Msg for Today",
-    stats: "Statistics", settings: "Settings", about: "About Us", help: "Help & Support",
+    stats: "Statistics", settings: "Settings", about: "Our Goal", help: "Help & Support",
     moderator: "Moderator", admin: "Add Guru's Msg", search: "Search", gyan: "Upanishad Ganga" };
 
   return {
