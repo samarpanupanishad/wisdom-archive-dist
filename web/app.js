@@ -7843,59 +7843,41 @@ const SIT_AUDIO = (() => {
     return decoded;
   }
 
-  // A one-second WAV of NEAR-silence: real samples, alternating +/-1 out of
-  // 32767, which is about -90 dB and inaudible on any device.
-  //
-  // WARNING It must not be digital silence, and that distinction is the whole
-  // bug. The first version used ctx.createBuffer(), which returns a buffer of
-  // ZEROS - so the sitting was rendering nothing audible. Android had no media
-  // session to respect and Chrome had no reason to keep the AudioContext
-  // running once the page was hidden, so on a locked phone currentTime stopped
-  // advancing and the Om that had been scheduled on it never arrived. Confirmed
-  // twice on a real phone, unmuted, 5 minutes of maun, no Om.
-  function nearSilentWav() {
-    const rate = 8000, n = rate;                 // one second
-    const bytes = 44 + n * 2;
-    const b = new ArrayBuffer(bytes), v = new DataView(b);
-    const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
-    str(0, "RIFF"); v.setUint32(4, bytes - 8, true); str(8, "WAVEfmt ");
-    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
-    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-    str(36, "data"); v.setUint32(40, n * 2, true);
-    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, i % 2 ? 1 : -1, true);
-    let bin = "";
-    const u8 = new Uint8Array(b);
-    for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
-    return "data:audio/wav;base64," + btoa(bin);
-  }
+  const BED_FILE = "dhyan-bed.wav";
 
   // Holds the audio session open for the whole sitting.
   //
-  // An <audio> element playing real media is what Android actually respects -
-  // it creates a media session, which is the same mechanism that lets a music
-  // app keep playing with the screen off. Routing it INTO the AudioContext ties
-  // the context's fate to live media playback too, so the Om scheduled on that
-  // context's hardware clock still has a clock to be scheduled on.
+  // ⚠ TWO mistakes are recorded here because each cost a real test cycle on a
+  // real phone, and the second is the subtle one.
+  //
+  // 1. The first version used ctx.createBuffer() - a buffer of ZEROS, i.e.
+  //    DIGITAL silence. Nothing audible was rendered, so the platform had no
+  //    playback to respect.
+  // 2. The second used a near-silent <audio> element but routed it through
+  //    ctx.createMediaElementSource(). That was worse than useless: once an
+  //    element is captured by a MediaElementSource it NO LONGER PLAYS TO THE
+  //    SPEAKER - its audio only flows through the Web Audio graph. So when the
+  //    context was suspended on hide, the element's sound went nowhere, the page
+  //    became inaudible, and the keep-alive had been wired to the very thing it
+  //    was supposed to keep alive. Verified failing on an iQOO Neo 10R with
+  //    vivo's battery restrictions already lifted, which is what ruled out the
+  //    OEM as the sole cause and pointed here.
+  //
+  // So: the element plays DIRECTLY, uncaptured, with volume 1 and muted false -
+  // which is what makes a page "audible" to Chrome and a media session to
+  // Android. It is a real file rather than a data: URI, since data: URIs are not
+  // reliably treated as genuine media. The AudioContext stays independent and is
+  // used only to schedule the Om on its sample-accurate clock; nothing routes
+  // the bed into it.
   function startBed() {
     try {
-      bedEl = new Audio(nearSilentWav());
+      bedEl = new Audio(assetUrl(BED_FILE));
       bedEl.loop = true;
-      bedEl.volume = 1;                 // the samples are already ~-90 dB
+      bedEl.volume = 1;                 // the PCM is already ~-84 dB
+      bedEl.muted = false;              // a muted element is not "audible"
       bedEl.setAttribute("playsinline", "");
-      const src = ctx.createMediaElementSource(bedEl);
-      src.connect(ctx.destination);
       bedEl.play().catch(() => {});
-    } catch (_) {
-      // Last resort: at least render something non-zero through the context.
-      const b = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
-      const d = b.getChannelData(0);
-      for (let i = 0; i < d.length; i++) d[i] = (i % 2 ? 1 : -1) / 32767;
-      bed = ctx.createBufferSource();
-      bed.buffer = b; bed.loop = true;
-      bed.connect(ctx.destination);
-      bed.start();
-    }
+    } catch (_) { bedEl = null; }
   }
 
   // ⚠ MUST be called from inside the Start tap — a user gesture is what
@@ -8064,8 +8046,10 @@ const SIT_AUDIO = (() => {
     let st = "none", now = null;
     try { if (ctx) { st = ctx.state; now = +ctx.currentTime.toFixed(2); } } catch (_) {}
     return { ctxState: st, ctxClock: now, omDueAt: omAt,
-             bed: bedEl ? "media element" : (bed ? "buffer fallback" : "none"),
-             bedPlaying: !!(bedEl && !bedEl.paused), omPlayed: omHasPlayed() };
+             bed: bedEl ? "media element (direct)" : "none",
+             bedPlaying: !!(bedEl && !bedEl.paused && !bedEl.muted && bedEl.volume > 0),
+             bedTime: bedEl ? +bedEl.currentTime.toFixed(1) : null,
+             omPlayed: omHasPlayed() };
   }
 
   return { arm, disarm, mantraReady, assetUrl, testOm, playOmNow, omHasPlayed,
