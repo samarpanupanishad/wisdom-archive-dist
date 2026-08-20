@@ -10462,6 +10462,34 @@ const MOBILE_UI = (() => {
   $("m-panel-back").addEventListener("click", goBack);
 
   // ---- the soft keyboard, and the height it leaves behind -------------------
+  // FIRST, the part that does the real work (added 2026-08-20 after 9.32 was
+  // tested on a phone): ask Chrome to shrink the LAYOUT viewport when the
+  // keyboard opens, not merely the visual one.
+  //
+  // Chrome's default is interactive-widget=resizes-visual: the document stays a
+  // full screen tall and only the strip above the keyboard is visible. That left
+  // `body.m-mode .content { min-height: 100vh }` holding a screen's worth of
+  // empty page BELOW the composer, which the operator could pan around in - the
+  // "scroll behaviour changed" report, and the white void in their screenshot.
+  // It also meant the height had to be worked out in JS, and the arithmetic came
+  // out slightly too tall on a device with a gesture-nav bar, clipping the
+  // composer's emoji/attach row off the bottom.
+  //
+  // With resizes-content, 100dvh IS the visible area, measured by the browser,
+  // nav bar and all - no arithmetic, and no phantom page to scroll.
+  //
+  // ⚠ Set HERE and not only in index.html: index.html is not in
+  // publish_update.py's UI_FILES, so it never reaches an installed phone. This
+  // line is the one that fixes the app already on people's devices. The tag in
+  // index.html carries the same value for future APK builds; keep them in step.
+  (function widenViewport() {
+    const m = document.querySelector('meta[name="viewport"]');
+    if (!m) return;
+    const c = m.getAttribute("content") || "";
+    if (c.indexOf("interactive-widget") >= 0) return;
+    m.setAttribute("content", c + ", interactive-widget=resizes-content");
+  })();
+
   // THE BUG (operator, 2026-08-20): typing in a satsang pushed the subject bar
   // and the whole top bar off the screen. The chat column is sized
   // `calc(100vh - ...)`, a height that does not move when the keyboard opens,

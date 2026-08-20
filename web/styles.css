@@ -2065,6 +2065,27 @@ body.m-mode .m-community {
   display: flex; flex-direction: column; min-height: 0;
   height: calc(var(--m-vvh, 100vh) - 78px - env(safe-area-inset-top));
 }
+/* … and where the browser can measure it itself, believe the SMALLER of the
+   two. With interactive-widget=resizes-content (set by MOBILE_UI at startup)
+   100dvh is the visible area exactly, gesture-nav bar included, which the JS
+   arithmetic was NOT: on the operator's phone it came out a little too tall and
+   clipped the composer's emoji row off the bottom (2026-08-20).
+   min() rather than replacing --m-vvh outright, so this can only ever be more
+   correct than before — if a WebView quietly ignores interactive-widget, dvh
+   stays full-height and --m-vvh still wins. */
+@supports (height: 100dvh) {
+  body.m-mode .m-community {
+    height: calc(min(100dvh, var(--m-vvh, 100dvh)) - 78px - env(safe-area-inset-top));
+  }
+}
+/* A chat screen is not a scrolling page — only its message list scrolls, the way
+   WhatsApp behaves. .content's min-height:100vh was leaving a full screen of
+   empty document below the composer once the keyboard opened, and the operator
+   could pan around inside it. Both halves matter: drop the min-height so there
+   is nothing to scroll TO, and lock the scroller so a fling cannot start. */
+body.m-mode .content:has(.m-community) { min-height: 0; }
+body.m-mode:has(.m-community) { overflow: hidden; }
+html:has(body.m-mode .m-community) { overflow: hidden; }
 body.m-mode .m-chatbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 body.m-mode .m-chatbody .wc-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 body.m-mode .m-chatbody .wc-hdr { display: none; }   /* replaced by .m-chat-head */
