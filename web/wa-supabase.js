@@ -1474,9 +1474,10 @@ const WA = {
   // empty string to everyone else. See add_ganga_suggestions.sql section 9.
   //
   // ⚠ `limit` is a number of SLOTS to look back over, NOT the number shown. The
-  // screen keeps the last five that fall inside this device's chosen hours, so it
-  // asks for a couple of days' worth and filters. Asking for five would show one
-  // thought to somebody whose window is an hour wide.
+  // screen keeps the last GYAN_KEEP (three since 2026-08-22, five before) that
+  // fall inside this device's chosen hours, so it asks for a couple of days'
+  // worth and filters. Asking for three would show one thought to somebody whose
+  // window is an hour wide.
   //
   // ⚠ created_at still comes back as `ts`. It is no longer an expiry clock (the
   // eighteen-minute rule was withdrawn 2026-08-20) but it is still what "2 hours
@@ -1486,7 +1487,7 @@ const WA = {
   // The rows are NOT deleted server-side and must never be. thought_slots'
   // primary key (slot_date, slot) is the only thing stopping the every-ten-minutes
   // cron from re-picking and re-sending an hour it has already served, so "only
-  // the last five" is a rule about what is SHOWN.
+  // the last three" is a rule about what is SHOWN.
   async recentThoughts(limit) {
     const n = Math.min(Math.max(limit || 24, 1), 100);
     const { data, error } = await _sb.rpc("wa_recent_thoughts", { n: n });

@@ -11557,16 +11557,22 @@ const MOBILE_UI = (() => {
   //
   // ⚠ THE EIGHTEEN-MINUTE LIFE IS WITHDRAWN (operator, 2026-08-20), reversing
   // 2026-08-19 in full. A thought is no longer let go at minute eighteen — the
-  // screen keeps the last FIVE and the notification stays in the tray until the
+  // screen keeps the last few and the notification stays in the tray until the
   // next hour's replaces it. GYAN_LIVE_MS, GYAN.live() and GYAN.minutesLeft()
   // were deleted rather than left unused; if the countdown is ever wanted back,
   // it is in git at af96ada.
   //
-  // Five is the whole rule: when the sixth arrives the oldest drops off the
-  // bottom. Nothing is deleted server-side and nothing here ever should be —
+  // ⚠ THE NUMBER HAS MOVED ONCE: five until 2026-08-22, three since (operator,
+  // when the compose box went to the top of the screen — with the box above
+  // them, three thoughts fit under it without the screen becoming a scroll).
+  // Anything in the UI that PROMISES a number reads from here or must be
+  // changed with it; the two Settings strings are the ones that bite.
+  //
+  // The count is the whole rule: when the fourth arrives the oldest drops off
+  // the bottom. Nothing is deleted server-side and nothing here ever should be —
   // thought_slots' primary key is what stops the ten-minute cron re-sending an
   // hour it has already served.
-  const GYAN_KEEP = 5;
+  const GYAN_KEEP = 3;
 
   // The widest window a device may choose, IST hours, inclusive. ⚠ The same two
   // numbers are the check constraint in supabase/add_gyan_window.sql and
@@ -11619,18 +11625,17 @@ const MOBILE_UI = (() => {
       return ((d.getUTCHours() * 60 + d.getUTCMinutes()) + 330) % 1440;
     },
 
-    // The five this screen shows, newest first.
+    // The GYAN_KEEP this screen shows, newest first.
     //
-    // ⚠ FILTERED BY THIS DEVICE'S HOURS, then cut to five — never the other way
-    // round (operator, 2026-08-20). The thought itself is the same for everyone
-    // in a given hour; the LIST is what differs. Somebody whose window starts at
+    // ⚠ FILTERED BY THIS DEVICE'S HOURS, then cut — never the other way round
+    // (operator, 2026-08-20). The thought itself is the same for everyone in a
+    // given hour; the LIST is what differs. Somebody whose window starts at
     // 9 AM never received the 8 AM thought, so it must not appear in their list
-    // as though they had missed it. Cutting first would leave that person with
-    // four.
+    // as though they had missed it. Cutting first would leave that person short.
     //
-    // This is why WA.recentThoughts is asked for a couple of days of slots and
-    // not for five: a device awake for one hour a day needs to look back five
-    // DAYS to find five of its own.
+    // This is why WA.recentThoughts is asked for a couple of days of SLOTS and
+    // not for GYAN_KEEP rows: a device awake for one hour a day needs to look
+    // back GYAN_KEEP *days* to find that many of its own.
     //
     // ⚠ `keep` is the ONE exception to the window (operator, 2026-08-21): a set
     // of "date:slot" keys that are shown whatever the hours say. It carries the
@@ -11638,8 +11643,10 @@ const MOBILE_UI = (() => {
     // invisible to them whenever the hour their line went out fell outside their
     // own window — being told "your thought was shared with everyone" and then
     // finding it nowhere is the one case where the window is the wrong rule.
-    // Still cut to five afterwards, and still newest-first: a line that has been
-    // pushed off by five newer ones is old news, not a missing reward.
+    // Still cut afterwards, and still newest-first: a line that has been pushed
+    // off by newer ones is old news, not a missing reward. ⚠ That cut got
+    // TIGHTER on 2026-08-22 (five → three), so a member's own line now falls off
+    // the screen after three more hours rather than five.
     recent(items, keep) {
       return (items || [])
         .filter((t) => GYAN.covers(t.slot) || (keep && keep.has(`${t.date}:${t.slot}`)))
@@ -15021,31 +15028,35 @@ const MOBILE_UI = (() => {
   }
 
   // ---- Message to Admin ----------------------------------------------------
-  // ---- Upanishad Ganga — the last five, and the members' own words ---------
+  // ---- Upanishad Ganga — the last three, and the members' own words --------
   // Where a notification tap lands.
   //
   // ⚠ REVERSED AGAIN (operator, 2026-08-20). On 2026-08-19 this screen was cut
   // down to ONE thought that vanished at minute eighteen. It now keeps the last
-  // FIVE, and when the sixth arrives the oldest drops off the bottom. The
+  // few, and when one more arrives the oldest drops off the bottom. The
   // countdown, the "next thought arrives at…" empty state and the eighteen-minute
   // expiry are gone; so is the auto-dismiss on the lock screen (send-push no
   // longer sets timeoutMs). Don't reinstate any of them from the git history
   // without asking — this is the third design of this screen.
+  // ⚠ The count is GYAN_KEEP and it MOVED: five until 2026-08-22, three since.
   //
   // ⚠ Nothing is deleted server-side, and nothing here should ever start
   // deleting. thought_slots' primary key (slot_date, slot) is the only thing
   // stopping the every-ten-minutes cron from re-picking and re-sending an hour it
-  // has already served. "Only the last five" is a rule about what is SHOWN.
+  // has already served. "Only the last three" is a rule about what is SHOWN.
   //
-  // Below the five, in this order:
-  //   1. four lines of room for instructions the operator will write (empty for
-  //      now, and reserving the space is the point — see GANGA_INSTRUCTIONS);
+  // ⚠ THE ORDER FLIPPED ON 2026-08-22. The member's own box used to sit UNDER
+  // the thoughts; it is now ABOVE them, the shape Msg to Admin has always had —
+  // write first, read under it. So, top to bottom:
+  //   1. four lines of room for the operator's instructions — see
+  //      GANGA_INSTRUCTIONS. The reserved height is deliberate and predates
+  //      their being written;
   //   2. a box in which a member writes one short line, capped at a length the
   //      admins set from the review screen;
   //   3. Send to Admin — and NO Clear button (operator, 2026-08-20). It was in
   //      the first spec and taken out of it; a button that destroys what somebody
   //      just typed, sitting next to Send, is a trap. Don't add it back.
-  //   4. what became of the lines this member has already sent.
+  //   4. then, scrolling under all of that, the thoughts themselves.
   //
   // ⚠ THE COMPOSE BOX IS NOT INSIDE THE REPAINTED REGION. The list refreshes on
   // a timer while the screen is open, and rewriting innerHTML over a textarea
@@ -15098,8 +15109,8 @@ const MOBILE_UI = (() => {
     return `${h12} ${ampm}`;
   }
   // "11 AM" for one that arrived today, "8 PM · yesterday" for one that did not.
-  // The list can now span days — a device awake for two hours a day takes three
-  // days to collect five — so the hour alone is genuinely ambiguous.
+  // The list can now span days — a device awake for two hours a day takes two
+  // days to collect three — so the hour alone is genuinely ambiguous.
   //
   // ⚠ The IST date is computed from the EPOCH, not from the phone's own calendar
   // — Date.prototype.getTime() is already UTC-anchored, so adding 5½ hours and
@@ -15118,27 +15129,38 @@ const MOBILE_UI = (() => {
 
   async function gyanPage(params) {
     const node = el(`<div class="m-gyan"></div>`);
-    // ⚠ TWO PANES, NOT A SCROLLING PAGE (operator, 2026-08-21). The thoughts
-    // scroll; the नम्र विनंती and the box under it are PINNED and always on
-    // screen. `m-page-ganga` is what makes .m-page a fixed-height flex column —
-    // see the block in styles.css, which mirrors .m-community's treatment of
-    // --m-vvh so the box rides on top of the keyboard instead of behind it.
+    // ⚠ TWO PANES, NOT A SCROLLING PAGE (operator, 2026-08-21). The नम्र विनंती
+    // and the box are PINNED and always on screen; the thoughts scroll.
+    // `m-page-ganga` is what makes .m-page a fixed-height flex column — see the
+    // block in styles.css, which mirrors .m-community's treatment of --m-vvh so
+    // the box rides on top of the keyboard instead of behind it.
+    //
+    // ⚠ THE PINNED PANE IS AT THE TOP (operator, 2026-08-22 — it was at the
+    // bottom for one day, in 9.46). The screen is now shaped like Msg to Admin:
+    // write first, read under it. Two consequences that are easy to miss:
+    //   · the DOM order below IS the visual order, so swapping these two lines
+    //     back is the whole of undoing it — but .m-ganga-head's border and the
+    //     .m-kb rules in styles.css assume top, and would need swapping too;
+    //   · nothing collapses while the keyboard is up any more. The box sits
+    //     ABOVE the fold now, so it cannot be covered, and the 9.46 rules that
+    //     shrank the नम्र विनंती to claw back room were removed rather than
+    //     kept — they would only shift the textarea under the user's finger.
     pageFrame("Upanishad Ganga", node, "m-page-ganga");
 
     node.innerHTML =
-      `<div id="m-gyan-list" class="m-gyan-list"></div>` +
-      // The pinned half. Both children were previously siblings of the list and
-      // scrolled away with it; they are wrapped now so ONE flex child can be
-      // held out of the scroller.
-      `<div class="m-ganga-foot">` +
+      // The pinned pane. Both children were once siblings of the list and
+      // scrolled away with it; they are wrapped so ONE flex child stays out of
+      // the scroller.
+      `<div class="m-ganga-head">` +
         `<div class="m-ganga-instr" id="m-ganga-instr"></div>` +
         `<div id="m-ganga-compose"></div>` +
-      `</div>`;
+      `</div>` +
+      `<div id="m-gyan-list" class="m-gyan-list"></div>`;
     const listEl = node.querySelector("#m-gyan-list");
     const instrEl = node.querySelector("#m-ganga-instr");
     const composeEl = node.querySelector("#m-ganga-compose");
 
-    // Which of the five (if any) came from THIS member's own suggestion, as
+    // Which of the shown thoughts (if any) came from THIS member's own
     // "date:slot" keys. Filled by loadMine() below; see the two places it is
     // used — the window override in GYAN.recent and the "Your Suggestion" line
     // in renderList. ⚠ The two are independent: the label was briefly taken off
@@ -15147,7 +15169,7 @@ const MOBILE_UI = (() => {
     // hour it went out falls outside their chosen window.
     let mineSlots = new Set();
 
-    // ---- 1. the five ------------------------------------------------------
+    // ---- 1. the thoughts --------------------------------------------------
     // A thought with no Hindi falls back to whatever it has. There is no English
     // pool any more, but rows written before 2026-08-20 may still carry text_en
     // and the guru's word is the guru's word.
@@ -15158,18 +15180,18 @@ const MOBILE_UI = (() => {
     // innerHTML on each tick would drop the reader's text selection mid-thought.
     let lastSig = null;
     const renderList = (items, note) => {
-      const five = GYAN.recent(items, mineSlots);
+      const shown = GYAN.recent(items, mineSlots);
       // ⚠ `t.name` is deliberately NOT in the signature any more: the card no
       // longer draws it, so a name arriving on an admin's device is not a
       // reason to rewrite the list under their finger. mineSlots.size stays —
       // it changes WHICH thoughts qualify (the window override in GYAN.recent),
       // not merely how they look.
-      const sig = five.map((t) => `${t.date}:${t.slot}`).join("|") + "|" + (note || "") +
+      const sig = shown.map((t) => `${t.date}:${t.slot}`).join("|") + "|" + (note || "") +
                   "|" + mineSlots.size;
       if (sig === lastSig) return;
       lastSig = sig;
 
-      if (!five.length) {
+      if (!shown.length) {
         // Nothing yet — a fresh install, or a window whose hours have not come
         // round since it was chosen. Say when the next one is due rather than
         // showing an empty box.
@@ -15190,7 +15212,7 @@ const MOBILE_UI = (() => {
         (note ? `<div class="m-hint" style="margin-bottom:10px">${escapeHtml(note)}</div>` : "") +
         // ⚠ .m-gyan-hit goes on the NEWEST only. It used to mark the one thought
         // a notification tap arrived for, back when the screen showed one; put it
-        // on all five and every card wears an accent ring, which marks nothing.
+        // on every one and each card wears an accent ring, which marks nothing.
         // ⚠ THE WORDS, THE HOUR, AND "Your Suggestion" — IN THAT ORDER, AND
         // NOTHING ELSE (operator, 2026-08-21). The card was cut to words+hour
         // earlier the same day and the last line was then asked back; what did
@@ -15207,7 +15229,7 @@ const MOBILE_UI = (() => {
         //     my_ganga_suggestions, so no other phone can even compute it. With
         //     "Your thoughts" long gone this is the only acknowledgement on the
         //     screen that the words everybody is reading this hour are theirs.
-        five.map((t, i) =>
+        shown.map((t, i) =>
           `<div class="m-msgitem${i === 0 ? " m-gyan-hit" : ""}">` +
             `<div class="m-msgtext" style="font-family:var(--serif);font-size:17px;line-height:1.6">` +
               escapeHtml(wordsOf(t)) +
@@ -15233,7 +15255,7 @@ const MOBILE_UI = (() => {
     const refresh = async () => {
       lastFetch = Date.now();
       try {
-        // SLOTS to look back over, not the five that are shown — GYAN.recent()
+        // SLOTS to look back over, not the rows that are shown — GYAN.recent()
         // filters to this device's hours first. 48 is two days for a phone that
         // wants them all, and about a fortnight for one that wants one an hour a
         // day. See WA.recentThoughts.
@@ -15242,7 +15264,7 @@ const MOBILE_UI = (() => {
         note = "";
       } catch (e) {
         // Offline is only worth saying when there is nothing at all to show —
-        // otherwise the five are on screen and the message would be noise.
+        // otherwise the thoughts are on screen and the message would be noise.
         note = GYAN.recent(items, mineSlots).length
           ? ""
           : "Couldn't reach the server just now. The thoughts will appear when you're back online.";
@@ -15347,7 +15369,7 @@ const MOBILE_UI = (() => {
       })();
     }
 
-    // ---- 4. which of the five are theirs ----------------------------------
+    // ---- 4. which of the thoughts are theirs ------------------------------
     // ⚠ THERE IS NO "YOUR THOUGHTS" SECTION ANY MORE (operator, 2026-08-21). It
     // listed every line this member had sent with its status — waiting, accepted,
     // returned and why — under the compose box. The operator asked for the screen
@@ -16006,13 +16028,17 @@ const MOBILE_UI = (() => {
           : !gtok
             ? "This device isn't registered for notifications yet. Reopen the app once and this will start working."
             : gsw.checked
-              // ⚠ This wording has now been wrong twice. It first promised every
-              // thought was kept forever; from 2026-08-19 it promised each was
-              // let go after eighteen minutes. Since 2026-08-20 the truth is the
-              // last five — say that, and say nothing about how long one lives,
-              // because it no longer has a lifetime.
-              ? `A thought arrives each hour between ${span}. The last five stay in Upanishad Ganga, where you can also send a thought of your own to the admins.`
-              : "No hourly notifications. You can still open Upanishad Ganga any time to read the last five.";
+              // ⚠ This wording has now been wrong twice and has moved a third
+              // time. It first promised every thought was kept forever; from
+              // 2026-08-19 it promised each was let go after eighteen minutes;
+              // from 2026-08-20 it promised the last five, and since 2026-08-22
+              // the truth is the last THREE. Say the number and say nothing
+              // about how long one lives, because it no longer has a lifetime.
+              // ⚠ Both strings below count GYAN_KEEP out loud, so they are the
+              // two places that must change with it — there is no interpolation
+              // here on purpose: "the last 3" reads worse than "the last three".
+              ? `A thought arrives each hour between ${span}. The last three stay in Upanishad Ganga, where you can also send a thought of your own to the admins.`
+              : "No hourly notifications. You can still open Upanishad Ganga any time to read the last three.";
       };
       paintGyanHint();
 
