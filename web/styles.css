@@ -1953,10 +1953,99 @@ body.m-mode .content:has(.m-page-scroll) { min-height: 0; }
    showed exactly one). */
 .m-gyan { min-height: 40vh; }
 .m-gyan-hit { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft, #e3f2fd); }
-/* Only a moderator or the sutradhar ever sees this — the server blanks it for
-   everybody else (wa_recent_thoughts), so there is no CSS-level hiding here and
-   there must not be one: a display:none would put the name on the wire. */
-.m-ganga-credit { color: var(--accent); }
+
+/* ---- the two panes (operator, 2026-08-21) --------------------------------
+   The thoughts scroll; the नम्र विनंती and the box stay put at the bottom. This
+   is deliberately built the same way .m-community is, and for the same reason —
+   see the long note there. The short version:
+
+   · --m-vvh is the height actually VISIBLE, published by the keyboard watcher in
+     app.js. 100vh does NOT shrink when the keyboard opens, so sizing to it would
+     put the Send button behind the keyboard and make the WebView scroll the page
+     up to find it, dragging .m-top off the top of the screen.
+   · 78px = .content's own padding (58px top + 20px bottom, styles.css ~1487).
+   · The @supports block believes the SMALLER of --m-vvh and 100dvh, because with
+     interactive-widget=resizes-content (set by MOBILE_UI at startup) the browser
+     measures the visible area exactly, gesture-nav bar and all, while the JS
+     arithmetic came out slightly too tall on the operator's phone. min() so this
+     can only ever be more correct — a WebView that ignores interactive-widget
+     leaves dvh full-height and --m-vvh still wins.
+
+   ⚠ NOT a hard 50/50 (the operator chose this over an exact half). The bottom
+   pane is as tall as नम्र विनंती + box + Send actually need and the list takes
+   the rest, so a small screen or a large system font can never cut the Send
+   button off — which a fixed 50% could. On an ordinary phone it lands at about
+   half anyway. */
+body.m-mode .m-page-ganga {
+  display: flex; flex-direction: column; min-height: 0;
+  height: calc(var(--m-vvh, 100vh) - 78px - env(safe-area-inset-top));
+}
+@supports (height: 100dvh) {
+  body.m-mode .m-page-ganga {
+    height: calc(min(100dvh, var(--m-vvh, 100dvh)) - 78px - env(safe-area-inset-top));
+  }
+}
+/* Drop .content's min-height:100vh, or a short list leaves a screen of empty
+   document below the pinned box for the user to pan around in. */
+body.m-mode .content:has(.m-page-ganga) { min-height: 0; }
+body.m-mode:has(.m-page-ganga) { overflow: hidden; overscroll-behavior: none; }
+html:has(body.m-mode .m-page-ganga) { overflow: hidden; overscroll-behavior: none; }
+/* FOLLOW THE PAN, exactly as .m-community does: if a device still pans the
+   visual viewport despite the pre-shrink, the whole screen goes with it rather
+   than the box sliding under the fold. Only while .m-kb — with no keyboard the
+   offset is always 0 and an always-on transform would make this a containing
+   block for nothing. */
+body.m-mode.m-kb .m-page-ganga { transform: translateY(var(--m-vvtop, 0px)); }
+
+/* .m-gyan is the page's only child and has to pass the height through. Its
+   40vh min-height above would fight the flex sizing, so it goes here. */
+.m-page-ganga .m-gyan {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+}
+/* THE SCROLLING HALF. */
+.m-gyan-list {
+  flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+/* THE PINNED HALF — "bottom 50 percent", with the content as the floor and the
+   ceiling rather than a hard 50% that could crop the Send button.
+   ⚠ All three numbers matter and they were measured, not guessed (375x812,
+   2026-08-21): नम्र विनंती + box + Send come to 267px, which is only 36% of the
+   available 734px — so content-sizing ALONE does not land near half, which is
+   why min-height is here at all.
+     · min-height 50% — the operator's number. This is what it is normally.
+     · flex:none, no fixed height — it may grow past 50% if the content needs it
+       (a longer नम्र विनंती, a large system font, the signed-out sign-in form),
+       so nothing can ever be cropped.
+     · max-height 72% — but it may not eat the whole screen; past this the foot
+       scrolls internally and the list keeps a fifth of the screen.
+   To go back to a hard half: height 50% + flex none, and drop the other two. */
+.m-ganga-foot {
+  flex: none; min-height: 50%; max-height: 72%;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+/* The instructions sit tight against the divider now that there is one; the
+   18px that used to separate them from the last card is the divider's job. */
+.m-page-ganga .m-ganga-instr { margin-top: 12px; }
+/* Nothing below the box any more (the "Your thoughts" list is long gone), so its
+   bottom margin is just a gap against the screen edge. */
+.m-page-ganga .m-ganga-box { margin-bottom: 4px; }
+/* While the keyboard is up the नम्र विनंती gives up its reserved four lines —
+   it is guidance for someone who has not started typing, and someone who is
+   typing needs the room for the list above instead. Never display:none: that
+   would reflow the pane's height and re-trigger the shrink it is inside of. */
+body.m-mode.m-kb .m-page-ganga .m-ganga-instr { min-height: 0; }
+/* ⚠ And while the keyboard is up the two limits above are DROPPED, so the foot
+   takes exactly what it needs and the list yields the rest. Measured (375x812,
+   2026-08-21): with an ordinary ~340px keyboard either way works, but on a
+   genuinely cramped viewport (~360px visible — a tall IME on a short screen)
+   the 72% ceiling left the foot scrolling internally with the Send button 40px
+   below the fold. The list giving up its last rows is always the better trade:
+   the person is typing, not reading. min-height goes too, or the foot would
+   hold half of a viewport that no longer has a half to spare. */
+body.m-mode.m-kb .m-ganga-foot { min-height: 0; max-height: 100%; }
 
 /* The operator's नम्र विनंती to the sadhaks, between the five thoughts and the
    box they write in. The min-height reserves four lines and is kept now that
@@ -1990,11 +2079,14 @@ body.m-mode .content:has(.m-page-scroll) { min-height: 0; }
 /* The counter turns at the cap, because maxlength swallows the keystroke in
    silence and a phone keyboard gives no other sign that it did. */
 .m-ganga-count.full { color: var(--accent); font-weight: 700; }
-/* "Your Suggestion", under a thought this member's own line became (2026-08-21).
-   The "Your thoughts" list that used to sit below the compose box is gone — the
-   operator asked for a clean screen — so this is the only acknowledgement left
-   on the page, and it is on the reader's OWN row only. Set apart from the hour
-   above it the way the credit is: accent, and small. */
+/* "Your Suggestion" — the FINAL line of a card whose words this member sent in
+   (operator, 2026-08-21). Their own row, and their own device only: mineSlots is
+   built from my_ganga_suggestions, so no other phone can compute it.
+   With the "Your thoughts" list long gone this is the only acknowledgement left
+   on the page. Set apart from the hour above it: accent, and small.
+   ⚠ (.m-ganga-credit — `सुझाव: <name>`, admin-only — is gone and is NOT coming
+   back with this; the two were removed together and only this one was asked for
+   again. See the note in app.js's renderList before restoring anything.) */
 .m-ganga-yours {
   margin-top: 6px; font: 700 12px var(--sans); color: var(--accent);
 }

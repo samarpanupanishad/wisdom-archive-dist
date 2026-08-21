@@ -10671,10 +10671,20 @@ const MOBILE_UI = (() => {
   }
 
   // Pre-shrink: the fix. Runs on focus, before Chrome decides where to scroll.
+  //
+  // ⚠ The list of boxes this applies to is a LIST, and adding to it is how a new
+  // pinned composer joins the scheme (Upanishad Ganga's suggestion box, added
+  // 2026-08-21). The alternative — putting `wc-ta` on it — would drag the chat
+  // composer's sizing and autoGrowTa along with it, which is not wanted here.
+  // Anything sized against --m-vvh with a text box at its bottom edge belongs
+  // here; anything on an ordinary scrolling page does NOT, because for those the
+  // browser's own scroll-into-view is the right behaviour and pre-shrinking
+  // would crop a page that had no reason to shrink.
+  const KB_PRESHRINK = ".wc-ta, #m-ganga-ta";
   let _preShrinkCheck = 0;
   document.addEventListener("focusin", (e) => {
     const t = e.target;
-    if (!t || !t.classList || !t.classList.contains("wc-ta")) return;
+    if (!t || !t.matches || !t.matches(KB_PRESHRINK)) return;
     const full = kbFullH || window.innerHeight || 0;
     if (!full) return;
     const kb = rememberedKb() || Math.round(full * KB_GUESS_FRAC);
@@ -14527,19 +14537,33 @@ const MOBILE_UI = (() => {
 
   async function gyanPage(params) {
     const node = el(`<div class="m-gyan"></div>`);
-    pageFrame("Upanishad Ganga", node);
+    // ⚠ TWO PANES, NOT A SCROLLING PAGE (operator, 2026-08-21). The thoughts
+    // scroll; the नम्र विनंती and the box under it are PINNED and always on
+    // screen. `m-page-ganga` is what makes .m-page a fixed-height flex column —
+    // see the block in styles.css, which mirrors .m-community's treatment of
+    // --m-vvh so the box rides on top of the keyboard instead of behind it.
+    pageFrame("Upanishad Ganga", node, "m-page-ganga");
 
     node.innerHTML =
-      `<div id="m-gyan-list"></div>` +
-      `<div class="m-ganga-instr" id="m-ganga-instr"></div>` +
-      `<div id="m-ganga-compose"></div>`;
+      `<div id="m-gyan-list" class="m-gyan-list"></div>` +
+      // The pinned half. Both children were previously siblings of the list and
+      // scrolled away with it; they are wrapped now so ONE flex child can be
+      // held out of the scroller.
+      `<div class="m-ganga-foot">` +
+        `<div class="m-ganga-instr" id="m-ganga-instr"></div>` +
+        `<div id="m-ganga-compose"></div>` +
+      `</div>`;
     const listEl = node.querySelector("#m-gyan-list");
     const instrEl = node.querySelector("#m-ganga-instr");
     const composeEl = node.querySelector("#m-ganga-compose");
 
     // Which of the five (if any) came from THIS member's own suggestion, as
     // "date:slot" keys. Filled by loadMine() below; see the two places it is
-    // used — the window override in renderList and the "Your Suggestion" line.
+    // used — the window override in GYAN.recent and the "Your Suggestion" line
+    // in renderList. ⚠ The two are independent: the label was briefly taken off
+    // the card on 2026-08-21 and the override still had to stay, because
+    // without it a member's own approved line is invisible to them whenever the
+    // hour it went out falls outside their chosen window.
     let mineSlots = new Set();
 
     // ---- 1. the five ------------------------------------------------------
@@ -14554,7 +14578,12 @@ const MOBILE_UI = (() => {
     let lastSig = null;
     const renderList = (items, note) => {
       const five = GYAN.recent(items, mineSlots);
-      const sig = five.map((t) => `${t.date}:${t.slot}:${t.name || ""}`).join("|") + "|" + (note || "") +
+      // ⚠ `t.name` is deliberately NOT in the signature any more: the card no
+      // longer draws it, so a name arriving on an admin's device is not a
+      // reason to rewrite the list under their finger. mineSlots.size stays —
+      // it changes WHICH thoughts qualify (the window override in GYAN.recent),
+      // not merely how they look.
+      const sig = five.map((t) => `${t.date}:${t.slot}`).join("|") + "|" + (note || "") +
                   "|" + mineSlots.size;
       if (sig === lastSig) return;
       lastSig = sig;
@@ -14581,24 +14610,28 @@ const MOBILE_UI = (() => {
         // ⚠ .m-gyan-hit goes on the NEWEST only. It used to mark the one thought
         // a notification tap arrived for, back when the screen showed one; put it
         // on all five and every card wears an accent ring, which marks nothing.
+        // ⚠ THE WORDS, THE HOUR, AND "Your Suggestion" — IN THAT ORDER, AND
+        // NOTHING ELSE (operator, 2026-08-21). The card was cut to words+hour
+        // earlier the same day and the last line was then asked back; what did
+        // NOT come back is the suggester's name, so don't read the two removals
+        // as one and restore both from the history:
+        //   · `सुझाव: <name>` is GONE for good. It was drawn only for a
+        //     moderator or the sutradhar, and that was decided by Postgres, not
+        //     here — wa_recent_thoughts() returns an empty string to everybody
+        //     else. `t.name` therefore still arrives on an admin's device and is
+        //     simply not rendered; the name is still readable where an admin
+        //     actually needs it, on #/m/gyanreview.
+        //   · `Your Suggestion` STAYS, as the final line. It is the member's own
+        //     row and their own device only — mineSlots comes from
+        //     my_ganga_suggestions, so no other phone can even compute it. With
+        //     "Your thoughts" long gone this is the only acknowledgement on the
+        //     screen that the words everybody is reading this hour are theirs.
         five.map((t, i) =>
           `<div class="m-msgitem${i === 0 ? " m-gyan-hit" : ""}">` +
             `<div class="m-msgtext" style="font-family:var(--serif);font-size:17px;line-height:1.6">` +
               escapeHtml(wordsOf(t)) +
             `</div>` +
-            `<div class="m-msgts">${escapeHtml(gyanWhen(t))}` +
-              // ⚠ Present ONLY for a moderator or the sutradhar, and that is
-              // decided by Postgres, not here: wa_recent_thoughts() returns an
-              // empty string for everybody else (add_ganga_suggestions.sql
-              // section 9). Hiding it with an isModerator() test in the client
-              // would put the name on the wire for anyone who looked.
-              (t.name ? ` · <span class="m-ganga-credit">${escapeHtml("सुझाव: " + t.name)}</span>` : "") +
-            `</div>` +
-            // The member's own line, said the way their notification says it
-            // (operator, 2026-08-21). With "Your thoughts" gone from this screen
-            // this is the only place someone learns that the words everybody is
-            // reading this hour are the ones they sent in. It is their OWN row —
-            // no name, nothing anybody else's device could show.
+            `<div class="m-msgts">${escapeHtml(gyanWhen(t))}</div>` +
             (mineSlots.has(`${t.date}:${t.slot}`)
               ? `<div class="m-ganga-yours">Your Suggestion</div>` : "") +
           `</div>`).join("");
@@ -14742,14 +14775,17 @@ const MOBILE_UI = (() => {
     // notification (approved, declined-with-reason, and "shared with everyone"),
     // and the accepted one is marked on the list above.
     //
-    // The call itself STAYS, because it answers a second question the screen
-    // cannot answer without it: which of the thoughts on display are this
-    // member's own words. `first_slot_date`/`first_slot` is the hour their line
-    // first went out to everybody, and that is the row to mark — and to show even
-    // when that hour falls outside this device's chosen window. See GYAN.recent.
+    // The call itself does TWO things, and each would justify it alone:
+    //   1. `first_slot_date`/`first_slot` is the hour this member's line first
+    //      went out to everybody, and that is the row "Your Suggestion" goes on.
+    //   2. GYAN.recent shows that thought WHATEVER the device's chosen hours
+    //      say. Being told "your thought was shared" and then finding it nowhere
+    //      is the bug that exception exists to close, and it bites only the
+    //      members whose window happened to miss their own hour — so it is
+    //      invisible in testing. ⚠ Keep this even if the label ever goes again.
     //
-    // Silent on every failure, including "not signed in": it decorates the list,
-    // it is not the list.
+    // Silent on every failure, including "not signed in": it decorates and
+    // widens the list, it is not the list.
     const loadMine = async () => {
       if (!isSignedIn()) return;
       let rows;
