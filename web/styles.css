@@ -3397,6 +3397,140 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 }
 .dd-foot { margin-top: 20px; text-align: center; font-size: 11px; color: var(--muted); line-height: 1.5; }
 
+/* ==========================================================================
+   DIARY — version C (operator's redesign, status §10).
+   Four things you DO at full size; the occasional three demoted to a strip.
+   The old .dd-go / .dd-tabs / .dd-start rules above are no longer emitted by
+   app.js but are NOT deleted: .dd-backup is still reused by the reminders
+   card, so this family is removed as one deliberate pass, not piecemeal.
+   ========================================================================== */
+.dd-sect-label {
+  font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; margin: 16px 2px 8px;
+}
+/* The bracketed half of a tile label — "(with Guru Mantra)". Italic, small,
+   and on its own line under the word Dhyan. */
+.dd-qual { font-style: italic; font-weight: 400; font-size: .82em; color: var(--muted); }
+
+/* ---- tiles ---- */
+.dd-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* appearance:none is REQUIRED here for the same reason it is on .dd-mode — a
+   button left at the native appearance ignores background-COLOR in Android
+   WebView. */
+.dd-tile, .dd-back, .dd-strip-b, .dd-rtab { -webkit-appearance: none; appearance: none; }
+.dd-tile {
+  cursor: pointer; display: flex; flex-direction: column; gap: 1px;
+  justify-content: center; text-align: left; font-family: inherit; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 15px;
+  padding: 13px 12px; min-height: 94px; box-shadow: var(--shadow);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.dd-tile:active { transform: scale(.985); box-shadow: none; }
+.dd-tile-ico { font-size: 21px; line-height: 1; margin-bottom: 5px; }
+.dd-tile-t { font-size: 14.5px; font-weight: 650; line-height: 1.25; }
+.dd-tile-q { font-size: 11.5px; font-style: italic; color: var(--muted); line-height: 1.25; }
+.dd-tile-s { font-size: 11px; color: var(--muted); line-height: 1.35; margin-top: 3px; }
+.dd-tile-wide { grid-column: 1 / -1; min-height: 76px; }
+.dd-tile-hero { border-color: var(--accent); }
+.dd-tile-hero .dd-tile-t { color: var(--accent); }
+.dd-tile-flat { min-height: 58px; background: var(--bg); box-shadow: none; }
+.dd-tile-choice { min-height: 108px; }
+
+/* ---- a sub-page header ---- */
+.dd-sub { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.dd-back {
+  cursor: pointer; border: 1px solid var(--border); background: var(--surface);
+  color: var(--accent); width: 34px; height: 34px; border-radius: 10px;
+  font-size: 21px; line-height: 1; font-family: inherit; flex: none;
+  display: flex; align-items: center; justify-content: center; padding: 0 3px 3px 0;
+}
+.dd-back:hover { background: var(--accent-soft); border-color: var(--accent-soft); }
+.dd-sub-t { font-size: 16px; font-weight: 650; }
+
+/* ---- the strip of occasional things ----
+   In normal flow, NOT pinned: this page scrolls, and a fixed bar would sit on
+   top of the last row of the list on a short screen. */
+.dd-strip {
+  display: flex; gap: 6px; margin-top: 18px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 8px 6px;
+}
+.dd-strip-b {
+  cursor: pointer; flex: 1; border: 0; background: transparent; font-family: inherit;
+  font-size: 12px; font-weight: 650; color: var(--accent); padding: 7px 2px; border-radius: 9px;
+}
+.dd-strip-b:hover { background: var(--accent-soft); }
+
+/* ---- reports ---- */
+.dd-rtabs { display: flex; gap: 5px; margin: 14px 0 2px; }
+.dd-rtab {
+  cursor: pointer; flex: 1; text-align: center; font-family: inherit; font-size: 11px;
+  padding: 8px 2px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+}
+.dd-rtab.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+/* ⚠ One row PER DAY, figures stacked under the date — not four columns
+   across. Four headers on a 360px screen leave ~70px each and neither the
+   words nor the numbers fit. A day with nothing stays visible and greyed. */
+.dd-days { margin-top: 4px; }
+.dd-day { border-top: 1px solid var(--border); padding: 9px 2px 10px; }
+.dd-day-h { font-size: 11.5px; font-weight: 700; color: var(--accent); }
+.dd-day-l { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.dd-pill {
+  font-size: 11px; padding: 4px 8px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border-soft); color: var(--muted);
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+.dd-pill b { color: var(--text); font-weight: 700; }
+.dd-pill.nil { opacity: .42; }
+.dd-backup-when { margin-top: 12px; font-size: 11.5px; font-weight: 650; color: var(--muted); text-align: center; }
+.dd-backup-when.warn { color: var(--accent); }
+/* ---- Granth Pathan (status §10.9) ----
+   Asks for ONE number — the page you are on — and derives pages-read from it,
+   so the diary doubles as a bookmark. */
+.dd-granth .dd-g-body { min-height: 150px; }
+.dd-g-lab {
+  font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; margin: 14px 2px 7px;
+}
+.dd-g-books { display: flex; flex-wrap: wrap; gap: 6px; }
+.dd-g-book, .dd-g-day {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  border-radius: 10px; padding: 8px 11px; font-size: 12.5px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dd-g-book.on, .dd-g-day.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.dd-g-plus { color: var(--accent); font-weight: 700; padding: 8px 13px; }
+.dd-g-days { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 3px; }
+.dd-g-days .dd-g-day { flex: none; }
+
+/* The page box sits between the two steppers, and is typable — jumping from
+   page 12 to page 240 must not be 228 taps. */
+.dd-g-row { gap: 12px; }
+.dd-g-page {
+  -webkit-appearance: none; appearance: none; font-family: inherit;
+  width: 96px; text-align: center; font-size: 26px; font-weight: 600; color: var(--text);
+  border: 1px solid var(--border); background: var(--surface); border-radius: 12px;
+  padding: 7px 4px; font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+.dd-g-page:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.dd-g-note b { color: var(--text); }
+.dd-g-in {
+  -webkit-appearance: none; appearance: none; font-family: inherit; width: 100%;
+  border: 1px solid var(--border); background: var(--surface); border-radius: 11px;
+  padding: 11px 12px; font-size: 14px; color: var(--text); margin-bottom: 8px;
+}
+.dd-g-in:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.dd-g-hint { font-size: 11px; color: var(--muted); line-height: 1.5; margin: 2px 2px 12px; }
+.dd-g-addbtns { display: flex; gap: 8px; }
+.dd-g-addbtns .btn { flex: 1; justify-content: center; }
+.dd-g-empty { text-align: center; color: var(--muted); font-size: 13px; padding: 18px 0 14px; }
+.dd-g-first { width: 100%; justify-content: center; }
+
+/* The one button in the diary that destroys a record says so in its colour. */
+.dd-danger { color: #a6412f; }
+
 /* ---- setup sheet: duration + mode ---- */
 .dd-sheet-ov {
   position: fixed; inset: 0; z-index: 60; display: flex;
@@ -3479,7 +3613,9 @@ body.dd-sitting { overflow: hidden; }
 }
 .dd-beads-malas { color: #d9a05b; font-weight: 600; }
 
-.dd-mala { position: relative; width: 300px; height: 300px; max-width: 84vw; max-height: 84vw; }
+/* ⚠ Taller than wide now: the mala hangs. Sized from HEIGHT so the shape
+   cannot distort, with the width derived by aspect-ratio. */
+.dd-mala { position: relative; height: min(330px, 54vh); aspect-ratio: 260 / 320; }
 .dd-mala svg { width: 100%; height: 100%; display: block; position: relative; z-index: 1; }
 /* One shared radial glow that deepens as the mala fills — this is what makes
    the ring feel alive without costing anything per bead. */
@@ -3491,8 +3627,10 @@ body.dd-sitting { overflow: hidden; }
 .dd-mala-track { fill: none; stroke: #12171d; stroke-width: 1; }
 .dd-bead { fill: #1d242c; transition: fill .18s var(--ease); }
 .dd-bead.on { fill: #e8a13f; }
-/* The sumeru: the head bead you turn back at, never counted. Always lit. */
+/* The sumeru: the head bead you turn back at, never counted. Always lit.
+   It sits alone at the TOP of the hanging strand, with a short tail above it. */
 .dd-sumeru { fill: #b4442e; stroke: #d9662a; stroke-width: 1.4; }
+.dd-mala-tail { stroke: #d9662a; stroke-width: 1.4; stroke-linecap: round; opacity: .5; }
 
 .dd-mala-mid {
   position: absolute; inset: 0; z-index: 2; display: flex;
@@ -3500,7 +3638,8 @@ body.dd-sitting { overflow: hidden; }
   pointer-events: none;
 }
 .dd-mala-n {
-  font-size: 66px; font-weight: 200; line-height: 1; color: #f7f2e8;
+  /* Fits inside the loop: the mala's interior is ~105px across at its widest. */
+  font-size: 52px; font-weight: 200; line-height: 1; color: #f7f2e8;
   font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
 }
 .dd-mala-n.pulse { animation: dd-bead-pulse .16s var(--ease); }
