@@ -1990,15 +1990,14 @@ body.m-mode .content:has(.m-page-scroll) { min-height: 0; }
 /* The counter turns at the cap, because maxlength swallows the keystroke in
    silence and a phone keyboard gives no other sign that it did. */
 .m-ganga-count.full { color: var(--accent); font-weight: 700; }
-.m-ganga-mine { margin-top: 20px; }
-.m-ganga-mine-h { font: 700 13.5px var(--sans); color: var(--muted); margin-bottom: 8px; }
-.m-ganga-mine-row {
-  background: var(--surface); border: 1px solid var(--border-soft); border-radius: 12px;
-  padding: 10px 12px; margin-bottom: 8px;
+/* "Your Suggestion", under a thought this member's own line became (2026-08-21).
+   The "Your thoughts" list that used to sit below the compose box is gone — the
+   operator asked for a clean screen — so this is the only acknowledgement left
+   on the page, and it is on the reader's OWN row only. Set apart from the hour
+   above it the way the credit is: accent, and small. */
+.m-ganga-yours {
+  margin-top: 6px; font: 700 12px var(--sans); color: var(--accent);
 }
-.m-ganga-mine-t { font: 400 14px var(--sans); color: var(--text); white-space: pre-wrap; }
-.m-ganga-mine-s { margin-top: 5px; font: 700 12px var(--sans); color: var(--muted); }
-.m-ganga-why { margin-top: 3px; font: 400 12.5px var(--sans); color: var(--muted); }
 
 /* Upanishad Ganga Review (#/m/gyanreview) — the admins' queue. */
 .m-gr { min-height: 40vh; }

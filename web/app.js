@@ -11040,8 +11040,19 @@ const MOBILE_UI = (() => {
     // This is why WA.recentThoughts is asked for a couple of days of slots and
     // not for five: a device awake for one hour a day needs to look back five
     // DAYS to find five of its own.
-    recent(items) {
-      return (items || []).filter((t) => GYAN.covers(t.slot)).slice(0, GYAN_KEEP);
+    //
+    // ⚠ `keep` is the ONE exception to the window (operator, 2026-08-21): a set
+    // of "date:slot" keys that are shown whatever the hours say. It carries the
+    // thoughts that came from THIS member's own suggestions, which were
+    // invisible to them whenever the hour their line went out fell outside their
+    // own window — being told "your thought was shared with everyone" and then
+    // finding it nowhere is the one case where the window is the wrong rule.
+    // Still cut to five afterwards, and still newest-first: a line that has been
+    // pushed off by five newer ones is old news, not a missing reward.
+    recent(items, keep) {
+      return (items || [])
+        .filter((t) => GYAN.covers(t.slot) || (keep && keep.has(`${t.date}:${t.slot}`)))
+        .slice(0, GYAN_KEEP);
     },
 
     // What to say while nothing is live: {hour, tomorrow, coming}. `coming` means
@@ -14521,12 +14532,15 @@ const MOBILE_UI = (() => {
     node.innerHTML =
       `<div id="m-gyan-list"></div>` +
       `<div class="m-ganga-instr" id="m-ganga-instr"></div>` +
-      `<div id="m-ganga-compose"></div>` +
-      `<div id="m-ganga-mine"></div>`;
+      `<div id="m-ganga-compose"></div>`;
     const listEl = node.querySelector("#m-gyan-list");
     const instrEl = node.querySelector("#m-ganga-instr");
     const composeEl = node.querySelector("#m-ganga-compose");
-    const mineEl = node.querySelector("#m-ganga-mine");
+
+    // Which of the five (if any) came from THIS member's own suggestion, as
+    // "date:slot" keys. Filled by loadMine() below; see the two places it is
+    // used — the window override in renderList and the "Your Suggestion" line.
+    let mineSlots = new Set();
 
     // ---- 1. the five ------------------------------------------------------
     // A thought with no Hindi falls back to whatever it has. There is no English
@@ -14539,8 +14553,9 @@ const MOBILE_UI = (() => {
     // innerHTML on each tick would drop the reader's text selection mid-thought.
     let lastSig = null;
     const renderList = (items, note) => {
-      const five = GYAN.recent(items);
-      const sig = five.map((t) => `${t.date}:${t.slot}:${t.name || ""}`).join("|") + "|" + (note || "");
+      const five = GYAN.recent(items, mineSlots);
+      const sig = five.map((t) => `${t.date}:${t.slot}:${t.name || ""}`).join("|") + "|" + (note || "") +
+                  "|" + mineSlots.size;
       if (sig === lastSig) return;
       lastSig = sig;
 
@@ -14579,6 +14594,13 @@ const MOBILE_UI = (() => {
               // would put the name on the wire for anyone who looked.
               (t.name ? ` · <span class="m-ganga-credit">${escapeHtml("सुझाव: " + t.name)}</span>` : "") +
             `</div>` +
+            // The member's own line, said the way their notification says it
+            // (operator, 2026-08-21). With "Your thoughts" gone from this screen
+            // this is the only place someone learns that the words everybody is
+            // reading this hour are the ones they sent in. It is their OWN row —
+            // no name, nothing anybody else's device could show.
+            (mineSlots.has(`${t.date}:${t.slot}`)
+              ? `<div class="m-ganga-yours">Your Suggestion</div>` : "") +
           `</div>`).join("");
     };
 
@@ -14607,7 +14629,7 @@ const MOBILE_UI = (() => {
       } catch (e) {
         // Offline is only worth saying when there is nothing at all to show —
         // otherwise the five are on screen and the message would be noise.
-        note = GYAN.recent(items).length
+        note = GYAN.recent(items, mineSlots).length
           ? ""
           : "Couldn't reach the server just now. The thoughts will appear when you're back online.";
       }
@@ -14711,59 +14733,41 @@ const MOBILE_UI = (() => {
       })();
     }
 
-    // ---- 4. what became of the ones they sent -----------------------------
-    // The single biggest reason this feature encourages anybody: a line that is
-    // approved and then goes out to everyone is a public event, and being told
-    // about it is the whole reward. A decline that nobody can re-read is just a
-    // line that vanished.
-    const STATUS = {
-      pending:  { icon: "⏳", label: "With the admins" },
-      approved: { icon: "🌸", label: "Accepted" },
-      declined: { icon: "↩️", label: "Returned" },
-    };
+    // ---- 4. which of the five are theirs ----------------------------------
+    // ⚠ THERE IS NO "YOUR THOUGHTS" SECTION ANY MORE (operator, 2026-08-21). It
+    // listed every line this member had sent with its status — waiting, accepted,
+    // returned and why — under the compose box. The operator asked for the screen
+    // to be clean, and it went. Don't reinstate it from the git history without
+    // asking; what a member is told about their line now travels entirely by
+    // notification (approved, declined-with-reason, and "shared with everyone"),
+    // and the accepted one is marked on the list above.
+    //
+    // The call itself STAYS, because it answers a second question the screen
+    // cannot answer without it: which of the thoughts on display are this
+    // member's own words. `first_slot_date`/`first_slot` is the hour their line
+    // first went out to everybody, and that is the row to mark — and to show even
+    // when that hour falls outside this device's chosen window. See GYAN.recent.
+    //
+    // Silent on every failure, including "not signed in": it decorates the list,
+    // it is not the list.
     const loadMine = async () => {
-      if (!isSignedIn()) { mineEl.innerHTML = ""; return; }
+      if (!isSignedIn()) return;
       let rows;
       try { rows = await WA.myGangaSuggestions(20); }
-      catch (_) { mineEl.innerHTML = ""; return; }   // silent: it is a footnote
-      if (!rows.length) { mineEl.innerHTML = ""; return; }
-      mineEl.innerHTML =
-        `<div class="m-ganga-mine">` +
-          `<div class="m-ganga-mine-h">Your thoughts</div>` +
-          rows.map((r) => {
-            const st = STATUS[r.status] || STATUS.pending;
-            const words = r.approved_text || r.text || "";
-            let tail = "";
-            if (r.status === "declined" && r.decline_reason) {
-              tail = `<div class="m-ganga-why">${escapeHtml("Reason: " + r.decline_reason)}</div>`;
-            } else if (r.status === "approved") {
-              // first_sent is null until the pick has actually chosen it. Saying
-              // "shared at 11 AM" before that has happened would be a promise,
-              // and the point of this line is that it is a fact.
-              tail = r.first_sent
-                ? `<div class="m-ganga-why">${escapeHtml(
-                    "🌊 Shared with everyone at " + gyanSlotLabel(r.first_slot) +
-                    (r.first_slot_date ? " on " + r.first_slot_date : ""))}</div>`
-                : `<div class="m-ganga-why">${escapeHtml("Waiting its turn — it goes out at the top of an hour.")}</div>`;
-            }
-            return `<div class="m-ganga-mine-row">` +
-              `<div class="m-ganga-mine-t">${escapeHtml(words)}</div>` +
-              `<div class="m-ganga-mine-s">${st.icon} ${escapeHtml(st.label)}</div>` +
-              tail +
-            `</div>`;
-          }).join("") +
-        `</div>`;
+      catch (_) { return; }
+      const next = new Set();
+      rows.forEach((r) => {
+        if (r.first_sent && r.first_slot_date != null && r.first_slot != null) {
+          next.add(`${r.first_slot_date}:${r.first_slot}`);
+        }
+      });
+      // Same-value repaints are what the signature check exists to stop, and this
+      // runs on every open — so only disturb the list when the answer moved.
+      if (next.size === mineSlots.size && [...next].every((k) => mineSlots.has(k))) return;
+      mineSlots = next;
+      paint();
     };
     loadMine();
-
-    // A tap on an approved/declined/sent notification lands here with ?mine=1 —
-    // bring the answer into view rather than leaving them looking at five
-    // thoughts wondering which one it was about.
-    if (params && params.get("mine")) {
-      setTimeout(() => {
-        try { mineEl.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
-      }, 300);
-    }
 
     // ---- the timer --------------------------------------------------------
     // Repaint while the screen is open: a thought arrives without the page being
