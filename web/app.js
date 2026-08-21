@@ -7825,7 +7825,8 @@ function makeWheel(host, opts) {
 const SIT_AUDIO = (() => {
   let bedEl = null, mantra = null;
   let tailEl = null, tailUrl = null, tailSilenceSec = 0;
-  let omBuf = null;                   // decoded Om; false = asked for, not there
+  let omRaw = null;                   // encoded Om bytes; false = asked for, not there
+  let wholeRate = 0;                  // sample rate of the whole-sitting file, 0 = not used
   let endAtMs = 0, armTimer = null, netTimer = null, arming = false;
   let omPlayed = false;
 
@@ -7915,16 +7916,28 @@ const SIT_AUDIO = (() => {
     return 20;                        // seconds of bell to leave room for
   }
 
-  async function loadOm() {
-    if (omBuf !== null) return omBuf;
+  // The ENCODED bytes are cached, not a decoded buffer, because the whole-sitting
+  // file picks its sample rate from the sitting's length and decodeAudioData
+  // resamples to whatever context it is given.
+  async function omBytes() {
+    if (omRaw !== null) return omRaw;
     try {
-      const raw = await fetch(assetUrl(DHUN_FILE)).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()));
-      // decodeAudioData on an OFFLINE context resamples to TAIL_RATE for us and
-      // needs no audio device, so it still works on a page that is already
-      // hidden — which the recovery path in resumeIfParked() depends on.
-      omBuf = await offline(1).decodeAudioData(raw);
-    } catch (_) { omBuf = false; }    // false = "asked, not there" (vs null = "not asked")
-    return omBuf;
+      omRaw = await fetch(assetUrl(DHUN_FILE)).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()));
+    } catch (_) { omRaw = false; }    // false = "asked, not there" (vs null = "not asked")
+    return omRaw;
+  }
+
+  // Decoded at `rate`. Offline, so it needs no audio device and still works on a
+  // page that is already hidden.
+  // ⚠ decodeAudioData DETACHES the buffer it is handed, so it gets a copy —
+  // otherwise the second sitting of the session decodes an empty ArrayBuffer.
+  async function omAt(rate) {
+    const raw = await omBytes();
+    if (!raw) return false;
+    try {
+      const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      return await new OAC(1, 1, rate).decodeAudioData(raw.slice(0));
+    } catch (_) { return false; }
   }
 
   function encodeWav(buf) {
@@ -7945,7 +7958,7 @@ const SIT_AUDIO = (() => {
 
   // [ silenceSec of the sub-audible tone ][ the Om ] as one playable file.
   async function renderTail(silenceSec) {
-    const om = await loadOm();
+    const om = await omAt(TAIL_RATE);
     const omSec = om ? om.duration : 20;
     const total = silenceSec + omSec + 0.5;
     const c = offline(TAIL_RATE * total);
@@ -8002,6 +8015,103 @@ const SIT_AUDIO = (() => {
     arming = false;
   }
 
+  // ⚠⚠ WHY THE WHOLE SITTING IS RENDERED UP FRONT (2026-08-22)
+  //
+  // Because on this phone NOTHING OF OURS RUNS once the screen is off. Measured
+  // on the same vivo on 9.47, locked, twice:
+  //
+  //   the bed played unbroken for 5 min 35 s        <- media playback SURVIVES
+  //   the sit screen's 1-second paint() interval
+  //     missed the end of the sitting by 42 s       <- JAVASCRIPT DOES NOT
+  //
+  // A once-a-second timer that misses 42 seconds is not throttled, it is frozen.
+  // Chromium freezes the whole page. So the Om cannot be started by a timer, an
+  // event, a media callback or anything else of ours: whatever is going to make
+  // a sound must ALREADY BE INSIDE THE AUDIO PIPELINE before the screen goes
+  // off. The entire sitting therefore becomes ONE file, handed to the player
+  // inside the Start tap, and the phone simply plays it to the end.
+  //
+  // The only cost is size, so the sample rate is chosen to fit a cap. A drone
+  // survives a low rate well: 3 kHz is muffled, but that is the two-hour case,
+  // and a muffled Om is a sound where the alternative is none.
+  const WHOLE_MAX_BYTES = 48 * 1024 * 1024;
+  const WHOLE_RATES = [22050, 16000, 11025, 8000, 6000, 4000, 3000];
+
+  function pickRate(totalSec) {
+    for (const r of WHOLE_RATES) {
+      if (44 + Math.ceil(totalSec * r) * 2 <= WHOLE_MAX_BYTES) return r;
+    }
+    return 0;                         // too long to hold — caller falls back
+  }
+
+  // [ silenceSec of the sub-audible tone ][ the Om ] as one WAV, written
+  // straight into an Int16Array.
+  // ⚠ NOT rendered through an OfflineAudioContext: an hour of audio would want
+  // a Float32 buffer four times this size, to carry what is one tiled sine.
+  async function buildWhole(silenceSec, rate) {
+    const om = await omAt(rate);
+    if (!om) return null;             // no Om to bake in — fall back to the tail
+    const n = Math.ceil((silenceSec + om.duration + 0.5) * rate);
+    const out = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(out);
+    const tag = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    tag(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); tag(8, "WAVE");
+    tag(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+    v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    tag(36, "data"); v.setUint32(40, n * 2, true);
+    const pcm = new Int16Array(out, 44, n);
+
+    // One whole cycle, tiled. The period is a whole number of samples, so the
+    // joins are continuous and cannot click however many times it repeats.
+    const period = Math.max(2, Math.round(rate / 32));
+    const cyc = new Int16Array(period);
+    for (let i = 0; i < period; i++) cyc[i] = Math.round(150 * Math.sin(2 * Math.PI * i / period));
+    for (let o = 0; o < n; o += period) {
+      pcm.set(o + period <= n ? cyc : cyc.subarray(0, n - o), o);
+    }
+
+    const d = om.getChannelData(0);
+    const off = Math.floor(silenceSec * rate);
+    const lim = Math.min(d.length, Math.max(0, n - off));
+    for (let i = 0; i < lim; i++) {
+      const x = pcm[off + i] + Math.round(Math.max(-1, Math.min(1, d[i])) * 32000);
+      pcm[off + i] = x > 32767 ? 32767 : x < -32768 ? -32768 : x;
+    }
+    return new Blob([out], { type: "audio/wav" });
+  }
+
+  // Hands the whole sitting to the audio pipeline NOW, from inside the tap.
+  // ⚠ Everything spent building and loading is SEEKED past, so the Om lands on
+  // endAt rather than on "endAt plus however slow this phone is".
+  async function startWhole(msUntilEnd) {
+    const t0 = Date.now();
+    const silenceSec = Math.max(0, msUntilEnd / 1000);
+    const rate = pickRate(silenceSec + 21);
+    if (!rate) return false;
+    const blob = await buildWhole(silenceSec, rate);
+    if (!blob) return false;
+    tailUrl = URL.createObjectURL(blob);
+    const a = new Audio(tailUrl);
+    a.preload = "auto";
+    a.volume = 1;
+    a.muted = false;                  // a muted element is not "audible"
+    a.setAttribute("playsinline", "");
+    a.addEventListener("loadedmetadata", () => {
+      try { a.currentTime = Math.min(silenceSec, Math.max(0, (Date.now() - t0) / 1000)); } catch (_) {}
+    });
+    tailSilenceSec = silenceSec;
+    tailEl = a;
+    wholeRate = rate;
+    try { await a.play(); } catch (_) {
+      try { a.pause(); a.src = ""; } catch (_) {}
+      try { URL.revokeObjectURL(tailUrl); } catch (_) {}
+      tailEl = null; tailUrl = null; tailSilenceSec = 0; wholeRate = 0;
+      return false;
+    }
+    return true;
+  }
+
   // Holds the audio session open for the part of the sitting before the tail.
   //
   // ⚠ THREE mistakes are recorded here because each cost a real test cycle on a
@@ -8050,16 +8160,26 @@ const SIT_AUDIO = (() => {
     disarm();
     omPlayed = false;
     endAtMs = Date.now() + Math.max(0, msUntilEnd);
+    // The bed goes first and SYNCHRONOUSLY. It is the one play() certain to sit
+    // inside the gesture, and it holds audio focus for the moment or two the
+    // whole-sitting file takes to build.
     startBed();
-    const om = await loadOm();        // decode now, while we are certainly awake
 
-    armTimer = setTimeout(armTail, Math.max(0, msUntilEnd - TAIL_SEC * 1000));
-    // ⚠ Belt and braces against timer throttling. Chromium aligns timers in a
-    // page hidden for more than five minutes to one-minute boundaries, so the
-    // setTimeout above can land late. This gets at least one shot inside the
-    // two-minute window whatever happens, and armTail() is idempotent.
-    netTimer = setInterval(armTail, 20000);
-    if (msUntilEnd <= TAIL_SEC * 1000) armTail();
+    let whole = false;
+    try { whole = await startWhole(msUntilEnd); } catch (_) { whole = false; }
+    if (whole) {
+      // The file carries its own tone and the Om, so the bed has nothing left
+      // to hold open — one stream from here on.
+      try { if (bedEl) { bedEl.pause(); bedEl.loop = false; bedEl.src = ""; bedEl = null; } } catch (_) {}
+    } else {
+      // ⚠ FALLBACK ONLY, and on a phone that freezes JS it cannot fire — see the
+      // block above buildWhole(). It is here for sittings too long to hold in
+      // one file, and for a device that refuses to play the blob at all. Better
+      // than nothing; not something to rely on.
+      armTimer = setTimeout(armTail, Math.max(0, msUntilEnd - TAIL_SEC * 1000));
+      netTimer = setInterval(armTail, 20000);
+      if (msUntilEnd <= TAIL_SEC * 1000) armTail();
+    }
 
     let playedMantra = false;
     if (opts && opts.mode === "guru") {
@@ -8080,7 +8200,7 @@ const SIT_AUDIO = (() => {
         playedMantra = true;
       }
     }
-    return { bell: om ? "file" : "synth", mantra: playedMantra };
+    return { bell: whole ? "whole" : "tail", mantra: playedMantra };
   }
 
   function disarm() {
@@ -8097,6 +8217,7 @@ const SIT_AUDIO = (() => {
     try { if (tailUrl) URL.revokeObjectURL(tailUrl); } catch (_) {}
     tailUrl = null;
     tailSilenceSec = 0;
+    wholeRate = 0;
   }
 
   // Play the closing Om right now, on the same media stream and through the same
@@ -8197,7 +8318,8 @@ const SIT_AUDIO = (() => {
   function diag() {
     let tt = null;
     try { if (tailEl) tt = +tailEl.currentTime.toFixed(1); } catch (_) {}
-    return { bed: bedEl ? "media element (direct)" : "none",
+    return { mode: wholeRate ? ("whole sitting @" + wholeRate + "Hz") : "tail",
+             bed: bedEl ? "media element (direct)" : "none",
              bedPlaying: !!(bedEl && !bedEl.paused && !bedEl.muted && bedEl.volume > 0),
              tail: tailEl ? "armed" : "not armed",
              tailPlaying: !!(tailEl && !tailEl.paused),
