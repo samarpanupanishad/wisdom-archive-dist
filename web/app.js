@@ -7828,6 +7828,7 @@ const SIT_AUDIO = (() => {
   let omRaw = null;                   // encoded Om bytes; false = asked for, not there
   let wholeRate = 0;                  // sample rate of the whole-sitting file, 0 = not used
   let endAtMs = 0, armTimer = null, netTimer = null, arming = false;
+  let whyNotWhole = "";              // why the whole-sitting file was not used
   let omPlayed = false;
 
   // Assets ship over the air like artwork, so on a phone they live wherever the
@@ -8088,27 +8089,45 @@ const SIT_AUDIO = (() => {
     const t0 = Date.now();
     const silenceSec = Math.max(0, msUntilEnd / 1000);
     const rate = pickRate(silenceSec + 21);
-    if (!rate) return false;
-    const blob = await buildWhole(silenceSec, rate);
-    if (!blob) return false;
-    tailUrl = URL.createObjectURL(blob);
-    const a = new Audio(tailUrl);
-    a.preload = "auto";
-    a.volume = 1;
-    a.muted = false;                  // a muted element is not "audible"
-    a.setAttribute("playsinline", "");
-    a.addEventListener("loadedmetadata", () => {
-      try { a.currentTime = Math.min(silenceSec, Math.max(0, (Date.now() - t0) / 1000)); } catch (_) {}
-    });
+    if (!rate) { whyNotWhole = "no rate fits " + Math.round(silenceSec) + "s"; return false; }
+    let blob = null;
+    try { blob = await buildWhole(silenceSec, rate); }
+    catch (e) { whyNotWhole = "build threw: " + ((e && e.message) || e); return false; }
+    if (!blob) { whyNotWhole = "the Om would not decode at " + rate + "Hz"; return false; }
+
+    // ⚠ REUSE the bed element rather than making a second one. It has already
+    // played from inside the tap, so it carries a permission a fresh element
+    // would have to earn again — and the phone ends up holding ONE stream
+    // instead of two. Creating a new Audio() here is what 9.49 did, and on the
+    // vivo it never produced a stream at all.
+    const a = bedEl || new Audio();
+    bedEl = null;                     // adopted — tailEl owns it from here
+    try { a.pause(); } catch (_) {}
+    try {
+      tailUrl = URL.createObjectURL(blob);
+      a.loop = false;
+      a.preload = "auto";
+      a.volume = 1;
+      a.muted = false;                // a muted element is not "audible"
+      a.setAttribute("playsinline", "");
+      a.src = tailUrl;
+      a.addEventListener("loadedmetadata", () => {
+        try { a.currentTime = Math.min(silenceSec, Math.max(0, (Date.now() - t0) / 1000)); } catch (_) {}
+      });
+    } catch (e) { whyNotWhole = "element setup: " + ((e && e.message) || e); return false; }
     tailSilenceSec = silenceSec;
     tailEl = a;
     wholeRate = rate;
-    try { await a.play(); } catch (_) {
+    try { await a.play(); }
+    catch (e) {
+      whyNotWhole = "play() refused: " + ((e && e.name) || "") + " " + ((e && e.message) || e);
       try { a.pause(); a.src = ""; } catch (_) {}
       try { URL.revokeObjectURL(tailUrl); } catch (_) {}
       tailEl = null; tailUrl = null; tailSilenceSec = 0; wholeRate = 0;
+      startBed();                     // give the fallback its focus holder back
       return false;
     }
+    whyNotWhole = "";
     return true;
   }
 
@@ -8165,12 +8184,13 @@ const SIT_AUDIO = (() => {
     // whole-sitting file takes to build.
     startBed();
 
+    whyNotWhole = "";
     let whole = false;
-    try { whole = await startWhole(msUntilEnd); } catch (_) { whole = false; }
+    try { whole = await startWhole(msUntilEnd); }
+    catch (e) { whole = false; whyNotWhole = "arm threw: " + ((e && e.message) || e); }
+    try { localStorage.setItem("wa:dhyan:audio", whole ? "whole @" + wholeRate + "Hz" : (whyNotWhole || "unknown")); } catch (_) {}
     if (whole) {
-      // The file carries its own tone and the Om, so the bed has nothing left
-      // to hold open — one stream from here on.
-      try { if (bedEl) { bedEl.pause(); bedEl.loop = false; bedEl.src = ""; bedEl = null; } } catch (_) {}
+      // startWhole() adopted the bed element, so there is nothing to stop here.
     } else {
       // ⚠ FALLBACK ONLY, and on a phone that freezes JS it cannot fire — see the
       // block above buildWhole(). It is here for sittings too long to hold in
@@ -8315,6 +8335,8 @@ const SIT_AUDIO = (() => {
   // Support hook: what the audio layer thinks is going on. secToOm is the one
   // that matters — it is read straight off the media clock that will actually
   // deliver the Om, so if it is counting down, the Om is coming.
+  function whyTail() { return whyNotWhole; }
+
   function diag() {
     let tt = null;
     try { if (tailEl) tt = +tailEl.currentTime.toFixed(1); } catch (_) {}
@@ -8327,11 +8349,12 @@ const SIT_AUDIO = (() => {
              tailSilenceSec: +tailSilenceSec.toFixed(1),
              secToOm: tt === null ? null : +(tailSilenceSec - tt).toFixed(1),
              endsInSec: endAtMs ? Math.round((endAtMs - Date.now()) / 1000) : null,
+             why: whyNotWhole,
              omPlayed: omHasPlayed() };
   }
 
   return { arm, disarm, mantraReady, assetUrl, testOm, playOmNow, omHasPlayed,
-           markOmPlayed, resumeIfParked, diag, MANTRA_FILE, DHUN_FILE };
+           markOmPlayed, resumeIfParked, diag, whyTail, MANTRA_FILE, DHUN_FILE };
 })();
 
 // Offered durations. 30 is the prescription the diary presents; the rest is
@@ -8451,6 +8474,17 @@ function openSitScreen(armed) {
   // or the synthesized bell is not the sitter's problem, and saying so would
   // only invite them to check on it.
   noteEl.textContent = "You may lock the phone. The screen can stay dark.";
+  // ⚠ There is no console on a release APK (webContentsDebuggingEnabled is
+  // false), so when the closing sound could not be prepared the screen has to
+  // be the one to say so — otherwise the only symptom is silence five minutes
+  // later, which is indistinguishable from every other cause.
+  try {
+    const d = SIT_AUDIO.diag();
+    if (d && d.mode === "tail") {
+      noteEl.textContent = "⚠ Closing sound not prepared — " + (d.why || "unknown")
+                         + ". The Om may only sound when you unlock.";
+    }
+  } catch (_) {}
 
   let done = false, timer = null;
   const two = (n) => (n < 10 ? "0" + n : "" + n);
