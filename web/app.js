@@ -16269,27 +16269,35 @@ const MOBILE_UI = (() => {
   // Who a bubble is signed by. ⚠ A member NEVER sees a moderator's name: the
   // server does not send it (admin_msg_thread returns author_name empty to
   // anyone but an admin), and this is the second wall, not the first.
-  function amWhoOf(m) {
+  function amWhoOf(m, forAdmin) {
     if (!m.fromAdmin) return "";                       // the header names them
-    // ⚠ THE TEAM NAME FOR EVERYONE, ADMINS INCLUDED (operator, 2026-08-22).
-    // It first shipped showing the real moderator's name on an ADMIN's screen —
-    // the reasoning being "an admin should see who answered" — and the operator
-    // asked for one identity on every screen instead: whatever an admin replies,
-    // it reads Samarpan Upanishad Team. `forAdmin` is therefore gone from this
-    // function; it still decides which SIDE a bubble sits on, nothing more.
+    // ⚠ TWO AUDIENCES, TWO ANSWERS, AND THIS HAS ALREADY BEEN FLIPPED ONCE AND
+    // FLIPPED BACK (operator, 2026-08-22). Read this before "simplifying" it:
     //
-    // The real author is not lost — `admin_messages.author_id` still records it
-    // and `admin_msg_thread()` still returns `author_name` to a moderator. It is
-    // simply not drawn. If "which of us answered this" is ever wanted, that is
-    // where it comes from, and it should be a deliberate second line rather than
-    // a name where the team's belongs.
-    return ADMIN_MSG_TEAM;
+    //   a MEMBER   → always "Samarpan Upanishad Team". One identity, so no
+    //                moderator becomes personally accountable for an answer and
+    //                nobody starts addressing them directly.
+    //   an ADMIN   → the real name of whoever replied, because with several
+    //                moderators "who answered this" is the thing that stops the
+    //                same person being answered twice.
+    //
+    // 9.57 made it the team name for EVERYONE, on a misreading of "whatever
+    // admin reply Samarpan Upanishad Team should display" as covering the admin's
+    // own screen too. It was reverted in 9.58. The member half is the promise;
+    // the admin half is a working tool. Don't collapse them again.
+    //
+    // ⚠ The member half is NOT enforced here. admin_msg_thread() returns
+    // author_name as '' to anyone who fails wa_is_mod(), so a member's device is
+    // never sent a name at all — this line only decides what to draw with what
+    // the server was willing to send. That is the order of the two walls, and
+    // this one is the outer one.
+    return forAdmin ? (m.author || "Admin") : ADMIN_MSG_TEAM;
   }
   // `forAdmin` decides which side is "mine": the admin's replies on an admin's
   // screen, the member's messages on the member's.
   function amBubbleHtml(m, forAdmin) {
     const mine = forAdmin ? m.fromAdmin : !m.fromAdmin;
-    const who = amWhoOf(m);
+    const who = amWhoOf(m, forAdmin);
     return `<div class="am-msg ${mine ? "me" : "them"}">
       <div class="am-bubble">
         ${who ? `<div class="am-who">${escapeHtml(who)}</div>` : ""}
