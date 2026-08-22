@@ -16798,6 +16798,14 @@ const MOBILE_UI = (() => {
           lines.push("Last push sent: " + (f.kind || "?") + " → " + (f.state || "?")
                      + (f.status ? " (HTTP " + f.status + ")" : "")
                      + (detail ? " " + detail : ""));
+          // The retry's evidence (states "ok-retry" / "error-retry" / "dead").
+          // `firstError` is why `functions.invoke` gave up, and `online` is the
+          // device's own answer to "was there a network at all" — without those
+          // two, a second transport failure reads identically to the first and
+          // says nothing new.
+          if (f.firstError) lines.push("  first attempt: " + f.firstError);
+          if (f.online === false) lines.push("  the phone reported itself OFFLINE");
+          else if (f.online === true) lines.push("  the phone reported itself online");
           if (f.at) lines.push("  at " + f.at);
         }
         lines.push("Notifications allowed: " + (granted ? "yes" : "NO")

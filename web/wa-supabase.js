@@ -645,9 +645,67 @@ function _lastFire(patch) {
   } catch (_) {}
 }
 
-function _firePush(payload) {
+// ---- the second attempt: a plain, KEEPALIVE fetch -------------------------
+// ⚠ Added 2026-08-22 because `functions.invoke` failed REPRODUCIBLY on one phone
+// with "Failed to send a request to the Edge Function" — supabase-js's
+// FunctionsFetchError, which means the fetch never got a response. The function
+// itself was proved healthy at that moment (OPTIONS 200 with correct CORS, POST
+// answered by our own code), and the INSERT that preceded it on the same
+// connection had just succeeded. So the request was dying between the app and
+// the network, not being rejected.
+//
+// Two things this does that `invoke` cannot be told to do:
+//
+//   keepalive: true — lets the request outlive the page being frozen. Android
+//     freezes a backgrounded WebView outright (the same behaviour that broke the
+//     Dhyan Om on a locked phone), and a notification is fired precisely when a
+//     user is finishing with the screen and about to leave it.
+//   an EXPLICIT Authorization header — invoke depends on the client's internal
+//     auth state, which is one more thing that can be mid-refresh.
+//
+// It reports the real underlying error too (`name` and `navigator.onLine`), so
+// if this also fails the Settings diagnostics line says something actionable
+// rather than repeating the same sentence.
+async function _pushViaFetch(payload) {
+  let token = WA_SUPABASE_ANON_KEY;
   try {
-    _lastFire({ kind: payload && payload.kind, state: "sending" });
+    const { data: { session } } = await _sb.auth.getSession();
+    if (session && session.access_token) token = session.access_token;
+  } catch (_) { /* fall back to the anon key; send-push will say "sign-in required" */ }
+  const r = await fetch(WA_SUPABASE_URL + "/functions/v1/send-push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: WA_SUPABASE_ANON_KEY,
+      Authorization: "Bearer " + token,
+    },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  });
+  const text = await r.text().catch(() => "");
+  return { status: r.status, ok: r.ok, body: text };
+}
+
+function _firePush(payload) {
+  const kind = payload && payload.kind;
+  // The fallback. ⚠ Only ever for a TRANSPORT failure — never for a 4xx. A 403
+  // ("not yours") or 400 ("missing id") is the server saying don't send this, and
+  // retrying it would just ask twice for the same refusal.
+  const viaFetch = (why) => {
+    _pushViaFetch(payload).then((r) => {
+      _lastFire({ kind, state: r.ok ? "ok-retry" : "error-retry", status: r.status,
+                  body: String(r.body).slice(0, 300), firstError: why });
+      if (!r.ok) console.warn("send-push retry:", r.status, r.body);
+    }).catch((e) => {
+      _lastFire({ kind, state: "dead", firstError: why,
+                  error: ((e && e.name) ? e.name + ": " : "") + ((e && e.message) || String(e)),
+                  online: (typeof navigator !== "undefined" && "onLine" in navigator)
+                    ? navigator.onLine : null });
+      console.warn("send-push retry failed:", e);
+    });
+  };
+  try {
+    _lastFire({ kind, state: "sending" });
     _sb.functions.invoke("send-push", { body: payload })
       .then((r) => {
         if (r && r.error) {
@@ -656,24 +714,26 @@ function _firePush(payload) {
           // ("no devices" / "not your message") survives, not just "non-2xx".
           const ctx = r.error.context;
           if (ctx && typeof ctx.text === "function") {
-            ctx.text().then((t) => _lastFire({ kind: payload.kind, state: "error",
+            ctx.text().then((t) => _lastFire({ kind, state: "error",
                                                status: ctx.status, body: String(t).slice(0, 300) }))
-                      .catch(() => _lastFire({ kind: payload.kind, state: "error",
+                      .catch(() => _lastFire({ kind, state: "error",
                                                error: r.error.message || String(r.error) }));
           } else {
-            _lastFire({ kind: payload.kind, state: "error", error: r.error.message || String(r.error) });
+            // No `context` = no HTTP response = the request never landed. THIS is
+            // the case worth a second attempt; everything above got an answer.
+            viaFetch(r.error.message || String(r.error));
           }
         } else {
-          _lastFire({ kind: payload.kind, state: "ok", reply: r && r.data });
+          _lastFire({ kind, state: "ok", reply: r && r.data });
         }
       })
       .catch((e) => {
         console.warn("send-push failed:", e);
-        _lastFire({ kind: payload && payload.kind, state: "threw", error: (e && e.message) || String(e) });
+        viaFetch("threw: " + ((e && e.message) || String(e)));
       });
   } catch (e) {
     console.warn("send-push failed:", e);
-    _lastFire({ kind: payload && payload.kind, state: "threw", error: (e && e.message) || String(e) });
+    viaFetch("threw sync: " + ((e && e.message) || String(e)));
   }
 }
 
