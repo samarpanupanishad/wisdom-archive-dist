@@ -3625,14 +3625,25 @@ async function renderStats() {
 // "Upanishad Ganga" / #/m/gyan and "Samuhik Satsang" / #/m/community: rename
 // copy, not identifiers. Anything already pointing at #/about keeps working.
 //
-// ⚠ EMPTIED ON PURPOSE (operator, 2026-08-20). The page used to carry a
-// description of the archive and a quote from Baba Swami; the operator asked for
-// everything out except the version line, with their own paragraph to follow.
-// Don't restore the old copy from git — it was removed deliberately, not lost.
+// ⚠ EMPTIED ON PURPOSE (operator, 2026-08-20), then FILLED with the operator’s
+// own four paragraphs (2026-08-22). The page used to carry a description of the
+// archive and a quote from Baba Swami; that copy was removed deliberately, not
+// lost — don't restore it from git, and don't blend it back in with what's below.
 //
-// To fill it: one string per paragraph, and change nothing else. The version
-// line stays last, below whatever goes in here.
-const OUR_GOAL = [];
+// ⚠ TRANSCRIBED VERBATIM, the same rule as GANGA_INSTRUCTIONS: the doubled
+// spaces, the curly quotes, "dedicated in exploring", the space before "—and" —
+// all of it is as the operator typed it. Do NOT "correct" the spelling, the
+// grammar or the punctuation. One string per paragraph; escapeHtml runs on each.
+//
+// ⚠ The version line is NO LONGER part of this page’s body (operator, same day).
+// It is pinned to the bottom-left corner of the viewport — see `verLine` below
+// and `.wa-verline` in styles.css. Don’t append it back into this array.
+const OUR_GOAL = [
+  `Samarpan Upanishad is an initiative dedicated in exploring the deeper meaning behind our Guru's daily quotes, Special Telegram Sandesh, and Anusthan messages —and to unearth  its true meaning,  which is hidden “seven layers deep”.`,
+  `In simple terms, we are trying to decode our Guru's teaching, "Samaj Sako Toh Samjo" in its original and complete form.`,
+  `We follow the spirit of Vasudhaiva Kutumbakam — the world is one family — and believe everyone has the right to share their opinion with an open and unbiased mind. Our only request is that members refrain from spamming the forum, as we consider the act of sharing to be “sacred”.`,
+  `Our ultimate goal is to understand Vedic texts through the lens of our Guru's discourses, and to download cosmic knowledge while sitting silently under “Gurus Divine Grace”.`,
+];
 
 function renderInfo(kind) {
   const title = { settings: "Settings", about: "Our Goal", help: "Help & Support" }[kind];
@@ -3648,7 +3659,7 @@ function renderInfo(kind) {
     // paints the name as .page-title, so the heading was always a duplicate —
     // invisible while a paragraph followed it, and glaring once the body was
     // emptied. Put the operator's words in OUR_GOAL, not in a heading.
-    about: `${OUR_GOAL.map((para) => `<p>${escapeHtml(para)}</p>`).join("")}<p style="margin-top:22px;color:var(--muted,#888);font-size:13px">Samarpan Upanishad · version <span id="wa-version">…</span></p>`,
+    about: OUR_GOAL.map((para) => `<p>${escapeHtml(para)}</p>`).join(""),
     help: `<h3>Help &amp; Support</h3><p>Search any word in English or Hindi from the bar at the top — matching Guru's msgs appear with the word highlighted in yellow. Click a result to read it in full, with both images and transcripts.</p><ul><li><strong>Add to Favorites</strong> to save an entry; find them under Favorites.</li><li>Write private notes under <strong>My Comments</strong> on any entry.</li><li><strong>Browse</strong> by Date, Month, or Year from the sidebar.</li></ul>`,
   }[kind];
   // ⚠ On a PHONE the shell already paints this page's name in the top bar
@@ -3663,8 +3674,20 @@ function renderInfo(kind) {
   // Scoped to `about` alone — settings and help have the same duplication, but
   // they still have real content under it and were not part of the ask.
   const showTitle = !(kind === "about" && MOBILE_UI.active);
+  // ⚠ The version line sits OUTSIDE the white card now (operator, 2026-08-22):
+  // parked in the bottom-left corner and still there while the page scrolls.
+  // How it stays there is all CSS — `.wa-verline` in styles.css, which also
+  // records why it is sticky and not fixed. Nothing to compute here.
+  //
+  // ⚠ It must stay the LAST child of .content: the corner is reached by
+  // `margin-top:auto` in a flex column, so anything appended after it steals
+  // the spot. And it must stay inside $view — every route replaces $view’s
+  // children, which is what disposes of it when you leave Our Goal.
+  const verLine = kind === "about"
+    ? `<div class="wa-verline">Samarpan Upanishad · version <span id="wa-version">…</span></div>`
+    : "";
   $view.innerHTML = (showTitle ? `<div class="page-title">${title}</div>` : "") +
-                    `<div class="prose">${body}</div>`;
+                    `<div class="prose">${body}</div>` + verLine;
   if (kind === "about") {
     // Fill the version number. On desktop this is the VERSION file via the API.
     // On the phone, an OTA UI update bumps the RUNNING ui (app.js/styles.css)
@@ -8739,10 +8762,19 @@ function openBeadCounter() {
   };
   const lp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
 
+  // ⚠ BOTH arms span their curve endpoint-to-endpoint: `i / (ARM - 1)` puts a
+  // bead ON RBASE and ON LBASE, and the four flat beads sit strictly between
+  // them. Get this wrong on one side only and the mala goes visibly out of step
+  // at ONE bead. It did: the left arm used to start at `(i + 1) / ARM`, i.e. a
+  // full step PAST LBASE, so that corner held no bead and the flat->left-arm
+  // joint opened to 7.71px against ~4.40px everywhere else. At r=3 the beads
+  // elsewhere all but touch, so the odd one out reads as a gap at bead 57 --
+  // which is exactly where the operator saw it (2026-08-22). Now every gap on
+  // the whole mala is 4.32-4.79px and the two bottom corners match.
   const beadPts = [];
   for (let i = 0; i < ARM; i++)   beadPts.push(qp(RTOP, RCTL, RBASE, i / (ARM - 1)));   // down the right
   for (let i = 1; i <= FLAT; i++) beadPts.push(lp(RBASE, LBASE, i / (FLAT + 1)));       // level across
-  for (let i = 0; i < ARM; i++)   beadPts.push(qp(LBASE, LCTL, LTOP, (i + 1) / ARM));   // up the left
+  for (let i = 0; i < ARM; i++)   beadPts.push(qp(LBASE, LCTL, LTOP, i / (ARM - 1)));   // up the left
 
   let beadSvg = "";
   beadPts.forEach((pt, i) => {

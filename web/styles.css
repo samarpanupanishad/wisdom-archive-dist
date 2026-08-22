@@ -600,6 +600,43 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .prose { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 26px 30px; max-width: 760px; font-size: 15px; line-height: 1.7; color: #45414e; }
 .prose h3 { font-family: var(--serif); margin-top: 0; }
 .prose ul { padding-left: 18px; }
+
+/* ---- Our Goal: the version line, pinned to the bottom-left corner -------
+   Outside the white .prose card (operator, 2026-08-22) and always on screen.
+
+   ⚠ sticky, NOT fixed — measured, not preferred. `position: fixed` is
+   viewport-relative, so its `left` would have to be re-derived by hand for
+   every sidebar state (full 268px / 78px icon rail / auto-hidden to 0 /
+   revealed on hover) and again for the phone. That was tried first and it
+   lands in the wrong place, because .app can carry `autohide` while the
+   sidebar is still 268px wide — the class is not a reliable proxy for the
+   width. Sticky leaves the line in normal flow horizontally, so its left edge
+   IS the content column’s left edge in every one of those states, for free.
+
+   Two parts make it park in the corner, and both are needed: `margin-top:auto`
+   inside a stretched flex column pushes it to the bottom of a SHORT page
+   (sticky alone never moves an element down, only up), and `bottom:` holds it
+   there once the page is long enough to scroll. */
+.wa-verline {
+  position: sticky; bottom: calc(14px + env(safe-area-inset-bottom));
+  margin-top: auto; align-self: flex-start; padding-top: 18px;
+  pointer-events: none;                           /* never swallow a tap */
+  font-size: 13px; color: var(--muted, #888);
+}
+/* Scoped to Our Goal by :has() — every other page keeps .content as a block.
+   flex:1 stretches .content to the foot of the viewport on the desktop (.main
+   is already a 100vh flex column); the phone gets there via its own
+   min-height:100vh above, since body.m-mode .app is display:block. */
+.content:has(.wa-verline) {
+  display: flex; flex-direction: column; flex: 1;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom));   /* .content’s own 60px
+     bottom padding would otherwise hold the line 60px clear of the corner */
+}
+/* ⚠ `body.m-mode .content` (0,2,1) outranks the :has() rule above (0,2,0), so the
+   phone keeps its own 20px — which is the house gap on every mobile page, and
+   fine. Restated only to fold the safe-area inset back in, which that rule
+   (shared with every other page) does not carry. */
+body.m-mode .content:has(.wa-verline) { padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
 .sync-box { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
 .sync-status { margin-top: 10px; font-size: 13.5px; }
 .sync-status .muted { color: var(--muted); }
