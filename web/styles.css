@@ -1999,9 +1999,62 @@ body.m-mode .content:has(.m-page-scroll) { min-height: 0; }
    an admin sees it. Namespaced `am-` — `ax-` is accessBox() and `at-` is Admin
    Talks; both were already taken.
 
-   ⚠ An ORDINARY SCROLLING PAGE, unlike .m-community / .m-page-ganga: the
-   writing box is at the TOP, so it cannot fall behind the keyboard and needs
-   none of the --m-vvh flex-column machinery those two carry. */
+   ⚠ TWO PANES since 2026-08-22 (operator): `.am-head` is pinned and `.am-scroll`
+   scrolls under it. It shipped as an ordinary scrolling page — the note that used
+   to be here said so, and said it needed none of the --m-vvh machinery — and the
+   whole screen moved together. Same skeleton as .m-page-ganga, written beside it
+   rather than reusing that class, which carries Ganga's own child rules. */
+
+/* THE FIXED-HEIGHT COLUMN. ⚠ --m-vvh, never 100vh: 100vh does not shrink when
+   the keyboard opens, so sizing to it puts Send behind the keyboard. Same
+   reasoning, same numbers as .m-page-ganga. */
+body.m-mode .m-page-admsg {
+  display: flex; flex-direction: column; min-height: 0;
+  height: calc(var(--m-vvh, 100vh) - 78px - env(safe-area-inset-top));
+}
+@supports (height: 100dvh) {
+  body.m-mode .m-page-admsg {
+    height: calc(min(100dvh, var(--m-vvh, 100dvh)) - 78px - env(safe-area-inset-top));
+  }
+}
+/* Drop .content's min-height:100vh, or a short conversation leaves a screen of
+   empty document below the pinned box to pan around in. */
+body.m-mode .content:has(.m-page-admsg) { min-height: 0; }
+body.m-mode:has(.m-page-admsg) { overflow: hidden; overscroll-behavior: none; }
+html:has(body.m-mode .m-page-admsg) { overflow: hidden; overscroll-behavior: none; }
+/* FOLLOW THE PAN: if a device still pans the visual viewport despite the
+   pre-shrink, the whole screen goes with it rather than the box sliding under
+   the fold. Only while .m-kb — with no keyboard the offset is always 0, and an
+   always-on transform would make this a containing block for nothing. */
+body.m-mode.m-kb .m-page-admsg { transform: translateY(var(--m-vvtop, 0px)); }
+
+/* .m-contact is the page's only child and has to pass the height through. */
+.m-page-admsg .m-contact { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* THE PINNED PANE. flex:none is the whole of "pinned" — there is no
+   position:sticky here and there must not be, because this is a flex child of a
+   fixed-height column, not a scroller.
+   max-height 72% is the one guard: a long note plus a four-row textarea must
+   never push the conversation off the screen entirely. Past it the pane scrolls
+   internally. */
+.am-head {
+  flex: none; max-height: 72%;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+/* THE SCROLLING PANE, under it. */
+.am-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+/* The divider under the pane is the separation now, so the thread's own top
+   margin would only double it — and the inbox list needs a little air instead. */
+.am-scroll .am-thread { margin-top: 12px; }
+.am-scroll .am-list { margin-top: 12px; }
+/* First thing on the screen, so no top margin of its own: the .content padding
+   above it is the gap. */
+.m-page-admsg .m-seg-row { margin-top: 0; }
 
 /* The Pending | Replied segment. The home bottom bar's हिंदी/English pill,
    reused a third time (Search By's .m-searchseg was the second) so the control

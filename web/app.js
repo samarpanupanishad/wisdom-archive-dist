@@ -5355,14 +5355,13 @@ function refreshAnyMsgDot() {
   // carry admintalk too, because the Sutradhar group was nested inside it —
   // that group is now top-level (2026-08-20), so More must NOT keep counting
   // it, or a moderator sees a number on More and finds nothing behind it.
-  // ⚠ Msg to Admin is counted in EXACTLY ONE of these two, decided by role, and
-  // it has to match which ✉️ row is actually visible: the one under More is
-  // hidden for moderators, and the one in the Sutradhar group exists only for
-  // them (refreshAccountRow). Counting it in both would put a number on a group
-  // holding no row that carries it, which is the sin the note above describes.
-  const modNow = isModerator();
-  group("[data-more-group-badge]", broadcast + (modNow ? 0 : adminmsg));
-  group("[data-sutradhar-group-badge]", admintalk + (modNow ? adminmsg : 0));
+  // ⚠ Msg to Admin lives under More for EVERY role now (operator, 2026-08-22),
+  // so its count belongs to More for every role too. It was briefly split by
+  // role, matching a second row in the Sutradhar group; that row is gone, and
+  // leaving the count behind would put a number on a group holding no row that
+  // carries it — the sin the note above describes.
+  group("[data-more-group-badge]", broadcast + adminmsg);
+  group("[data-sutradhar-group-badge]", admintalk);
 }
 
 // ==========================================================================
@@ -11437,13 +11436,14 @@ const MOBILE_UI = (() => {
           <a href="#/favorites"><span class="mi">♥</span> Favorites</a>
           <a href="#/m/gyan"><span class="mi">📿</span> Upanishad Ganga</a>
           <a href="#/m/broadcast"><span class="mi">📢</span> Admin Announcements <span class="m-badge" data-broadcast-badge hidden></span></a>
-          <!-- The MEMBER's door to Msg to Admin. Hidden for moderators, who get
-               their own row in the Sutradhar group below (refreshAccountRow) —
-               one destination, but an admin looks for work in the shield group
-               and a member should not be sent there. ⚠ Hiding an <a> in this
-               menu needs the .m-menu a[hidden] rule in styles.css; it is
-               already there. -->
-          <a href="#/m/contact" data-adminmsg-member-row><span class="mi">✉️</span> Msg to Admin <span class="m-badge" data-adminmsg-badge hidden></span></a>
+          <!-- Msg to Admin, for EVERY role (operator, 2026-08-22). It briefly had
+               a second row in the Sutradhar group with the More one hidden for
+               moderators, on the reasoning that an admin looks for work in the
+               shield group; the operator asked for one row in one place, the same
+               for admins as for members. contactPage() still decides which of the
+               three screens to draw. ⚠ If this ever moves again, the group badge
+               sum in refreshAnyMsgDot() has to move with it. -->
+          <a href="#/m/contact"><span class="mi">✉️</span> Msg to Admin <span class="m-badge" data-adminmsg-badge hidden></span></a>
           <a href="#/settings"><span class="mi">⚙️</span> Settings</a>
           <a href="#/about"><span class="mi">🕉️</span> Our Goal</a>
         </div>
@@ -11471,11 +11471,6 @@ const MOBILE_UI = (() => {
           <span class="m-badge" data-sutradhar-group-badge hidden></span><span class="m-caret">▾</span></button>
         <div class="m-submenu" data-sub="sutradhar" hidden>
           <a href="#/moderator"><span class="mi">🛡️</span> Moderator</a>
-          <!-- The admins' Msg to Admin inbox. Same route as the members' row —
-               contactPage() renders the inbox for a moderator and the
-               conversation for everybody else — but this is where an admin looks
-               for work, and the badge here is the pending-conversation count. -->
-          <a href="#/m/contact"><span class="mi">✉️</span> Msg to Admin <span class="m-badge" data-adminmsg-badge hidden></span></a>
           <a href="#/m/gyanreview"><span class="mi">📿</span> Upanishad Ganga Review</a>
           <a href="#/m/admintalks"><span class="mi">🔒</span> Admin Talks <span class="m-badge" data-admintalk-badge hidden></span></a>
           <a href="#/stats"><span class="mi">📊</span> Statistics</a>
@@ -11506,14 +11501,9 @@ const MOBILE_UI = (() => {
          <span class="m-acc-name">Sign in<small>for Samuhik Satsang</small></span>`;
     // Moderator/sutradhar-only rows (see the drawer markup above).
     $("m-drawer").querySelectorAll(".m-mod-only").forEach((a) => { a.hidden = !isModerator(); });
-    // …and the one row that is the other way round: Msg to Admin under More is
-    // the MEMBER's door, and an admin has their own in the Sutradhar group. Both
-    // lead to the same route, so showing both would be one destination listed
-    // twice — and would put the pending count on two different group badges.
-    $("m-drawer").querySelectorAll("[data-adminmsg-member-row]")
-      .forEach((a) => { a.hidden = isModerator(); });
-    // The two ✉️ badges now differ in visibility, so repaint them against the
-    // role we have just applied rather than leaving whatever the last paint drew.
+    // Msg to Admin's badge means different things to different roles (pending
+    // conversations for an admin, unread replies for a member), so repaint it
+    // against the role we have just applied rather than leaving the last paint's.
     ADMINMSG.refreshBadges();
   }
   function openDrawer() { refreshAccountRow(); $("m-drawer").classList.add("open"); $("m-scrim").hidden = false; }
@@ -11735,7 +11725,11 @@ const MOBILE_UI = (() => {
   // here; anything on an ordinary scrolling page does NOT, because for those the
   // browser's own scroll-into-view is the right behaviour and pre-shrinking
   // would crop a page that had no reason to shrink.
-  const KB_PRESHRINK = ".wc-ta, #m-ganga-ta";
+  // ⚠ A PINNED composer sized against --m-vvh belongs in this list; a box on an
+  // ordinary scrolling page must NOT (it would crop that page for nothing).
+  // #m-msg / #am-reply joined when Msg to Admin gained its pinned pane
+  // (operator, 2026-08-22) — before that they were deliberately absent.
+  const KB_PRESHRINK = ".wc-ta, #m-ganga-ta, #m-msg, #am-reply";
   let _preShrinkCheck = 0;
   document.addEventListener("focusin", (e) => {
     const t = e.target;
@@ -16274,9 +16268,24 @@ const MOBILE_UI = (() => {
   // is the bug Upanishad Ganga's four separate panes exist to avoid. Here the
   // box simply is not inside anything that gets repainted.
   //
-  // ⚠ It stays an ORDINARY SCROLLING PAGE — no `--m-vvh` flex column and NOT in
-  // KB_PRESHRINK. Those belong to pages whose composer is pinned; adding them to
-  // a scrolling page crops it for no reason (see app/static/CLAUDE.md).
+  // ⚠ TWO PANES, NOT A SCROLLING PAGE (operator, 2026-08-22). It shipped as an
+  // ordinary scrolling page and the whole thing moved together; the controls now
+  // stay put and only the conversation scrolls. Every screen is therefore
+  // `.am-head` (pinned) + `.am-scroll`, inside `.m-page-admsg` — the same
+  // skeleton as `.m-page-ganga`, built beside it rather than reusing that class,
+  // which carries Ganga's own child rules.
+  //
+  // ⚠ The column is sized against `--m-vvh`, never `100vh`: 100vh does NOT
+  // shrink when the keyboard opens, so sizing to it puts Send behind the
+  // keyboard. `#m-msg` and `#am-reply` are consequently in `KB_PRESHRINK` —
+  // which reverses the note that used to be here saying they must NOT be. That
+  // was correct while the page scrolled and became wrong the moment a pane was
+  // pinned; a pinned composer sized against `--m-vvh` belongs in that list, a
+  // box on a scrolling page does not.
+  //
+  // The SIGNED-OUT member view is deliberately left as an ordinary page: it is a
+  // sign-in form with no conversation under it, so there is nothing to pin and
+  // nothing to scroll.
   //
   // ⚠ No Realtime channel of its own. Concurrent connections are the scarcest
   // free-tier resource, and there is already a signal for "something arrived":
@@ -16358,19 +16367,26 @@ const MOBILE_UI = (() => {
   // ---- the member's own conversation --------------------------------------
   async function memberMsgPage() {
     const node = el(`<div class="m-contact"></div>`);
-    pageFrame("Msg to Admin", node);
-    if (!isSignedIn()) {
+    const signedIn = isSignedIn();
+    // No class when signed out — see the ⚠ in the header: a sign-in form has no
+    // conversation beneath it, so there is nothing to pin it against.
+    pageFrame("Msg to Admin", node, signedIn ? "m-page-admsg" : "");
+    if (!signedIn) {
       node.innerHTML = `<p class="m-hint" style="margin-bottom:14px">Sign in to send a message to the admin.</p>` + modSignInHtml();
       wireModSignIn(node, () => memberMsgPage());
       return;
     }
     node.innerHTML = `
-      <div class="m-inputcol">
-        <textarea id="m-msg" rows="4" maxlength="2000" placeholder="Write your message to the admin…"></textarea>
-        <button class="btn primary" id="m-msg-send">Send</button>
+      <div class="am-head">
+        <div class="m-inputcol">
+          <textarea id="m-msg" rows="4" maxlength="2000" placeholder="Write your message to the admin…"></textarea>
+          <button class="btn primary" id="m-msg-send">Send</button>
+        </div>
+        <div class="am-note">${escapeHtml(ADMIN_MSG_NOTE)}</div>
       </div>
-      <div class="am-note">${escapeHtml(ADMIN_MSG_NOTE)}</div>
-      <div class="am-thread" id="m-msg-thread"><div class="loading">Loading…</div></div>`;
+      <div class="am-scroll">
+        <div class="am-thread" id="m-msg-thread"><div class="loading">Loading…</div></div>
+      </div>`;
 
     const thread = node.querySelector("#m-msg-thread");
     const load = async () => {
@@ -16410,15 +16426,22 @@ const MOBILE_UI = (() => {
   // counts the labels carry.
   async function adminMsgInboxPage() {
     const node = el(`<div class="m-contact"></div>`);
-    pageFrame("Msg to Admin", node);
+    pageFrame("Msg to Admin", node, "m-page-admsg");
+    // The segment is pinned for the same reason the composers are: with a screen
+    // of threads under it, switching tabs otherwise means scrolling back up to
+    // reach the control you are switching with.
     node.innerHTML = `
-      <div class="m-seg-row">
-        <div class="m-langseg m-msgseg" id="am-seg" role="group" aria-label="Which conversations">
-          <button data-want="pending" class="active" type="button">Pending</button>
-          <button data-want="replied" type="button">Replied</button>
+      <div class="am-head">
+        <div class="m-seg-row">
+          <div class="m-langseg m-msgseg" id="am-seg" role="group" aria-label="Which conversations">
+            <button data-want="pending" class="active" type="button">Pending</button>
+            <button data-want="replied" type="button">Replied</button>
+          </div>
         </div>
       </div>
-      <div class="am-list" id="am-list"><div class="loading">Loading…</div></div>`;
+      <div class="am-scroll">
+        <div class="am-list" id="am-list"><div class="loading">Loading…</div></div>
+      </div>`;
 
     const seg = node.querySelector("#am-seg");
     const list = node.querySelector("#am-list");
@@ -16492,16 +16515,20 @@ const MOBILE_UI = (() => {
   // ---- one member's conversation, as an admin sees it ----------------------
   async function adminMsgThreadPage(uid) {
     const node = el(`<div class="m-contact"></div>`);
-    pageFrame("Msg to Admin", node);
+    pageFrame("Msg to Admin", node, "m-page-admsg");
     node.innerHTML = `
-      <div class="m-inputcol">
-        <textarea id="am-reply" rows="4" maxlength="2000" placeholder="Write your reply…"></textarea>
-        <div class="am-acts">
-          <button class="btn" id="am-done" type="button">Mark done</button>
-          <button class="btn primary" id="am-send" type="button">Send reply</button>
+      <div class="am-head">
+        <div class="m-inputcol">
+          <textarea id="am-reply" rows="4" maxlength="2000" placeholder="Write your reply…"></textarea>
+          <div class="am-acts">
+            <button class="btn" id="am-done" type="button">Mark done</button>
+            <button class="btn primary" id="am-send" type="button">Send reply</button>
+          </div>
         </div>
       </div>
-      <div class="am-thread" id="am-thread"><div class="loading">Loading…</div></div>`;
+      <div class="am-scroll">
+        <div class="am-thread" id="am-thread"><div class="loading">Loading…</div></div>
+      </div>`;
 
     const thread = node.querySelector("#am-thread");
     const doneBtn = node.querySelector("#am-done");
