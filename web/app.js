@@ -3645,14 +3645,37 @@ async function renderStats() {
 // <u> belong in here, and a literal & < > in new copy must be escaped by hand.
 //
 // ⚠ The version line is NO LONGER part of this page’s body (operator, same day).
-// It is pinned to the bottom-left corner of the viewport — see `verLine` below
-// and `.wa-verline` in styles.css. Don’t append it back into this array.
+// It is a pill pinned to the TOP of the page — see `verLine` below and
+// `.wa-verline` in styles.css. Don’t append it back into this array.
 const OUR_GOAL = [
   `<strong>Samarpan Upanishad</strong> is an initiative dedicated in exploring the deeper meaning behind our Guru's daily quotes, Special Telegram Sandesh, and Anusthan messages —and to unearth its true meaning, which is hidden “<em><u>seven layers deep”</u></em>.`,
   `In simple terms, we are trying to decode our Guru's teaching, <em><u>"Samaj Sako Toh Samjo"</u></em> in its original and complete form.`,
   `We follow the spirit of <strong>Vasudhaiva Kutumbakam</strong> — the world is one family — and believe everyone has the right to share their opinion with an open and unbiased mind. Our only request is that members refrain from spamming the forum, as we consider the act of sharing to be “<em><u>sacred”.</u></em>`,
   `Our ultimate goal is to understand <em><u>Vedic</u></em> texts through the lens of our Guru's discourses, and to download cosmic knowledge while sitting silently under “<em><u>Gurus Divine Grace”</u></em>.`,
 ];
+
+// The version band pins directly under whichever top bar is on screen, and
+// there is no single number for that: the phone bar is 52px + the notch inset,
+// the desktop .topbar is ~69px, and in auto-hide mode it animates to zero. A
+// hard-coded offset is wrong in at least one of those states — and .app’s
+// `autohide` class is not a safe proxy either, since the bar it describes is
+// mid-transition for 200ms after the class lands. So measure the bar and keep
+// measuring it: one ResizeObserver, which retires itself the moment the band
+// leaves the DOM (i.e. as soon as you navigate off Our Goal).
+let verBandRO = null;
+function wireVerBand() {
+  const band = $view.querySelector(".wa-verline");
+  if (!band) return;
+  const bar = document.querySelector(MOBILE_UI.active ? ".m-top" : ".topbar");
+  const sync = () => {
+    if (!band.isConnected) { if (verBandRO) { verBandRO.disconnect(); verBandRO = null; } return; }
+    band.style.setProperty("--wa-vertop", (bar ? bar.getBoundingClientRect().height : 0) + "px");
+  };
+  sync();
+  if (verBandRO) verBandRO.disconnect();
+  verBandRO = null;
+  if (bar && window.ResizeObserver) { verBandRO = new ResizeObserver(sync); verBandRO.observe(bar); }
+}
 
 function renderInfo(kind) {
   const title = { settings: "Settings", about: "Our Goal", help: "Help & Support" }[kind];
@@ -3683,18 +3706,20 @@ function renderInfo(kind) {
   // Scoped to `about` alone — settings and help have the same duplication, but
   // they still have real content under it and were not part of the ask.
   const showTitle = !(kind === "about" && MOBILE_UI.active);
-  // ⚠ The version line is no longer part of the body copy (operator,
-  // 2026-08-22): it is a soft-orange pill parked in the bottom-left corner,
-  // and it stays there while the page scrolls.
-  // How it stays there is all CSS — `.wa-verline` in styles.css, which also
-  // records why it is sticky and not fixed. Nothing to compute here.
+  // ⚠ The version line is not part of the body copy (operator, 2026-08-22):
+  // it is a soft-orange pill that sits ABOVE the words and stays pinned there
+  // while they scroll underneath (revised the same day — it used to be parked
+  // in the bottom-left corner; don’t move it back without asking).
   //
-  // ⚠ It must stay the LAST child of .content: the corner is reached by
-  // `margin-top:auto` in a flex column, so anything appended after it steals
-  // the spot. And it must stay inside $view — every route replaces $view’s
-  // children, which is what disposes of it when you leave Our Goal.
+  // The band around the pill is not decoration: a pill alone is only as wide as
+  // its text, so scrolled copy would slide up and show BESIDE it. The band is
+  // full-width and painted in the page colour, so the words vanish cleanly
+  // under it. Both live in `.wa-verline` / `.wa-verpill` (styles.css).
+  //
+  // ⚠ It must stay inside $view — every route replaces $view’s children,
+  // which is what disposes of it (and its observer) when you leave Our Goal.
   const verLine = kind === "about"
-    ? `<div class="wa-verline">Samarpan Upanishad · version <span id="wa-version">…</span></div>`
+    ? `<div class="wa-verline"><span class="wa-verpill">Samarpan Upanishad · version <span id="wa-version">…</span></span></div>`
     : "";
   // ⚠ Our Goal has NO white card (operator, 2026-08-22) — the words sit
   // straight on the page. `.wa-goal` strips .prose’s surface, border, shadow
@@ -3702,8 +3727,9 @@ function renderInfo(kind) {
   // still get the card, so strip it there only if asked.
   const proseCls = kind === "about" ? "prose wa-goal" : "prose";
   $view.innerHTML = (showTitle ? `<div class="page-title">${title}</div>` : "") +
-                    `<div class="${proseCls}">${body}</div>` + verLine;
+                    verLine + `<div class="${proseCls}">${body}</div>`;
   if (kind === "about") {
+    wireVerBand();
     // Fill the version number. On desktop this is the VERSION file via the API.
     // On the phone, an OTA UI update bumps the RUNNING ui (app.js/styles.css)
     // without touching the bundled wa-mobile.json that /api/version reports — so

@@ -601,51 +601,44 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .prose h3 { font-family: var(--serif); margin-top: 0; }
 .prose ul { padding-left: 18px; }
 
-/* Our Goal only: the same reading column, minus the card. Width, leading and
-   ink stay exactly as .prose sets them — only the surface goes. */
-.prose.wa-goal { background: none; border: none; box-shadow: none; border-radius: 0; padding: 0; }
+/* Our Goal only: the same reading column, minus the card, in purple ink.
+   Width and leading stay exactly as .prose sets them; the surface goes and the
+   colour changes. ⚠ The ink is deliberately NOT var(--text): the operator
+   picked this purple (2026-08-22) for this page alone, and Settings and Help
+   keep .prose’s own #45414e. Contrast on the #fafafa page is 8.3:1 (AAA). */
+.prose.wa-goal { background: none; border: none; box-shadow: none; border-radius: 0; padding: 0; color: #523f86; }
 
-/* ---- Our Goal: the version line, pinned to the bottom-left corner -------
-   Out of the body copy (operator, 2026-08-22) and always on screen, as a soft-
-   orange pill in the theme’s own accent.
+/* ---- Our Goal: the version pill, pinned to the top ----------------------
+   Out of the body copy (operator, 2026-08-22) and above it, staying put while
+   the words scroll underneath. It sat in the bottom-left corner earlier the
+   same day; the operator moved it. Two pieces:
 
-   ⚠ sticky, NOT fixed — measured, not preferred. `position: fixed` is
-   viewport-relative, so its `left` would have to be re-derived by hand for
-   every sidebar state (full 268px / 78px icon rail / auto-hidden to 0 /
-   revealed on hover) and again for the phone. That was tried first and it
-   lands in the wrong place, because .app can carry `autohide` while the
-   sidebar is still 268px wide — the class is not a reliable proxy for the
-   width. Sticky leaves the line in normal flow horizontally, so its left edge
-   IS the content column’s left edge in every one of those states, for free.
+   .wa-verline is a full-width BAND painted in the page colour. It is not
+   decoration — a pill is only as wide as its text, so without the band the
+   scrolled copy would slide up and show beside it. The band is what the words
+   disappear under.
 
-   Two parts make it park in the corner, and both are needed: `margin-top:auto`
-   inside a stretched flex column pushes it to the bottom of a SHORT page
-   (sticky alone never moves an element down, only up), and `bottom:` holds it
-   there once the page is long enough to scroll. */
+   ⚠ `top` comes from --wa-vertop, which wireVerBand() in app.js measures off
+   whichever top bar is on screen. Do not replace it with a constant: the phone
+   bar is 52px + notch, the desktop one ~69px, and auto-hide animates it to 0.
+   The fallback here only covers the instant before the first measurement.
+
+   z-index 5 puts the band over the copy but well under the bars themselves
+   (.topbar is 20, .m-top is 600), so it can never cover the search field. */
 .wa-verline {
-  position: sticky; bottom: calc(14px + env(safe-area-inset-bottom));
-  margin-top: auto; align-self: flex-start;
+  position: sticky; top: var(--wa-vertop, 69px); z-index: 5;
+  margin: 0 0 14px; padding: 10px 0;
+  background: var(--bg);
   pointer-events: none;                           /* never swallow a tap */
-  /* Soft-orange pill in the theme’s own accent — no new colour is introduced. */
+}
+/* Soft-orange pill in the theme’s own accent — no new colour is introduced. */
+.wa-verpill {
+  display: inline-block;
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--accent-soft));
   border-radius: 999px; padding: 6px 14px; box-shadow: var(--shadow);
   font-size: 13px; font-weight: 600;
 }
-/* Scoped to Our Goal by :has() — every other page keeps .content as a block.
-   flex:1 stretches .content to the foot of the viewport on the desktop (.main
-   is already a 100vh flex column); the phone gets there via its own
-   min-height:100vh above, since body.m-mode .app is display:block. */
-.content:has(.wa-verline) {
-  display: flex; flex-direction: column; flex: 1;
-  padding-bottom: calc(14px + env(safe-area-inset-bottom));   /* .content’s own 60px
-     bottom padding would otherwise hold the line 60px clear of the corner */
-}
-/* ⚠ `body.m-mode .content` (0,2,1) outranks the :has() rule above (0,2,0), so the
-   phone keeps its own 20px — which is the house gap on every mobile page, and
-   fine. Restated only to fold the safe-area inset back in, which that rule
-   (shared with every other page) does not carry. */
-body.m-mode .content:has(.wa-verline) { padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
 .sync-box { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
 .sync-status { margin-top: 10px; font-size: 13.5px; }
 .sync-status .muted { color: var(--muted); }
