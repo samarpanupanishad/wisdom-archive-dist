@@ -750,33 +750,70 @@ function _firePush(payload) {
 // Still records wa:push:lastfire, so Settings → Notification diagnostics reads
 // this the same as every other push. Throws with the server's own reason text
 // rather than supabase-js's "non-2xx", which hides the body.
+// ⚠ It gets the SAME second attempt as _firePush, and it needed it more (added
+// 2026-08-22). `functions.invoke` fails reproducibly on the sutradhar's phone —
+// and an Important Update is sent from the sutradhar's phone by definition, so
+// this path was the one guaranteed to meet the bug. Left unfixed, the first
+// announcement ever sent would have failed with "Failed to send a request to the
+// Edge Function" against a live, published row.
+//
+// The retry has to do more work here than in _firePush, because the ANSWER
+// matters: it returns the parsed delivery result so recordBroadcastDelivery()
+// still writes the real {devices, sent} onto the row, and it throws the server's
+// own reason so the failure stays visible for Resend.
 async function _awaitPush(payload) {
-  _lastFire({ kind: payload && payload.kind, state: "sending" });
+  const kind = payload && payload.kind;
+  _lastFire({ kind, state: "sending" });
+
+  // Only ever for a TRANSPORT failure — never for an HTTP refusal. See below.
+  const retry = async (why) => {
+    let r;
+    try {
+      r = await _pushViaFetch(payload);
+    } catch (e) {
+      _lastFire({ kind, state: "dead", firstError: why,
+                  error: ((e && e.name) ? e.name + ": " : "") + ((e && e.message) || String(e)),
+                  online: (typeof navigator !== "undefined" && "onLine" in navigator)
+                    ? navigator.onLine : null });
+      throw new Error("Couldn't reach the notification service (" +
+                      ((e && e.message) || String(e)) +
+                      "). The update itself is saved — use Resend to notify.");
+    }
+    let body = null;
+    try { body = JSON.parse(r.body); } catch (_) { /* keep the raw text below */ }
+    _lastFire({ kind, state: r.ok ? "ok-retry" : "error-retry", status: r.status,
+                body: String(r.body).slice(0, 300), firstError: why });
+    if (!r.ok) throw new Error((body && body.error) || ("send-push failed (HTTP " + r.status + ")"));
+    return body || {};
+  };
+
   let r;
   try {
     r = await _sb.functions.invoke("send-push", { body: payload });
   } catch (e) {
-    _lastFire({ kind: payload.kind, state: "threw", error: (e && e.message) || String(e) });
-    throw e;
+    return retry("threw: " + ((e && e.message) || String(e)));
   }
   if (r && r.error) {
     let detail = r.error.message || String(r.error);
     const ctx = r.error.context;
     if (ctx && typeof ctx.text === "function") {
+      // There WAS an HTTP answer, so the server refused on purpose — a refusal
+      // is not retried. Dig the body out: supabase-js hides it behind "non-2xx",
+      // and the reason ("no devices", the two-person proof) is the whole message.
       try {
         const t = await ctx.text();
         const j = JSON.parse(t);
         if (j && j.error) detail = j.error;
-        _lastFire({ kind: payload.kind, state: "error", status: ctx.status, body: String(t).slice(0, 300) });
+        _lastFire({ kind, state: "error", status: ctx.status, body: String(t).slice(0, 300) });
       } catch (_) {
-        _lastFire({ kind: payload.kind, state: "error", error: detail });
+        _lastFire({ kind, state: "error", error: detail });
       }
-    } else {
-      _lastFire({ kind: payload.kind, state: "error", error: detail });
+      throw new Error(detail);
     }
-    throw new Error(detail);
+    // No `context` = no HTTP response = the request never landed. Try again.
+    return retry(detail);
   }
-  _lastFire({ kind: payload.kind, state: "ok", reply: r && r.data });
+  _lastFire({ kind, state: "ok", reply: r && r.data });
   return (r && r.data) || {};
 }
 
