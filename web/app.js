@@ -584,6 +584,14 @@ const PATHS = {
   shield: '<path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/><path d="M9.2 12l2 2 3.6-3.8"/>',
   spark: '<path d="M11 4l1.7 4.8L17.5 10.5l-4.8 1.7L11 17l-1.7-4.8L4.5 10.5l4.8-1.7L11 4z"/><path d="M18.5 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9.9-2.3z"/>',
   letter: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/>',
+  // Msg to Admin's attach + camera buttons. ⚠ These exist because the first cut
+  // used the 📎 and 📷 EMOJI, and on a real phone Android drew them as full
+  // colour system stickers — a huge diagonal grey paperclip and a chunky black
+  // camera — sitting in two white boxes next to a flat orange Send. Emoji is the
+  // house style for DRAWER ROWS; a button uses icon(), so it inherits this
+  // stroke weight and takes currentColor like every other icon in the app.
+  clip: '<path d="M20.5 11.5l-8.7 8.7a5.4 5.4 0 0 1-7.6-7.6l8.7-8.7a3.6 3.6 0 0 1 5.1 5.1l-8.7 8.7a1.8 1.8 0 0 1-2.6-2.6l8-8"/>',
+  camera: '<path d="M4 8h2.6l1.6-2.4h7.6L17.4 8H20a1.8 1.8 0 0 1 1.8 1.8v8.4A1.8 1.8 0 0 1 20 20H4a1.8 1.8 0 0 1-1.8-1.8V9.8A1.8 1.8 0 0 1 4 8z"/><circle cx="12" cy="14" r="3.4"/>',
   lock: '<rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7"/><path d="M12 14.2v2.2"/>',
   lotus: '<path d="M12 20c-4.4 0-8-2.7-8-6 2 .4 3.4 1.2 4.4 2.1"/><path d="M12 20c4.4 0 8-2.7 8-6-2 .4-3.4 1.2-4.4 2.1"/><path d="M12 20c-2.8-2-4.2-4.4-4.2-7 0-2.8 1.5-5.3 4.2-7 2.7 1.7 4.2 4.2 4.2 7 0 2.6-1.4 5-4.2 7z"/>',
 };
@@ -16368,9 +16376,13 @@ const MOBILE_UI = (() => {
     `<input type="file" class="am-cam" accept="image/*" capture="environment" hidden>`;
 
   // The clip / camera buttons for an .am-acts row.
+  // ⚠ icon(), NOT emoji. See the note on PATHS.clip — the emoji version shipped
+  // in 9.70 and Android drew them as full-colour stickers that fought with
+  // everything around them. `icon()` is evaluated when this IIFE runs, which is
+  // long after PATHS is declared at module top, so there is no TDZ trap here.
   const AM_ATTACH_BTNS =
-    `<button class="btn am-iconbtn am-clip" type="button" title="Attach a photo or PDF" aria-label="Attach a photo or PDF">📎</button>` +
-    `<button class="btn am-iconbtn am-cam-btn" type="button" title="Take a photo" aria-label="Take a photo">📷</button>`;
+    `<button class="btn am-iconbtn am-clip" type="button" title="Attach a photo or PDF" aria-label="Attach a photo or PDF">${icon("clip")}</button>` +
+    `<button class="btn am-iconbtn am-cam-btn" type="button" title="Take a photo" aria-label="Take a photo">${icon("camera")}</button>`;
 
   // One place that knows how to pick, cap, shrink and upload — both composers
   // use it, so the gates cannot drift apart between them.

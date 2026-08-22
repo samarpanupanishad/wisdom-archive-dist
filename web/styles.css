@@ -2150,10 +2150,17 @@ body.m-mode.m-kb .m-page-admsg { transform: translateY(var(--m-vvtop, 0px)); }
    The clip / camera buttons are square and must NOT flex: the admin's row
    carries four buttons on a 375px phone, and letting the icons grow would
    squeeze "Done" and "Send" into ellipses. */
+/* ⚠ An SVG from icon(), not an emoji: 9.70 shipped 📎/📷 and Android drew them
+   as full-colour system stickers beside a flat orange Send. Centred with flex
+   (a glyph could ride on text-align, an inline SVG cannot) and tinted with the
+   accent, so the pair reads as the same family as the back chevron above them. */
 .am-iconbtn {
-  flex: 0 0 auto !important; width: 42px; padding: 8px 0;
-  font-size: 17px; line-height: 1; text-align: center;
+  flex: 0 0 auto !important; width: 44px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent);
 }
+.am-iconbtn svg { display: block; }
+.am-iconbtn:active { background: var(--accent-soft, #fdeee0); }
 /* The picked-but-not-yet-uploaded strip. Nothing here has left the phone —
    files upload only on Send, so an abandoned message leaves nothing behind. */
 .am-picks { display: flex; flex-direction: column; gap: 6px; }
