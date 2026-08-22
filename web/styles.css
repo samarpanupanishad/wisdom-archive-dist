@@ -601,8 +601,13 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .prose h3 { font-family: var(--serif); margin-top: 0; }
 .prose ul { padding-left: 18px; }
 
+/* Our Goal only: the same reading column, minus the card. Width, leading and
+   ink stay exactly as .prose sets them — only the surface goes. */
+.prose.wa-goal { background: none; border: none; box-shadow: none; border-radius: 0; padding: 0; }
+
 /* ---- Our Goal: the version line, pinned to the bottom-left corner -------
-   Outside the white .prose card (operator, 2026-08-22) and always on screen.
+   Out of the body copy (operator, 2026-08-22) and always on screen, as a soft-
+   orange pill in the theme’s own accent.
 
    ⚠ sticky, NOT fixed — measured, not preferred. `position: fixed` is
    viewport-relative, so its `left` would have to be re-derived by hand for
@@ -619,9 +624,13 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    there once the page is long enough to scroll. */
 .wa-verline {
   position: sticky; bottom: calc(14px + env(safe-area-inset-bottom));
-  margin-top: auto; align-self: flex-start; padding-top: 18px;
+  margin-top: auto; align-self: flex-start;
   pointer-events: none;                           /* never swallow a tap */
-  font-size: 13px; color: var(--muted, #888);
+  /* Soft-orange pill in the theme’s own accent — no new colour is introduced. */
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--accent-soft));
+  border-radius: 999px; padding: 6px 14px; box-shadow: var(--shadow);
+  font-size: 13px; font-weight: 600;
 }
 /* Scoped to Our Goal by :has() — every other page keeps .content as a block.
    flex:1 stretches .content to the foot of the viewport on the desktop (.main

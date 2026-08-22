@@ -3630,19 +3630,26 @@ async function renderStats() {
 // archive and a quote from Baba Swami; that copy was removed deliberately, not
 // lost — don't restore it from git, and don't blend it back in with what's below.
 //
-// ⚠ TRANSCRIBED VERBATIM, the same rule as GANGA_INSTRUCTIONS: the doubled
-// spaces, the curly quotes, "dedicated in exploring", the space before "—and" —
-// all of it is as the operator typed it. Do NOT "correct" the spelling, the
-// grammar or the punctuation. One string per paragraph; escapeHtml runs on each.
+// ⚠ TRANSCRIBED VERBATIM from the operator’s own "Our Goal.docx", runs and
+// all, the same rule as GANGA_INSTRUCTIONS. Do NOT "correct" the spelling, the
+// grammar or the punctuation — "dedicated in exploring" and the space before
+// "—and" are as written. The bold / italic+underline below are the Word runs
+// read out of that file, including its two oddities: the CLOSING curly quote is
+// underlined while the opening one is not, and the full stop after “sacred” sits
+// INSIDE the underline. Both are faithful to the document; leave them.
+//
+// ⚠ THESE ARE HTML FRAGMENTS, NOT PLAIN TEXT — escapeHtml is deliberately NOT
+// applied to them any more (it would print the tags). Only <strong>, <em> and
+// <u> belong in here, and a literal & < > in new copy must be escaped by hand.
 //
 // ⚠ The version line is NO LONGER part of this page’s body (operator, same day).
 // It is pinned to the bottom-left corner of the viewport — see `verLine` below
 // and `.wa-verline` in styles.css. Don’t append it back into this array.
 const OUR_GOAL = [
-  `Samarpan Upanishad is an initiative dedicated in exploring the deeper meaning behind our Guru's daily quotes, Special Telegram Sandesh, and Anusthan messages —and to unearth  its true meaning,  which is hidden “seven layers deep”.`,
-  `In simple terms, we are trying to decode our Guru's teaching, "Samaj Sako Toh Samjo" in its original and complete form.`,
-  `We follow the spirit of Vasudhaiva Kutumbakam — the world is one family — and believe everyone has the right to share their opinion with an open and unbiased mind. Our only request is that members refrain from spamming the forum, as we consider the act of sharing to be “sacred”.`,
-  `Our ultimate goal is to understand Vedic texts through the lens of our Guru's discourses, and to download cosmic knowledge while sitting silently under “Gurus Divine Grace”.`,
+  `<strong>Samarpan Upanishad</strong> is an initiative dedicated in exploring the deeper meaning behind our Guru's daily quotes, Special Telegram Sandesh, and Anusthan messages —and to unearth its true meaning, which is hidden “<em><u>seven layers deep”</u></em>.`,
+  `In simple terms, we are trying to decode our Guru's teaching, <em><u>"Samaj Sako Toh Samjo"</u></em> in its original and complete form.`,
+  `We follow the spirit of <strong>Vasudhaiva Kutumbakam</strong> — the world is one family — and believe everyone has the right to share their opinion with an open and unbiased mind. Our only request is that members refrain from spamming the forum, as we consider the act of sharing to be “<em><u>sacred”.</u></em>`,
+  `Our ultimate goal is to understand <em><u>Vedic</u></em> texts through the lens of our Guru's discourses, and to download cosmic knowledge while sitting silently under “<em><u>Gurus Divine Grace”</u></em>.`,
 ];
 
 function renderInfo(kind) {
@@ -3659,7 +3666,7 @@ function renderInfo(kind) {
     // paints the name as .page-title, so the heading was always a duplicate —
     // invisible while a paragraph followed it, and glaring once the body was
     // emptied. Put the operator's words in OUR_GOAL, not in a heading.
-    about: OUR_GOAL.map((para) => `<p>${escapeHtml(para)}</p>`).join(""),
+    about: OUR_GOAL.map((para) => `<p>${para}</p>`).join(""),
     help: `<h3>Help &amp; Support</h3><p>Search any word in English or Hindi from the bar at the top — matching Guru's msgs appear with the word highlighted in yellow. Click a result to read it in full, with both images and transcripts.</p><ul><li><strong>Add to Favorites</strong> to save an entry; find them under Favorites.</li><li>Write private notes under <strong>My Comments</strong> on any entry.</li><li><strong>Browse</strong> by Date, Month, or Year from the sidebar.</li></ul>`,
   }[kind];
   // ⚠ On a PHONE the shell already paints this page's name in the top bar
@@ -3674,8 +3681,9 @@ function renderInfo(kind) {
   // Scoped to `about` alone — settings and help have the same duplication, but
   // they still have real content under it and were not part of the ask.
   const showTitle = !(kind === "about" && MOBILE_UI.active);
-  // ⚠ The version line sits OUTSIDE the white card now (operator, 2026-08-22):
-  // parked in the bottom-left corner and still there while the page scrolls.
+  // ⚠ The version line is no longer part of the body copy (operator,
+  // 2026-08-22): it is a soft-orange pill parked in the bottom-left corner,
+  // and it stays there while the page scrolls.
   // How it stays there is all CSS — `.wa-verline` in styles.css, which also
   // records why it is sticky and not fixed. Nothing to compute here.
   //
@@ -3686,8 +3694,13 @@ function renderInfo(kind) {
   const verLine = kind === "about"
     ? `<div class="wa-verline">Samarpan Upanishad · version <span id="wa-version">…</span></div>`
     : "";
+  // ⚠ Our Goal has NO white card (operator, 2026-08-22) — the words sit
+  // straight on the page. `.wa-goal` strips .prose’s surface, border, shadow
+  // and padding while keeping its reading width and leading; Settings and Help
+  // still get the card, so strip it there only if asked.
+  const proseCls = kind === "about" ? "prose wa-goal" : "prose";
   $view.innerHTML = (showTitle ? `<div class="page-title">${title}</div>` : "") +
-                    `<div class="prose">${body}</div>` + verLine;
+                    `<div class="${proseCls}">${body}</div>` + verLine;
   if (kind === "about") {
     // Fill the version number. On desktop this is the VERSION file via the API.
     // On the phone, an OTA UI update bumps the RUNNING ui (app.js/styles.css)
