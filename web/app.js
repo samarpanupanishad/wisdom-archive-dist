@@ -8523,6 +8523,7 @@ function openDhyanSetup(onStarted, presetMode) {
   const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);
+  ddOverlay(ov, close);   // Android back here means exactly this popup's Cancel
   ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
   ov.querySelector("[data-cancel]").addEventListener("click", close);
 
@@ -8539,6 +8540,40 @@ function openDhyanSetup(onStarted, presetMode) {
     openSitScreen(armed);
     if (onStarted) onStarted();
   });
+}
+
+// ---- back during a LIVE sitting ---------------------------------------------
+// ⚠ Neither silent answer is acceptable here. Leaving the sitting running looks
+// exactly like it stopped, and stopping it destroys a real sitting on a stray
+// press of a button that sits directly under the thumb. The operator's decision
+// (2026-08-22) is to ASK — and Continue is the safe side, so a tap outside, the
+// Escape key and a SECOND back press all mean "keep sitting".
+//
+// ⚠ It needs its own z-index. .dd-sit and .dd-beads are z-index 70 while the
+// ordinary .dd-sheet-ov is 60, so reusing the sheet layer as-is would render
+// this question BEHIND the very screen it is asking about. See .dd-leave-ov.
+function ddAskLeave(what, lost, onDiscard) {
+  if (document.querySelector(".dd-leave-ov")) return;
+  const ov = el(`
+    <div class="dd-sheet-ov dd-leave-ov">
+      <div class="dd-sheet" role="dialog" aria-label="Leave this ${escapeHtml(what)}">
+        <div class="dd-sheet-h">Leave this ${escapeHtml(what)}?</div>
+        <div class="dd-note">Discard throws it away — ${escapeHtml(lost)} will not be recorded
+          anywhere. Continue takes you back to it.</div>
+        <div class="dd-sheet-btns">
+          <button class="btn dd-ghost dd-danger" data-discard>Discard</button>
+          <button class="btn primary" data-continue>Continue</button>
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  ddOverlay(ov, close);   // a second back press = Continue
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector("[data-continue]").addEventListener("click", close);
+  ov.querySelector("[data-discard]").addEventListener("click", () => { close(); onDiscard(); });
 }
 
 // ---- the sitting itself -----------------------------------------------------
@@ -8637,6 +8672,14 @@ function openSitScreen(armed) {
     if (!confirm("End this sitting now? The time you have already sat will be recorded.")) return;
     SADHANA.stop();
     finish();
+  });
+
+  // ⚠ Stays registered while it asks: ddOverlayBack() prunes by isConnected and
+  // .dd-sit is still on screen, so the question is simply pushed ON TOP of it.
+  // Once the sitting is done the record is already saved, so back is just Done.
+  ddOverlay(ov, () => {
+    if (done) { finish(); return; }
+    ddAskLeave("sitting", "the time you have already sat", () => { SADHANA.discard(); finish(); });
   });
 
   paint();
@@ -8866,6 +8909,17 @@ function openBeadCounter() {
     document.body.classList.remove("dd-sitting");
     if (typeof _ddRefresh === "function") _ddRefresh();
   });
+
+  // ⚠ The question is a SIBLING of this overlay, not a child — every pointerdown
+  // inside .dd-beads counts a bead, and a Discard/Continue tap must not also
+  // add one. Appending it to <body> keeps it outside that listener entirely.
+  ddOverlay(ov, () => ddAskLeave("Naam Jaap", "the time and the beads you have counted", () => {
+    if (timer) { clearInterval(timer); timer = null; }
+    SADHANA.discard();
+    ov.remove();
+    document.body.classList.remove("dd-sitting");
+    if (typeof _ddRefresh === "function") _ddRefresh();
+  }));
 
   function tickElapsed() {
     const live = SADHANA.activeState();
@@ -9245,6 +9299,7 @@ function openGranthEntry(onSaved, opts) {
   const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);
+  ddOverlay(ov, close);   // Android back here means exactly this popup's Cancel
   ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
   ov.querySelector("[data-cancel]").addEventListener("click", close);
 
@@ -9399,6 +9454,7 @@ function openDhyanManual(onSaved, preset) {
   const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);
+  ddOverlay(ov, close);   // Android back here means exactly this popup's Cancel
   ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
   ov.querySelector("[data-cancel]").addEventListener("click", close);
 
@@ -9475,6 +9531,7 @@ function openReminderEditor(existing, onSave) {
   const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);
+  ddOverlay(ov, close);   // Android back here means exactly this popup's Cancel
   ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
   ov.querySelector("[data-cancel]").addEventListener("click", close);
   ov.querySelector("[data-ok]").addEventListener("click", () => {
@@ -9936,6 +9993,7 @@ function openDhyanReport() {
   const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);
+  ddOverlay(ov, close);   // Android back here means exactly this popup's Cancel
   ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
   ov.querySelector("[data-cancel]").addEventListener("click", close);
   ov.querySelector("[data-save]").addEventListener("click", async () => {
@@ -10037,6 +10095,7 @@ function openDhyanImportPreview(text, onDone) {
   const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);
+  ddOverlay(ov, close);   // Android back here means exactly this popup's Cancel
   ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
   ov.querySelector("[data-cancel]").addEventListener("click", close);
   const go = ov.querySelector("[data-merge]");
@@ -10076,6 +10135,37 @@ function dhyanImportPick(onDone) {
 // Set by the mounted diary page so the sit screen can refresh it on close
 // without either one holding a reference to the other.
 let _ddRefresh = null;
+
+// ---- Android BACK inside the diary ------------------------------------------
+// ⚠ The diary is ONE page with internal views and body-level overlays, and no
+// hash routes at all (see mountDhyanDiary below). The Android back button only
+// knew how to walk history, so a press swapped the page UNDERNEATH to home and
+// left the popup floating on top of it — the bug the operator reported on
+// 2026-08-22. Two registers fix it, both read by onHardwareBack().
+//
+// _ddOverlays is a LIFO stack of "what back means here", one entry per open
+// diary overlay. For an ordinary popup that function IS its close, so back
+// becomes exactly its Cancel: nothing started, nothing saved.
+//
+// ⚠ Entries are pruned by whether their node is still in the DOM, NOT popped by
+// the back handler. That is deliberate and it buys two things: every existing
+// close() already removes its node, so none of them had to learn about this
+// stack; and an entry may answer a back press by opening a QUESTION and staying
+// registered — which is what the live sitting does.
+const _ddOverlays = [];
+function ddOverlay(node, fn) { _ddOverlays.push({ node, fn }); }
+function ddOverlayBack() {
+  for (let i = _ddOverlays.length - 1; i >= 0; i--) {
+    if (!_ddOverlays[i].node.isConnected) _ddOverlays.splice(i, 1);
+  }
+  const e = _ddOverlays[_ddOverlays.length - 1];
+  if (!e) return false;
+  try { e.fn(); } catch (_) {}
+  return true;
+}
+// Armed by mountDhyanDiary, read through _pageBackHook: true when a sub-view
+// stepped back to the diary's main menu and the press must go no further.
+let _ddBack = null;
 
 // ⚠ ONE builder, four views, no router. The diary's sub-pages (Naam Jaap's
 // chooser, Add/Remove, Reports, Reminders) are `view` states inside this same
@@ -10165,11 +10255,21 @@ async function mountDhyanDiary(node) {
       ${del ? `<button class="dd-del" data-del aria-label="Delete this entry">✕</button>` : ""}
     </div>`;
 
-  const backHtml = (title) => `
+  // `right` is an optional action for the far end of the header row — only
+  // Reports uses one (Backup), and it is deliberately NOT a tab. See below.
+  const backHtml = (title, right) => `
     <div class="dd-sub">
       <button class="dd-back" data-home aria-label="Back to the diary">‹</button>
       <div class="dd-sub-t">${escapeHtml(title)}</div>
+      ${right || ""}
     </div>`;
+
+  // ⚠ One definition, used by both the dot on the Backup button and the warning
+  // inside it, so the two can never disagree about what "overdue" means.
+  const backupOverdue = () => {
+    const last = SADHANA.settings().lastExportAt || 0;
+    return !last || (Date.now() - last) > 30 * 86400000;
+  };
 
   // ---- the day table behind Reports ---------------------------------------
   // Built from ONE pass over the records rather than filtering per day, so the
@@ -10246,7 +10346,7 @@ async function mountDhyanDiary(node) {
       <div class="dd-backup-note">Nothing leaves this device on its own. Uninstalling the app, or
         moving to a new phone, is the one thing that can lose your diary — so keep a copy somewhere
         safe.</div>
-      <div class="dd-backup-when${!last || days > 30 ? " warn" : ""}">${escapeHtml(when)}</div>`;
+      <div class="dd-backup-when${backupOverdue() ? " warn" : ""}">${escapeHtml(when)}</div>`;
   }
 
   function render() {
@@ -10312,10 +10412,20 @@ async function mountDhyanDiary(node) {
 
     if (view === "reports") {
       const tabs = [["d7", "7 days"], ["d15", "15 days"], ["d30", "30 days"],
-                    ["progress", "Progress"], ["backup", "Backup"]];
+                    ["progress", "Progress"]];
+      // ⚠ Backup is NOT a report — it is Export / Restore, an occasional chore
+      // that happened to be parked in this row. As a fifth tab it did two bad
+      // things: it squeezed the four real reports into ~66px each on a 360px
+      // screen, and it put "Restore…" one thumb-width from "30 days". It now
+      // sits at the far end of the header and the tab strip is pushed clear of
+      // it, so neither can be hit by mistake (operator, 2026-08-22).
+      const due = backupOverdue();
+      const backupBtn = `<button class="dd-rbackup${rtab === "backup" ? " on" : ""}${
+        due ? " due" : ""}" data-rtab="backup" aria-label="Backup${
+        due ? " — no copy kept recently" : ""}">Backup</button>`;
       node.replaceChildren(el(`
         <div class="dd-wrap">
-          ${backHtml("Reports")}
+          ${backHtml("Reports", backupBtn)}
           <div class="dd-rtabs" role="tablist">
             ${tabs.map(([k, t]) =>
               `<button class="dd-rtab${rtab === k ? " on" : ""}" data-rtab="${k}" role="tab">${t}</button>`).join("")}
@@ -10555,6 +10665,19 @@ async function mountDhyanDiary(node) {
   // Lets the sit screen repaint this page when it closes, without either one
   // holding a reference to the other. Cleared when the page goes away.
   _ddRefresh = () => { if (node.isConnected) render(); else _ddRefresh = null; };
+
+  // ⚠ Back is a LADDER, not a jump. Naam Jaap / Add-Remove / Reports / Reminders
+  // are `view` states in this one mount, so the Android back button used to walk
+  // straight past them to the app's home screen. This says a sub-view steps to
+  // the diary's main menu FIRST; only a press made on the main menu itself is
+  // allowed to leave the diary. Read via _pageBackHook, which the panel's own
+  // ‹ chevron honours too, so the two backs can never disagree.
+  _ddBack = () => {
+    if (!node.isConnected) { _ddBack = null; return false; }
+    if (view === "home") return false;
+    goTo("home");
+    return true;
+  };
 
   // Paint from the cache at once, then repaint once Preferences has been
   // consulted — that reconcile is what restores a diary after a cache clear,
@@ -11680,6 +11803,7 @@ const MOBILE_UI = (() => {
   function onHardwareBack() {
     if (_dpClose && _dpClose()) return;
     if (_axSheetClose && _axSheetClose()) return;
+    if (ddOverlayBack()) return;   // a diary popup, or the live sitting's own question
     if (hideExitSheet()) return;
     if (exitZoom()) return;
     if (closeDrawer()) return;
@@ -14521,6 +14645,9 @@ const MOBILE_UI = (() => {
   async function dhyanPage() {
     const node = el(`<div class="dd-page"></div>`);
     pageFrame(DHYAN_TITLE, node);
+    // ⚠ AFTER pageFrame, because route() clears _pageBackHook on the way in. It
+    // reads _ddBack lazily at press time, so arming it before the mount is fine.
+    _pageBackHook = () => !!(_ddBack && _ddBack());
     await mountDhyanDiary(node);
   }
 

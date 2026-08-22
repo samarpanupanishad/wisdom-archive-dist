@@ -3551,7 +3551,28 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 .dd-strip-b:hover { background: var(--accent-soft); }
 
 /* ---- reports ---- */
-.dd-rtabs { display: flex; gap: 5px; margin: 14px 0 2px; }
+/* ⚠ Backup is an ACTION, not a report. It used to be a fifth tab in the strip
+   below; it now sits at the far end of the header row, and the strip is pushed
+   a clear 24px down from it so a thumb reaching for "30 days" cannot land on
+   Export/Restore and vice versa (operator, 2026-08-22). */
+.dd-rbackup {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  margin-left: auto; flex: none; position: relative;
+  font-size: 11.5px; font-weight: 650; padding: 9px 13px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+}
+.dd-rbackup:hover { border-color: var(--accent-soft); background: var(--accent-soft); }
+.dd-rbackup.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+/* No copy kept in 30 days. The dot IS the point: the same warning printed
+   inside the Backup panel is never seen by the one person it is for — someone
+   who never opens that panel. */
+.dd-rbackup.due::after {
+  content: ""; position: absolute; top: 4px; right: 5px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--surface);
+}
+.dd-rbackup.on.due::after { background: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.dd-rtabs { display: flex; gap: 5px; margin: 24px 0 2px; }
 .dd-rtab {
   cursor: pointer; flex: 1; text-align: center; font-family: inherit; font-size: 11px;
   padding: 8px 2px; border-radius: 10px;
@@ -3647,6 +3668,11 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 }
 .dd-sheet-btns { display: flex; gap: 8px; }
 .dd-sheet-btns .btn { flex: 1; justify-content: center; }
+/* ⚠ The "leave this sitting?" question is the ONE sheet that opens over the
+   sitting screen and the bead counter, and both of those are z-index 70 — at
+   the sheet's own 60 this would render behind the thing it is asking about and
+   the phone would look frozen. Nothing else may share this layer. */
+.dd-leave-ov { z-index: 80; }
 
 /* ---- the sitting ----
    Near-black on purpose: on an OLED panel #000 means the pixels are physically
