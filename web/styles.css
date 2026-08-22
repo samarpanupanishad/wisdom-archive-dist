@@ -2289,6 +2289,15 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
   border: 1px solid var(--border); border-radius: 12px;
   background: var(--surface); color: var(--text);
 }
+/* Placeholder only ("आत्मा में imprint हुए शब्दों को share करें।") — the text a
+   member actually types stays var(--text) above; this rule cannot touch it,
+   ::placeholder only ever matches empty-field ghost text. Light pink, at the
+   operator's request (2026-08-22): readable, not a watermark — they explicitly
+   didn't want it so faint it can't be read. Both prefixed forms are needed:
+   a bare `::placeholder` rule is ignored by engines that don't support it
+   (no error, no fallback), which is why WebKit ships its own vendor prefix. */
+.m-ganga-box textarea::placeholder { color: #e8a0b4; opacity: 1; }
+.m-ganga-box textarea::-webkit-input-placeholder { color: #e8a0b4; }
 .m-ganga-row {
   display: flex; align-items: center; justify-content: space-between;
   gap: 10px; margin-top: 10px;
