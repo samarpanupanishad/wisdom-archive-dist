@@ -3647,6 +3647,18 @@ async function renderStats() {
 // ⚠ The version line is NO LONGER part of this page’s body (operator, same day).
 // It is a pill pinned to the TOP of the page — see `verLine` below and
 // `.wa-verline` in styles.css. Don’t append it back into this array.
+// ⚠ The closing "Jai Baba Swami" line is deliberately NOT one more entry in
+// OUR_GOAL below -- it is not a transcribed paragraph, it is a decorative sign-
+// off (operator, 2026-08-22): rose emoji bookending bold orange text, with
+// sparkle stars floating ABOVE the words, not around them (the operator asked
+// for above specifically). The sparkle reuses the exact twinkle
+// already shipped for "Your Lucky Msg for Today" (`@keyframes mluckytwinkle`,
+// `.m-lucky-spark` in styles.css) rather than inventing a second animation.
+// The gap above it is two blank PARAGRAPHS worth of space, done as margin on
+// `.wa-jai` itself -- not literal empty `<p></p>` tags, which screen readers
+// would announce as blank lines.
+const JAI_BABA_SWAMI_LINE = `<div class="wa-jai"><span class="wa-jai-spark s1">✨</span><span class="wa-jai-spark s2">⭐</span><span class="wa-jai-spark s3">✨</span><span class="wa-jai-text">🌹 Jai Baba Swami 🌹</span></div>`;
+
 const OUR_GOAL = [
   `<strong>Samarpan Upanishad</strong> is an initiative dedicated in exploring the deeper meaning behind our Guru's daily quotes, Special Telegram Sandesh, and Anusthan messages —and to unearth its true meaning, which is hidden “<em><u>seven layers deep”</u></em>.`,
   `In simple terms, we are trying to decode our Guru's teaching, <em><u>"Samaj Sako Toh Samjo"</u></em> in its original and complete form.`,
@@ -3691,7 +3703,7 @@ function renderInfo(kind) {
     // paints the name as .page-title, so the heading was always a duplicate —
     // invisible while a paragraph followed it, and glaring once the body was
     // emptied. Put the operator's words in OUR_GOAL, not in a heading.
-    about: OUR_GOAL.map((para) => `<p>${para}</p>`).join(""),
+    about: OUR_GOAL.map((para) => `<p>${para}</p>`).join("") + JAI_BABA_SWAMI_LINE,
     help: `<h3>Help &amp; Support</h3><p>Search any word in English or Hindi from the bar at the top — matching Guru's msgs appear with the word highlighted in yellow. Click a result to read it in full, with both images and transcripts.</p><ul><li><strong>Add to Favorites</strong> to save an entry; find them under Favorites.</li><li>Write private notes under <strong>My Comments</strong> on any entry.</li><li><strong>Browse</strong> by Date, Month, or Year from the sidebar.</li></ul>`,
   }[kind];
   // ⚠ On a PHONE the shell already paints this page's name in the top bar

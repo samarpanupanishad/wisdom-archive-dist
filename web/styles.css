@@ -608,6 +608,23 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    keep .prose’s own #45414e. Contrast on the #fafafa page is 8.3:1 (AAA). */
 .prose.wa-goal { background: none; border: none; box-shadow: none; border-radius: 0; padding: 0; color: #523f86; }
 
+/* ---- Our Goal: the closing "Jai Baba Swami" line ------------------------
+   Rose bookends, bold orange text, sparkle stars floating above (not around)
+   the words -- the same twinkle as "Your Lucky Msg for Today"
+   (@keyframes mluckytwinkle, defined above with .m-lucky-spark). The 56px
+   top margin is deliberately on THIS element, not extra blank paragraphs in
+   OUR_GOAL -- two paragraphs’ worth of gap without empty <p> tags a screen
+   reader would read out as nothing. */
+.wa-jai { position: relative; text-align: center; margin: 56px 0 0; }
+.wa-jai-text { display: inline-block; font-weight: 700; color: var(--accent); }
+.wa-jai-spark {
+  position: absolute; top: -16px; pointer-events: none; opacity: 0; font-size: 11px;
+  animation: mluckytwinkle 1.9s ease-in-out infinite;
+}
+.wa-jai-spark.s1 { left: 34%; }
+.wa-jai-spark.s2 { left: 50%; transform: translateX(-50%); top: -20px; font-size: 9px; animation-delay: .63s; }
+.wa-jai-spark.s3 { left: 62%; animation-delay: 1.27s; }
+
 /* ---- Our Goal: the version pill, pinned to the top ----------------------
    Out of the body copy (operator, 2026-08-22) and above it, staying put while
    the words scroll underneath. It sat in the bottom-left corner earlier the
@@ -2669,7 +2686,8 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
 }
 @media (prefers-reduced-motion: reduce) {
   .m-lucky-ico, .m-lucky-text, .m-lucky-spark, .mx-thumb-txt .mx-ico, .mx-spark,
-  #nav a[data-route="random"] .label, #nav a[data-route="random"] .label::after {
+  #nav a[data-route="random"] .label, #nav a[data-route="random"] .label::after,
+  .wa-jai-spark {
     animation: none !important; opacity: 1;
   }
 }
