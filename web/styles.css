@@ -2549,6 +2549,20 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   margin: 12px 0; font: 500 14.5px var(--sans); color: var(--text);
 }
+
+/* Settings › Notifications — the last-push record (app.js paints it from
+   wa:push:lastfire). Deliberately MONOSPACE and deliberately selectable: it is
+   read out or pasted to the admin, so every character has to survive the trip.
+   `pre-wrap` because a send-push reply is one long JSON line and truncating it
+   would hide the very field that explains the failure. */
+.m-diag {
+  margin-top: 12px; padding: 10px 12px; border-radius: 10px;
+  background: var(--bg); border: 1px solid var(--border);
+  font: 400 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--muted); white-space: pre-wrap; word-break: break-word;
+  -webkit-user-select: text; user-select: text;
+}
+.m-diag-copy { margin-top: 8px; font-size: 13px; padding: 8px 14px; }
 .m-switch { position: relative; display: inline-block; width: 46px; height: 26px; flex: none; }
 .m-switch input { opacity: 0; width: 0; height: 0; }
 .m-switch i {

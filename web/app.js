@@ -16615,6 +16615,8 @@ const MOBILE_UI = (() => {
           <span class="m-switch"><input type="checkbox" id="m-notif-satsang"><i></i></span></label>
         <div class="m-hint" id="m-notif-subhint">Samuhik Satsang and Anubhuti Sharing.</div>
         <div class="m-hint" id="m-notif-hint"></div>
+        <div class="m-diag" id="m-notif-diag" hidden></div>
+        <button class="btn m-diag-copy" id="m-notif-diag-copy" type="button" hidden>Copy for support</button>
       </div>`);
       prose.appendChild(nbox);
       const nsw = nbox.querySelector("#m-notif-satsang");
@@ -16655,6 +16657,72 @@ const MOBILE_UI = (() => {
         }
         paintHint();
         nsw.disabled = false;
+      });
+
+      // ---- what actually happened to the last push -------------------------
+      // ⚠ THE COMMENT IN wa-supabase.js PROMISED THIS CARD SHOWED THIS AND IT
+      // DID NOT (found 2026-08-22, while "Msg to Admin notifications never
+      // arrive" could not be placed). `_firePush` has recorded every send-push
+      // result to `wa:push:lastfire` since 2026-08-05 precisely so a silent
+      // failure is readable on a phone with no console — but nothing ever drew
+      // it, so the record existed and was unreachable. That is the whole reason
+      // this block exists; don't remove it as debug clutter.
+      //
+      // It separates, in one glance, the three ways an ADDRESSED push dies:
+      //
+      //   nothing recorded            → the app never called send-push at all.
+      //                                 Usually this phone is on an older UI
+      //                                 than the one carrying the feature —
+      //                                 which is why the BUILD line is here.
+      //   skipped "no one to notify"  → the audience resolved to nobody (e.g.
+      //                                 the sender is the only admin, and the
+      //                                 sender is deliberately excluded).
+      //   sent 0, note "no devices"   → nobody in the audience has a device
+      //                                 token owned by their account.
+      //
+      // ⚠ Reading it is not free of side effects to interpret: `sentKey` is
+      // written even on a "no devices" result, so re-firing the SAME message
+      // reports "already sent". A retest needs a NEW message.
+      const dbox = nbox.querySelector("#m-notif-diag");
+      const dcopy = nbox.querySelector("#m-notif-diag-copy");
+      const diagText = () => {
+        const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch (_) { return d; } };
+        // wa:mobile:uiVersion is written by wa-boot when it APPLIES a UI; unset
+        // means "never updated", which is the shell's own bundled UI.
+        const shell = (window.WA_BOOT && WA_BOOT.shellVersion && WA_BOOT.shellVersion()) || "?";
+        const ui = ls("wa:mobile:uiVersion", "") || shell;
+        const lines = ["Build: UI " + ui + " · shell " + shell];
+        let f = null;
+        try { f = JSON.parse(ls("wa:push:lastfire", "null")); } catch (_) {}
+        if (!f) {
+          lines.push("Last push sent from this phone: none recorded.");
+        } else {
+          // `reply` is send-push's own JSON answer — the interesting half. Shown
+          // whole rather than picked apart: the useful field moves around
+          // ("skipped", "note", "error") and a summary would hide the new one.
+          const detail = f.reply !== undefined ? JSON.stringify(f.reply)
+                       : f.body ? String(f.body)
+                       : f.error ? String(f.error) : "";
+          lines.push("Last push sent: " + (f.kind || "?") + " → " + (f.state || "?")
+                     + (f.status ? " (HTTP " + f.status + ")" : "")
+                     + (detail ? " " + detail : ""));
+          if (f.at) lines.push("  at " + f.at);
+        }
+        lines.push("Notifications allowed: " + (granted ? "yes" : "NO")
+                   + " · token: " + (ls("wa:push:token", "") ? "registered" : "none"));
+        return lines.join("\n");
+      };
+      const paintDiag = () => {
+        // Only where a push can exist at all. On the desktop this would report
+        // "token: none" forever and mean nothing by it.
+        if (!MOBILE_UI.active) return;
+        dbox.hidden = false; dcopy.hidden = false;
+        dbox.textContent = diagText();
+      };
+      paintDiag();
+      dcopy.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(diagText()); toast("Copied — paste it to the admin"); }
+        catch (_) { toast("Couldn't copy — read it out instead."); }
       });
 
       // ---- Upanishad Gyan (the hourly thought) -----------------------------
