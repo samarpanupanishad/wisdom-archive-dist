@@ -2183,9 +2183,10 @@ body.m-mode.m-kb .m-page-ganga { transform: translateY(var(--m-vvtop, 0px)); }
 body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
 
 /* The operator's नम्र विनंती to the sadhaks, above the box they write in and
-   the thoughts below it. The min-height reserves four lines and is kept now that
-   there ARE words: it stops the compose box jumping up the screen on a phone
-   whose font settings wrap this shorter than expected.
+   the thoughts below it. The min-height reserves four lines. ⚠ Since 2026-08-22
+   the text runs to about seven lines on a 375px phone, so this floor no longer
+   binds anything — it is kept because it costs nothing and still stops the
+   compose box jumping up the screen if the words are ever shortened again.
 
    ⚠ The accent rule is what separates GUIDANCE from the guru's words above it —
    the thoughts are cards, this is not, so the two can never be misread for each

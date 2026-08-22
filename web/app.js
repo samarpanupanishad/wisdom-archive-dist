@@ -3631,7 +3631,9 @@ async function renderStats() {
 // lost — don't restore it from git, and don't blend it back in with what's below.
 //
 // ⚠ TRANSCRIBED VERBATIM from the operator’s own "Our Goal.docx", runs and
-// all, the same rule as GANGA_INSTRUCTIONS. Do NOT "correct" the spelling, the
+// all. (GANGA_INSTRUCTIONS used to cite the same rule and no longer can — the
+// operator asked for its Hindi to be corrected on 2026-08-22. That was one text,
+// one day; THIS one is still verbatim.) Do NOT "correct" the spelling, the
 // grammar or the punctuation — "dedicated in exploring" and the space before
 // "—and" are as written. The bold / italic+underline below are the Word runs
 // read out of that file, including its two oddities: the CLOSING curly quote is
@@ -15528,27 +15530,56 @@ const MOBILE_UI = (() => {
   // re-checks it); this is only what the counter counts against.
   const GANGA_LIMIT_KEY = "wa:ganga:limit";
 
-  // The operator's own words to the sadhaks, supplied 2026-08-20 (the four lines
-  // of room were held open empty for a day waiting for them).
+  // The operator's own words to the sadhaks. REWRITTEN 2026-08-22 from a Word
+  // document they supplied ("ug ganga.docx"); the single line that stood here
+  // from 2026-08-20 until then is GONE and should not come back from git.
   //
-  // ⚠ TRANSCRIBE, DO NOT EDIT. Three things here look like mistakes and are not:
-  // "विनंती" (rather than the more usual Hindi विनती), and the English words
-  // "imprint" and "share" sitting inside the Devanagari. That is how the operator
-  // writes, and it is how the sadhaks are addressed elsewhere in the app. Don't
-  // "correct" the spelling and don't translate the English into Hindi.
+  // ⚠ THE FORMATTING IS PART OF THE TEXT, and that is why `lines` is no longer a
+  // list of strings. The document underlines "Upanishad Ganga" in bold and
+  // "“imprint”" in italic, so each line is a list of SEGMENTS carrying b/i/u
+  // flags. Each segment is escaped separately at render time — see the paint
+  // below — so no HTML ever passes through a string here. A plain string is
+  // still accepted and means one unformatted segment.
+  //
+  // ⚠ THE ENGLISH INSIDE THE DEVANAGARI IS DELIBERATE — "Upanishad Ganga",
+  // "imprint", "share". Don't translate it. Ditto the title "विनंती" rather than
+  // the more usual Hindi विनती: that is how the operator addresses the sadhaks
+  // everywhere in the app, it has been shipped since 9.41, and it is not a typo.
+  //
+  // ⚠ But the BODY is no longer verbatim, and this is the one place in the app
+  // where that is true. The operator typed the document at speed and asked, on
+  // 2026-08-22, that the Hindi be corrected rather than transcribed — so
+  // "चैतन्य पूर्ण"→"चैतन्यपूर्ण", "मोक्ष दायिनी है"→"मोक्षदायी हैं" (the subject is
+  // शब्द, masculine plural, not गंगा), "ऊन"→"उन", "आत्माओ"→"आत्माओं", the doubled
+  // spaces closed and the commas moved onto the relative clauses. Their wording,
+  // their order, their English — only the spelling and agreement changed. That
+  // permission was for this text on that day; it is NOT a standing licence to
+  // edit operator copy elsewhere.
   //
   // ⚠ Hindi only, like everything else on this screen — there is no English
   // variant to keep in step (the language toggle is gone).
   //
-  // To change it: edit here and publish. `lines` is one string per paragraph, not
-  // per visual line — the wrapping is the phone's business.
+  // To change it: edit here and publish. One entry per paragraph, not per visual
+  // line — the wrapping is the phone's business.
   const GANGA_INSTRUCTIONS = {
     title: "नम्र विनंती",
     lines: [
-      "स्वामी जी के शब्द जो आपकी आत्मा में imprint हो चुके हैं और जो आपके दिल के " +
-      "बहुत करीब हैं उन विचारों को साधकों के साथ share करें न्यूनतम पंक्तियाँ में",
+      [
+        { t: "गुरु के चैतन्यपूर्ण शब्द, जो गंगा के समान मोक्षदायी हैं, उन शब्दों को " },
+        { t: "Upanishad Ganga", b: true, u: true },
+        { t: " का नाम दिया है।" },
+      ],
+      [
+        { t: "गुरु के शब्द जो आपके दिल के बेहद करीब हैं और जो आपकी आत्मा में " },
+        { t: "“imprint”", i: true, u: true },
+        { t: " हो चुके हैं, उन पवित्र गंगा के समान शब्दों को सभी खोजी आत्माओं के साथ शेयर करें।" },
+      ],
     ],
   };
+  // The compose box's placeholder, from the same document (it labels it
+  // "Placeholder:"). "शब्दो"→"शब्दों" and "imprint हुए" for the missing participle,
+  // under the same permission as the lines above.
+  const GANGA_PLACEHOLDER = "आत्मा में imprint हुए शब्दों को share करें।";
 
   function gyanCached() {
     try { return JSON.parse(localStorage.getItem(GYAN_CACHE) || "[]"); } catch (_) { return []; }
@@ -15734,11 +15765,26 @@ const MOBILE_UI = (() => {
 
     // ---- 2. the instructions ----------------------------------------------
     // Painted once, outside every repaint path, like the box below it.
+    // ⚠ ESCAPED PER SEGMENT, never per line. A line is a list of {t,b,i,u} (a
+    // bare string counts as one plain segment), so the bold/underline the
+    // operator's document asks for is expressed by the WRAPPER and the text
+    // itself still goes through escapeHtml — there is no path by which a
+    // character of GANGA_INSTRUCTIONS is interpreted as markup. Don't "simplify"
+    // this into an HTML string in the constant.
+    const instrSeg = (s) => {
+      if (typeof s === "string") s = { t: s };
+      let h = escapeHtml(s.t || "");
+      if (s.b) h = `<b>${h}</b>`;
+      if (s.i) h = `<i>${h}</i>`;
+      if (s.u) h = `<u>${h}</u>`;
+      return h;
+    };
     instrEl.innerHTML =
       (GANGA_INSTRUCTIONS.title
         ? `<div class="m-ganga-instr-h">${escapeHtml(GANGA_INSTRUCTIONS.title)}</div>`
         : "") +
-      (GANGA_INSTRUCTIONS.lines || []).map((l) => `<div>${escapeHtml(l)}</div>`).join("");
+      (GANGA_INSTRUCTIONS.lines || []).map((l) =>
+        `<div>${(typeof l === "string" ? [l] : l).map(instrSeg).join("")}</div>`).join("");
 
     // ---- 3. the member's box ----------------------------------------------
     // Painted once and never repainted while the screen is open — see the trap at
@@ -15760,7 +15806,7 @@ const MOBILE_UI = (() => {
       composeEl.innerHTML =
         `<div class="m-ganga-box">` +
           `<textarea id="m-ganga-ta" rows="3" maxlength="${limit}" ` +
-            `placeholder="${escapeHtml("अपना विचार लिखें…")}"></textarea>` +
+            `placeholder="${escapeHtml(GANGA_PLACEHOLDER)}"></textarea>` +
           `<div class="m-ganga-row">` +
             `<span class="m-ganga-count" id="m-ganga-count">0 / ${limit}</span>` +
             `<button class="btn primary" id="m-ganga-send" disabled>Send to Admin</button>` +
