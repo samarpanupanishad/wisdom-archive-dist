@@ -605,7 +605,10 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    Width and leading stay exactly as .prose sets them; the surface goes and the
    colour changes. ⚠ The ink is deliberately NOT var(--text): the operator
    picked this purple (2026-08-22) for this page alone, and Settings and Help
-   keep .prose’s own #45414e. Contrast on the #fafafa page is 8.3:1 (AAA). */
+   keep .prose’s own #45414e. Contrast on the #fafafa page is 8.3:1 (AAA).
+   ⚠ NO LONGER THIS PAGE ALONE: the operator asked for the same ink on Upanishad
+   Ganga's नम्र विनंती the next day, so #523f86 is now written in TWO places —
+   here and .m-ganga-instr. Change one, change the other. */
 .prose.wa-goal { background: none; border: none; box-shadow: none; border-radius: 0; padding: 0; color: #523f86; }
 
 /* ---- Our Goal: the closing "Jai Baba Swami" line ------------------------
@@ -2260,10 +2263,21 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
    the thoughts are cards, this is not, so the two can never be misread for each
    other. :empty drops the rule so an emptied GANGA_INSTRUCTIONS leaves a blank
    space rather than a bare floating line. */
+/* ⚠ THE INK IS PURPLE, AND IT IS THE SAME PURPLE AS OUR GOAL — deliberately the
+   literal #523f86 from .prose.wa-goal and NOT var(--text) (operator,
+   2026-08-22, the day after they chose it for that page). Kept as a literal
+   rather than hoisted into a variable while only two rules want it: a
+   `--ink-purple` token would invite a third caller that the operator never
+   asked to change. If a third one ever does arrive, make the token then and
+   change both together. Background here is --bg #fafafa, the same as Our Goal's
+   page, so that rule's measurement carries over unchanged: 8.3:1, AAA.
+   ⚠ The नम्र विनंती heading is a CHILD of this and stays ORANGE — it sets its
+   own var(--accent) below, which wins. The two colours are the point: the
+   heading is the address, this is the guidance. */
 .m-ganga-instr {
   min-height: calc(4 * 1.55em); margin: 18px 2px 16px;
   padding-left: 12px; border-left: 3px solid var(--accent-soft);
-  font: 400 14.5px/1.55 var(--sans); color: var(--text); white-space: pre-wrap;
+  font: 400 14.5px/1.55 var(--sans); color: #523f86; white-space: pre-wrap;
 }
 .m-ganga-instr:empty { border-left: 0; padding-left: 0; }
 .m-ganga-instr-h {
