@@ -246,50 +246,59 @@ function _gangaErr(error) {
     : m;
 }
 
-// ⚠ TWO column lists, and which one you use decides whether an admin's NAME
-// lands on a member's phone (operator, 2026-08-22: "admin name should not go to
-// member from any way").
+// ⚠ TWO column lists, and the split is now enforced by POSTGRES, not by this
+// file's good manners (operator, 2026-08-22: "member can't see admin name").
 //
-// The reader has always SHOWN one voice — BC_BYLINE, "Samarpan Upanishad Team"
-// (app.js). But showing is not the same as not sending: with one shared column
-// list, `author_name` / `approver_name` / `decliner_name` were downloaded by
-// every member's app and written into its offline cache, where anyone reading
-// the API — or the cache — could see exactly who wrote and who approved what.
-// The byline was a label over data that was already on the device.
+// The three name columns -- author_name, approver_name, decliner_name -- are NOT
+// granted to `authenticated`. A member asking for them, through this file or by
+// calling PostgREST directly with the anon key that ships in it, is refused by
+// the database:
 //
-// So the member-facing reads (listBroadcasts, syncBroadcasts) now ask for
-// _BROADCAST_MEMBER_COLS, which simply does not contain the three name columns,
-// and the ADMIN reads (the approval queue, and the rows returned to the
-// composer) keep the full list, because the whole point of a two-person rule is
-// that the second person can see whose words they are endorsing.
+//     42501  permission denied for table broadcasts
 //
-// ⚠ Being able to do this cheaply is a one-time luxury: Important Updates has
-// never been deployed and nothing has been sent, so there is no cached row on
-// any phone that already carries a name. Doing it after the first send would
-// have left those names on every device that had synced.
+// See supabase/add_broadcast_name_privacy.sql. Until that file was run, the
+// reader's "Samarpan Upanishad Team" byline was only a LABEL: `authenticated`
+// held table-wide SELECT, so every name was one URL away, and RLS did not help
+// because RLS filters rows and never columns.
 //
-// ⚠ NOT a hard privacy boundary on its own. These are plain columns and a member
-// is `authenticated`, so someone calling PostgREST directly with
-// `select=author_name` still gets it — the client asking for less is not the
-// server refusing to tell. Closing that needs column privileges plus an RPC for
-// the admin queue (the shape list_access_requests already uses), which is a
-// Supabase deploy and a change to the approval path. Worth doing before the
-// first send if the names must be genuinely unreachable; flagged, not assumed.
-// Don't describe the split below as hiding the author from a determined reader.
+// So there are two lists and they mean different things now:
+//
+//   _BROADCAST_READABLE_COLS  the 19 columns anybody signed in MAY read. Used by
+//                             every plain-table read in this file -- the member
+//                             list, the offline sync, AND the admin composer's
+//                             insert/update RETURNING, because an admin is
+//                             `authenticated` too and the revoke hits them just
+//                             as hard.
+//   _BROADCAST_ADMIN_ONLY_COLS  the three names. Reachable ONLY through
+//                             list_broadcast_drafts(), a SECURITY DEFINER RPC
+//                             gated on wa_is_mod(). See listPendingBroadcasts().
+//
+// ⚠ _BROADCAST_READABLE_COLS MUST MATCH THE GRANT IN THAT SQL FILE EXACTLY.
+// A column granted there but missing here is merely unused; a column named here
+// but not granted there makes every member-facing read fail with 42501. Adding a
+// column to public.broadcasts means editing BOTH places.
+//
+// ⚠ Never use select("*") on broadcasts. A star expands to every column,
+// including the three ungranted ones, so it now fails for everyone but
+// service_role.
 const _BROADCAST_ADMIN_ONLY_COLS = "author_name,approver_name,decliner_name";
 
 // ⚠ ONE language, exactly as typed — no _hi/_en pair, deliberately unlike
 // _SPECIAL_COLS. See BROADCAST_PLAN.md §2.1; don't "fix" the missing pair.
+//
+// The FULL row, names included. Nothing reads this through a plain table select
+// any more — `authenticated` is not granted the three names, so such a read
+// would 42501. It stays here as the single source of truth that the granted list
+// below is derived FROM, and as what list_broadcast_drafts() hands back.
 const _BROADCAST_COLS =
   "id,title,body,attachments,author_id,author_name,approved_by,approver_name,approved_at," +
   "published,posted_at,edited_at,notified_at,notified_devices,notified_sent,created_at,updated_at," +
   "expires_on,declined_at,declined_by,decliner_name,decline_reason";
 
-// The same row a member is allowed to READ, minus the three names. Derived from
-// the list above rather than written out twice, so a column added there cannot
-// be silently missing here — the only thing this file has to keep right is which
-// columns are admin-only, and that is the one line above.
-const _BROADCAST_MEMBER_COLS = _BROADCAST_COLS.split(",")
+// The 19 granted columns, derived rather than written out a third time, so the
+// only thing this file has to keep right is which columns are admin-only — the
+// one line above.
+const _BROADCAST_READABLE_COLS = _BROADCAST_COLS.split(",")
   .filter((c) => !_BROADCAST_ADMIN_ONLY_COLS.split(",").includes(c)).join(",");
 
 // Today in IST as YYYY-MM-DD. India is a fixed UTC+5:30 with no DST, so the
@@ -1986,7 +1995,7 @@ const WA = {
   async listBroadcasts(limit) {
     const n = Math.max(1, Math.min(parseInt(limit, 10) || 300, 1000));
     // ⚠ MEMBER cols — no author/approver/decliner name. See the note there.
-    const { data, error } = await _sb.from("broadcasts").select(_BROADCAST_MEMBER_COLS)
+    const { data, error } = await _sb.from("broadcasts").select(_BROADCAST_READABLE_COLS)
       .eq("published", true).or(_NOT_EXPIRED())
       .order("posted_at", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
@@ -2012,7 +2021,7 @@ const WA = {
       // ⚠ MEMBER cols. This is the read that fills the OFFLINE CACHE, so it is
       // the one that would otherwise write an admin's name onto the device to
       // sit there indefinitely.
-      let q = _sb.from("broadcasts").select(_BROADCAST_MEMBER_COLS)
+      let q = _sb.from("broadcasts").select(_BROADCAST_READABLE_COLS)
         .eq("published", true).or(_NOT_EXPIRED()).order("updated_at", { ascending: true })
         .order("id", { ascending: true }).range(off, off + PAGE - 1);
       if (sinceIso) q = q.gt("updated_at", sinceIso);
@@ -2034,18 +2043,52 @@ const WA = {
     return { messages: msgs, ids, lastSync: msgs.length ? msgs[msgs.length - 1].updated_at : "" };
   },
 
-  // The approval queue. Drafts are invisible to everyone but moderators — that
-  // is the `published or wa_is_mod()` half of the select policy, not a filter
-  // applied here. A member calling this gets an empty list from Postgres.
+  // The approval queue — and the ONLY way any name reaches this app.
+  //
+  // ⚠ AN RPC, NOT A TABLE READ (2026-08-22). It used to select the full column
+  // list straight off `broadcasts`, which worked only because `authenticated`
+  // held table-wide SELECT — the very grant that let any member read every
+  // admin's name. With that grant narrowed (add_broadcast_name_privacy.sql) the
+  // old read now 42501s, so the names come through list_broadcast_drafts():
+  // SECURITY DEFINER, gated on wa_is_mod(), the shape list_access_requests() and
+  // admin_msg_threads_list() already use.
+  //
+  // A member calling it gets 'Moderators only.' from Postgres — an exception,
+  // not the empty list the old RLS-filtered read returned. Nothing shows this to
+  // a member: mountBroadcastAdmin() returns early unless isModerator().
+  //
+  // Drafts only (published = false), exactly as before. The "Not yet notified"
+  // strip beside it reads published rows out of the member cache and shows no
+  // name at all, so it needs nothing from here.
   async listPendingBroadcasts() {
-    // ⚠ The FULL cols, names included, and deliberately so: a reviewer endorsing
-    // someone else's words has to see whose they are. Drafts are invisible to
-    // members (the `published or wa_is_mod()` half of the select policy), so
-    // this list never reaches one.
-    const { data, error } = await _sb.from("broadcasts").select(_BROADCAST_COLS)
-      .eq("published", false).order("created_at", { ascending: false }).limit(100);
-    if (error) throw new Error(_broadcastMissing(error) || error.message);
-    return { messages: data || [] };
+    try {
+      const d = await _rpc("list_broadcast_drafts", { n: 100 });
+      return { messages: (d && d.messages) || [] };
+    } catch (e) {
+      const m = (e && e.message) || "";
+      const noRpc = /list_broadcast_drafts/i.test(m)
+        && /does not exist|not find|schema cache/i.test(m);
+      if (!noRpc) throw new Error(_broadcastMissing(e) || m);
+
+      // ⚠ THE RPC ISN'T THERE YET — fall back to the old table read, ONCE, so
+      // that publishing this UI does not depend on add_broadcast_name_privacy.sql
+      // having been run first. Without this the publish order matters: an OTA
+      // ahead of the SQL would leave every moderator's approval queue showing an
+      // error, and this repo has been bitten by order-dependent releases enough
+      // times to be worth removing one.
+      //
+      // ⚠ THIS IS NOT THE LEAK COMING BACK. It can only succeed while
+      // `authenticated` still holds table-wide SELECT — i.e. only before the SQL
+      // runs, when every name is readable by any member anyway, so it reveals
+      // nothing that was not already reachable. The moment the grant is narrowed
+      // this read 42501s, `noRpc` is false, and the error surfaces normally.
+      // Once the SQL is run this branch is dead code. Do not "promote" it back to
+      // the primary path.
+      const { data, error } = await _sb.from("broadcasts").select(_BROADCAST_COLS)
+        .eq("published", false).order("created_at", { ascending: false }).limit(100);
+      if (error) throw new Error(_broadcastMissing(error) || error.message);
+      return { messages: data || [] };
+    }
   },
 
   // Write a draft. author_id / author_name are stamped by the before-insert
@@ -2062,7 +2105,11 @@ const WA = {
       .insert({ title: title || null, body: String(body || ""),
                 attachments: attachments || [],
                 expires_on: expiresOn || null })
-      .select(_BROADCAST_COLS).single();
+      // ⚠ The GRANTED cols, not the full list: an admin is `authenticated` too,
+      // so a RETURNING that names author_name 42501s for them as well. Only
+      // `id` and `published` are read from this (openBroadcastComposer), so
+      // there is nothing to miss.
+      .select(_BROADCAST_READABLE_COLS).single();
     if (error) throw new Error(_broadcastMissing(error) || error.message);
     return { message: data };
   },
@@ -2075,7 +2122,8 @@ const WA = {
   // "Awaiting approval".
   async updateBroadcast(id, fields) {
     const { data, error } = await _sb.from("broadcasts")
-      .update(fields).eq("id", id).select(_BROADCAST_COLS).single();
+      // ⚠ Granted cols — same reason as postBroadcast above.
+      .update(fields).eq("id", id).select(_BROADCAST_READABLE_COLS).single();
     if (error) throw new Error(_broadcastMissing(error) || error.message);
     return { message: data };
   },

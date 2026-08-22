@@ -7138,13 +7138,18 @@ const BC_TITLE_MAX = 80, BC_BODY_MAX = 140;
 // three (wa-supabase.js); the four admin screens keep the full list. Free to do
 // because nothing has ever been sent, so no phone holds a cached name.
 //
-// ⚠ STILL NOT A HARD PRIVACY BOUNDARY. They remain plain columns and a member is
-// `authenticated`, so a direct PostgREST call asking for `select=author_name`
-// is still answered — the client asking for less is not the server refusing to
-// tell. Closing that needs column privileges plus an RPC for the admin queue,
-// which is a Supabase deploy; raised on 2026-08-19 and declined then, and worth
-// re-asking before the first send. Don't describe this as hiding the author from
-// someone who goes looking.
+// ⚠ AND SINCE 2026-08-22 IT IS A REAL BOUNDARY — POSTGRES REFUSES.
+// `authenticated` is no longer granted author_name / approver_name /
+// decliner_name at all, so a member asking for them directly, with the anon key
+// that ships in wa-supabase.js, gets 42501 permission denied. RLS was never the
+// answer here: it filters rows, not columns. See
+// supabase/add_broadcast_name_privacy.sql.
+//
+// The four admin screens still show the names, but they now arrive through
+// list_broadcast_drafts() — SECURITY DEFINER, gated on wa_is_mod() — and not off
+// the table. So the rule for anything added here is: a field one role may see
+// and another may not comes through a function that CHECKS, never through a
+// column the client is trusted not to ask for.
 //
 // Left in Latin script in both languages: it is a proper name, and the operator
 // writes their own Hindi copy.
