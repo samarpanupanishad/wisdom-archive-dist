@@ -16269,15 +16269,27 @@ const MOBILE_UI = (() => {
   // Who a bubble is signed by. ⚠ A member NEVER sees a moderator's name: the
   // server does not send it (admin_msg_thread returns author_name empty to
   // anyone but an admin), and this is the second wall, not the first.
-  function amWhoOf(m, forAdmin) {
+  function amWhoOf(m) {
     if (!m.fromAdmin) return "";                       // the header names them
-    return forAdmin ? (m.author || "Admin") : ADMIN_MSG_TEAM;
+    // ⚠ THE TEAM NAME FOR EVERYONE, ADMINS INCLUDED (operator, 2026-08-22).
+    // It first shipped showing the real moderator's name on an ADMIN's screen —
+    // the reasoning being "an admin should see who answered" — and the operator
+    // asked for one identity on every screen instead: whatever an admin replies,
+    // it reads Samarpan Upanishad Team. `forAdmin` is therefore gone from this
+    // function; it still decides which SIDE a bubble sits on, nothing more.
+    //
+    // The real author is not lost — `admin_messages.author_id` still records it
+    // and `admin_msg_thread()` still returns `author_name` to a moderator. It is
+    // simply not drawn. If "which of us answered this" is ever wanted, that is
+    // where it comes from, and it should be a deliberate second line rather than
+    // a name where the team's belongs.
+    return ADMIN_MSG_TEAM;
   }
   // `forAdmin` decides which side is "mine": the admin's replies on an admin's
   // screen, the member's messages on the member's.
   function amBubbleHtml(m, forAdmin) {
     const mine = forAdmin ? m.fromAdmin : !m.fromAdmin;
-    const who = amWhoOf(m, forAdmin);
+    const who = amWhoOf(m);
     return `<div class="am-msg ${mine ? "me" : "them"}">
       <div class="am-bubble">
         ${who ? `<div class="am-who">${escapeHtml(who)}</div>` : ""}
