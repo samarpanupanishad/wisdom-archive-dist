@@ -7129,12 +7129,22 @@ const BC_TITLE_MAX = 80, BC_BODY_MAX = 140;
 // enforces the two-person rule either way (approved_by <> author_id), but a
 // human can only exercise judgment about a draft whose author they can see.
 //
-// ⚠ Not a privacy boundary. `author_name` is a plain column in _BROADCAST_COLS,
-// so a member's app still downloads it and anyone reading the API can see who
-// wrote what. Making it genuinely unreadable means a member-facing view or
-// column privileges plus a Supabase deploy — asked and declined on 2026-08-19,
-// the goal being one voice rather than concealed identities. Don't describe this
-// as hiding the author.
+// ⚠ UPDATED 2026-08-22 — the member's app no longer DOWNLOADS the name either.
+// The operator's instruction became "admin name should not go to member from any
+// way", and until then this byline was a label over data that was already on the
+// phone: one shared column list meant author_name / approver_name /
+// decliner_name were fetched by every member's app and written into its offline
+// cache. The member-facing reads now use _BROADCAST_MEMBER_COLS, which omits all
+// three (wa-supabase.js); the four admin screens keep the full list. Free to do
+// because nothing has ever been sent, so no phone holds a cached name.
+//
+// ⚠ STILL NOT A HARD PRIVACY BOUNDARY. They remain plain columns and a member is
+// `authenticated`, so a direct PostgREST call asking for `select=author_name`
+// is still answered — the client asking for less is not the server refusing to
+// tell. Closing that needs column privileges plus an RPC for the admin queue,
+// which is a Supabase deploy; raised on 2026-08-19 and declined then, and worth
+// re-asking before the first send. Don't describe this as hiding the author from
+// someone who goes looking.
 //
 // Left in Latin script in both languages: it is a proper name, and the operator
 // writes their own Hindi copy.

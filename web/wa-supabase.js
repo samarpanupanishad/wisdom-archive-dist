@@ -246,12 +246,51 @@ function _gangaErr(error) {
     : m;
 }
 
+// ⚠ TWO column lists, and which one you use decides whether an admin's NAME
+// lands on a member's phone (operator, 2026-08-22: "admin name should not go to
+// member from any way").
+//
+// The reader has always SHOWN one voice — BC_BYLINE, "Samarpan Upanishad Team"
+// (app.js). But showing is not the same as not sending: with one shared column
+// list, `author_name` / `approver_name` / `decliner_name` were downloaded by
+// every member's app and written into its offline cache, where anyone reading
+// the API — or the cache — could see exactly who wrote and who approved what.
+// The byline was a label over data that was already on the device.
+//
+// So the member-facing reads (listBroadcasts, syncBroadcasts) now ask for
+// _BROADCAST_MEMBER_COLS, which simply does not contain the three name columns,
+// and the ADMIN reads (the approval queue, and the rows returned to the
+// composer) keep the full list, because the whole point of a two-person rule is
+// that the second person can see whose words they are endorsing.
+//
+// ⚠ Being able to do this cheaply is a one-time luxury: Important Updates has
+// never been deployed and nothing has been sent, so there is no cached row on
+// any phone that already carries a name. Doing it after the first send would
+// have left those names on every device that had synced.
+//
+// ⚠ NOT a hard privacy boundary on its own. These are plain columns and a member
+// is `authenticated`, so someone calling PostgREST directly with
+// `select=author_name` still gets it — the client asking for less is not the
+// server refusing to tell. Closing that needs column privileges plus an RPC for
+// the admin queue (the shape list_access_requests already uses), which is a
+// Supabase deploy and a change to the approval path. Worth doing before the
+// first send if the names must be genuinely unreachable; flagged, not assumed.
+// Don't describe the split below as hiding the author from a determined reader.
+const _BROADCAST_ADMIN_ONLY_COLS = "author_name,approver_name,decliner_name";
+
 // ⚠ ONE language, exactly as typed — no _hi/_en pair, deliberately unlike
 // _SPECIAL_COLS. See BROADCAST_PLAN.md §2.1; don't "fix" the missing pair.
 const _BROADCAST_COLS =
   "id,title,body,attachments,author_id,author_name,approved_by,approver_name,approved_at," +
   "published,posted_at,edited_at,notified_at,notified_devices,notified_sent,created_at,updated_at," +
   "expires_on,declined_at,declined_by,decliner_name,decline_reason";
+
+// The same row a member is allowed to READ, minus the three names. Derived from
+// the list above rather than written out twice, so a column added there cannot
+// be silently missing here — the only thing this file has to keep right is which
+// columns are admin-only, and that is the one line above.
+const _BROADCAST_MEMBER_COLS = _BROADCAST_COLS.split(",")
+  .filter((c) => !_BROADCAST_ADMIN_ONLY_COLS.split(",").includes(c)).join(",");
 
 // Today in IST as YYYY-MM-DD. India is a fixed UTC+5:30 with no DST, so the
 // offset is a constant and not worth a timezone library.
@@ -1946,7 +1985,8 @@ const WA = {
 
   async listBroadcasts(limit) {
     const n = Math.max(1, Math.min(parseInt(limit, 10) || 300, 1000));
-    const { data, error } = await _sb.from("broadcasts").select(_BROADCAST_COLS)
+    // ⚠ MEMBER cols — no author/approver/decliner name. See the note there.
+    const { data, error } = await _sb.from("broadcasts").select(_BROADCAST_MEMBER_COLS)
       .eq("published", true).or(_NOT_EXPIRED())
       .order("posted_at", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
@@ -1969,7 +2009,10 @@ const WA = {
   async syncBroadcasts(sinceIso) {
     const PAGE = 1000, msgs = [];
     for (let off = 0; off < 10000; off += PAGE) {
-      let q = _sb.from("broadcasts").select(_BROADCAST_COLS)
+      // ⚠ MEMBER cols. This is the read that fills the OFFLINE CACHE, so it is
+      // the one that would otherwise write an admin's name onto the device to
+      // sit there indefinitely.
+      let q = _sb.from("broadcasts").select(_BROADCAST_MEMBER_COLS)
         .eq("published", true).or(_NOT_EXPIRED()).order("updated_at", { ascending: true })
         .order("id", { ascending: true }).range(off, off + PAGE - 1);
       if (sinceIso) q = q.gt("updated_at", sinceIso);
@@ -1995,6 +2038,10 @@ const WA = {
   // is the `published or wa_is_mod()` half of the select policy, not a filter
   // applied here. A member calling this gets an empty list from Postgres.
   async listPendingBroadcasts() {
+    // ⚠ The FULL cols, names included, and deliberately so: a reviewer endorsing
+    // someone else's words has to see whose they are. Drafts are invisible to
+    // members (the `published or wa_is_mod()` half of the select policy), so
+    // this list never reaches one.
     const { data, error } = await _sb.from("broadcasts").select(_BROADCAST_COLS)
       .eq("published", false).order("created_at", { ascending: false }).limit(100);
     if (error) throw new Error(_broadcastMissing(error) || error.message);
@@ -2231,7 +2278,25 @@ const WA = {
   //
   // Returns {ok, already_pending, status, requested_at}. Idempotent server-side,
   // so a double tap can't queue two requests.
-  requestAccess(note) { return _rpc("request_community_access", { note_text: note || "" }); },
+  //
+  // ⚠ NOTIFIES THE ADMINS (2026-08-22). Until this, nothing told anybody a
+  // person was waiting — the row landed in the queue and a moderator had to open
+  // Moderator → access requests and notice. The decision coming back has been
+  // pushed since 2026-08-05; this is the other direction.
+  //
+  // ⚠ Only for a genuinely NEW request. The RPC is idempotent, so a second tap
+  // comes back {already_pending:true} having changed nothing, and notifying
+  // there would let anyone re-ring every admin's phone by tapping the button
+  // again. send-push guards it a second time (sentKey is per request row), but
+  // not sending is better than sending and having it swallowed.
+  //
+  // Fire-and-forget like every other push in this file: a notification that
+  // fails must never make a request that WAS filed look like it wasn't.
+  async requestAccess(note) {
+    const d = await _rpc("request_community_access", { note_text: note || "" });
+    if (d && !d.already_pending) _firePush({ kind: "access_request" });
+    return d;
+  },
 
   // The caller's own state, for the button's label: {role, status, requested_at,
   // decided_at}. `status` is null when they have never asked. Never throws for a
