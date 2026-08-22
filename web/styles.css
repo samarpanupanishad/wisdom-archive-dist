@@ -627,7 +627,12 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    (.topbar is 20, .m-top is 600), so it can never cover the search field. */
 .wa-verline {
   position: sticky; top: var(--wa-vertop, 69px); z-index: 5;
-  margin: 0 0 14px; padding: 10px 0;
+  /* ⚠ The breathing room over the pill is this TOP PADDING, not a bigger
+     `top` (operator asked for a gap, 2026-08-22, the pill was crowding the
+     bar). Adding to `top` would push the band clear of the bar and leave a
+     transparent strip between them for the scrolling copy to show through;
+     padding keeps the band flush against the bar and moves only the pill. */
+  margin: 0 0 14px; padding: 22px 0 12px;
   background: var(--bg);
   pointer-events: none;                           /* never swallow a tap */
 }
