@@ -130,6 +130,24 @@ function _tableMissing(error) {
     : null;
 }
 
+// The same service for the threaded Msg to Admin (ADMIN_MSG_PLAN.md). A server
+// that has the ORIGINAL admin_messages table but has not run
+// add_admin_msg_threads.sql answers "function not found" to the four RPCs and
+// "column not found" to the reply insert — neither of which anyone outside this
+// repo can act on. Name the file instead.
+//
+// ⚠ Matches on the RPC/COLUMN names rather than on "admin", because
+// _tableMissing above already owns the case where the whole table is absent and
+// its sentence names a different file.
+function _adminMsgErr(error) {
+  const m = (error && error.message) || "";
+  const missing = /admin_msg_thread|admin_msg_threads_list|admin_msg_unread|set_admin_msg_done|thread_user_id|from_admin/i.test(m)
+    && /does not exist|not find|schema cache|column/i.test(m);
+  return missing
+    ? "Msg to Admin isn't set up on the server yet. (Admin: run supabase/add_admin_msg_threads.sql.)"
+    : null;
+}
+
 // Friendly text when the user_data backup table hasn't been created yet.
 function _userDataMissing(error) {
   return /user_data.*(does not exist|not find|schema cache)/i.test(error.message || "")
@@ -1619,9 +1637,17 @@ const WA = {
     return { ok: true };
   },
 
-  // ----- Message to admin (mobile "Message to Admin" page) ---------------
-  // Table: admin_messages (see supabase/schema.sql). Signed-in users write;
-  // they see their own messages, moderators/sutradhar see everyone's.
+  // ----- Msg to Admin — a private admin ↔ member conversation ------------
+  // Table: admin_messages, threaded by `thread_user_id` (see
+  // supabase/add_admin_msg_threads.sql and ADMIN_MSG_PLAN.md). Every rule that
+  // matters lives in Postgres: who a row belongs to (the insert trigger), who
+  // may read it (admin_messages_select), whether a thread is done
+  // (admin_msg_threads, moderator-only), and whether the replying admin's NAME
+  // is visible at all (admin_msg_thread).
+  //
+  // ⚠ Sending is a plain INSERT, not an RPC, deliberately: shells older than
+  // this release insert {text} and nothing else, and the trigger files those
+  // into the sender's own thread so they keep working untouched.
   async sendAdminMessage(text) {
     const { data: { session } } = await _sb.auth.getSession();
     if (!session) throw Object.assign(new Error("Please sign in first."), { code: "AUTH" });
@@ -1633,21 +1659,96 @@ const WA = {
     if (error) throw new Error(_tableMissing(error) || error.message);
     return { id: data.id, text: data.text, ts: data.created_at };
   },
-  async myAdminMessages() {
+  // An admin answering one member. `threadUserId` is the MEMBER — the trigger
+  // reads it, checks wa_is_mod() for itself, and only then marks the row
+  // from_admin. A member sending this exact call has it filed as their own
+  // ordinary message instead, which is the intended failure.
+  async replyAdminMessage(threadUserId, text) {
     const { data: { session } } = await _sb.auth.getSession();
-    if (!session) return { messages: [] };
-    const { data, error } = await _sb.from("admin_messages").select("*")
-      .eq("user_id", session.user.id)
-      .order("created_at", { ascending: false }).limit(50);
-    if (error) throw new Error(_tableMissing(error) || error.message);
-    return { messages: (data || []).map((r) => ({ id: r.id, text: r.text, ts: r.created_at })) };
+    if (!session) throw Object.assign(new Error("Please sign in first."), { code: "AUTH" });
+    if (!threadUserId) throw new Error("Which conversation?");
+    const body = (text || "").trim();
+    if (!body) throw new Error("Please write a reply.");
+    if (body.length > 2000) throw new Error("Reply is too long (max 2000 characters).");
+    const { data, error } = await _sb.from("admin_messages")
+      .insert({ text: body, thread_user_id: threadUserId }).select("*").single();
+    if (error) throw new Error(_adminMsgErr(error) || error.message);
+    return { id: data.id, text: data.text, ts: data.created_at };
   },
-  // Moderators/sutradhar: every user's messages, newest first.
-  async listAdminMessages() {
-    const { data, error } = await _sb.from("admin_messages").select("*")
-      .order("created_at", { ascending: false }).limit(200);
-    if (error) throw new Error(_tableMissing(error) || error.message);
-    return { messages: (data || []).map((r) => ({ id: r.id, user: r.username, text: r.text, ts: r.created_at })) };
+  // One conversation, newest first — the only door to a thread's messages, for
+  // both sides. `uid` null = my own. `author` is the moderator who wrote a
+  // reply and is returned EMPTY to anybody but an admin (see §3 of the SQL).
+  async adminMsgThread(uid, limit) {
+    const { data, error } = await _sb.rpc("admin_msg_thread",
+      { uid: uid || null, n: Math.min(Math.max(limit || 200, 1), 500) });
+    if (error) throw new Error(_adminMsgErr(error) || error.message);
+    const rows = (data || []).map((r) => ({
+      id: r.id, text: r.body, fromAdmin: !!r.from_admin,
+      author: r.author_name || "", ts: r.created_at,
+      threadName: r.thread_name || "",
+    }));
+    // Carried on the array as well as on every row: an EMPTY thread still has a
+    // name the page needs for its title, and a notification tap is exactly the
+    // case where the caller has nothing but the uuid.
+    rows.threadName = (rows[0] && rows[0].threadName) || "";
+    return rows;
+  },
+  // Is this conversation marked done, and when? Moderator-only by RLS — a member
+  // reading this table gets nothing at all, which is what makes Done invisible
+  // to them rather than merely un-drawn. Never throws: a missing table (the SQL
+  // not yet run) reads as "not done", and the page still works.
+  async adminMsgDoneState(uid) {
+    if (!uid) return { doneAt: null, doneName: "" };
+    const { data, error } = await _sb.from("admin_msg_threads")
+      .select("done_at,done_name").eq("user_id", uid).maybeSingle();
+    if (error || !data) return { doneAt: null, doneName: "" };
+    return { doneAt: data.done_at || null, doneName: data.done_name || "" };
+  },
+  // The admins' inbox: one row per member. `want` is "pending" | "replied" |
+  // "all"; pending means "the newest message is the member's and nobody has
+  // marked it done since", computed in Postgres so the client cannot disagree.
+  async adminMsgThreads(want, limit) {
+    const { data, error } = await _sb.rpc("admin_msg_threads_list",
+      { want: want || "pending", n: Math.min(Math.max(limit || 200, 1), 500) });
+    if (error) throw new Error(_adminMsgErr(error) || error.message);
+    return (data || []).map((r) => ({
+      userId: r.user_id, username: r.username || "A member",
+      lastText: r.last_text || "", lastAt: r.last_at,
+      // ⚠ Number(), not `|| 0`: msg_count is a Postgres bigint, and a driver
+      // that hands bigints back as STRINGS would make the row say "1 msgs"
+      // (`"1" === 1` is false). Cheaper to coerce than to depend on it.
+      lastFromAdmin: !!r.last_from_admin, count: Number(r.msg_count) || 0,
+      doneAt: r.done_at || null, doneName: r.done_name || "",
+      status: r.status || "pending",
+    }));
+  },
+  // Moderator-only, and invisible to the member by construction — the table it
+  // writes has no policy a member can pass.
+  async setAdminMsgDone(uid, done) {
+    const { data, error } = await _sb.rpc("set_admin_msg_done",
+      { uid: uid, done: !!done });
+    if (error) throw new Error(_adminMsgErr(error) || error.message);
+    return data || {};
+  },
+  // The badge. Two different numbers behind one name: an admin gets the count of
+  // PENDING THREADS (`since` ignored), a member the count of admin replies newer
+  // than `since`. Returns 0 rather than throwing — a badge is not worth an error
+  // on a screen that has nothing to do with it.
+  async adminMsgUnread(since) {
+    const { data, error } = await _sb.rpc("admin_msg_unread", { since: since || null });
+    if (error) return 0;
+    const n = parseInt(data, 10);
+    return n > 0 ? n : 0;
+  },
+  // Member → every admin. Fire-and-forget, like every other ping in this file:
+  // the message is already stored, and a lost notification only means it is seen
+  // when an admin next opens the inbox.
+  notifyAdminMsg(id) {
+    _firePush({ kind: "admin_msg", id: id });
+  },
+  // Admin → the one member. Same contract.
+  notifyAdminMsgReply(id) {
+    _firePush({ kind: "admin_msg_reply", id: id });
   },
 
   // ----- Special Messages (Baba Swami's Telegram posts) -------------------

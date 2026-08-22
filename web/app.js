@@ -172,6 +172,12 @@ const ROLE_LABELS = {
 function roleLabel(r) { return ROLE_LABELS[r] || r || ""; }
 function refreshModNav() {
   document.getElementById("app").classList.toggle("is-mod", isModerator());
+  // ⚠ Msg to Admin's badge is ONE number with two meanings, chosen by role
+  // (ADMINMSG) — so a sign-in, a sign-out or a promotion doesn't just change
+  // which rows are visible, it changes what the number MEANS. Recount here or a
+  // freshly-promoted moderator wears their old unread-replies count as a
+  // pending-conversations count.
+  try { ADMINMSG.refresh(true).catch(() => {}); } catch {}
   updateAvatarFace();
   if (document.getElementById("avatar-pop") && !document.getElementById("avatar-pop").hidden) renderAvatarPop();
 }
@@ -298,6 +304,10 @@ async function signOutToGate() {
   // are readable by `authenticated` only). Leaving them cached would show one
   // person's announcements to whoever signs in next on this phone.
   try { BROADCAST.forget(); } catch {}
+  // Msg to Admin is the same kind of thing, and worse: the cached badge count
+  // AND the read mark both belong to the account that just left. Leaving them
+  // would greet the next person on this phone with somebody else's unread reply.
+  try { ADMINMSG.forget(); } catch {}
   refreshModNav();
   toast("Signed out");
   AUTH_GATE.reopen();
@@ -4332,6 +4342,7 @@ async function route() {
   SATSANG.refresh().catch(() => {});
   ANUBHUTI.refresh().catch(() => {});   // same contract, same 30s throttle
   ADMINTALK.refresh().catch(() => {});  // no-ops for everyone but a moderator
+  ADMINMSG.refresh().catch(() => {});   // one number, two meanings — see ADMINMSG
   // Mobile app shell (APK / ?waNativeTest=1): image-first pages take over
   // home / entry / #/m/* routes; every other route falls through to the
   // standard views below, framed by the mobile top bar.
@@ -5250,7 +5261,11 @@ function refreshAnyMsgDot() {
   // Only ever non-zero for a moderator — ADMINTALK zeroes itself for everyone
   // else, so this adds nothing to a member's dot.
   const admintalk = u(typeof ADMINTALK !== "undefined" ? ADMINTALK : null);
-  const n = special + letterpad + broadcast + satsang + anubhuti + admintalk;
+  // Msg to Admin. ⚠ For an admin this is the PENDING CONVERSATION count, not a
+  // message count — see the ADMINMSG header. It belongs in the dot either way:
+  // both readings mean "there is something here for you".
+  const adminmsg = u(typeof ADMINMSG !== "undefined" ? ADMINMSG : null);
+  const n = special + letterpad + broadcast + satsang + anubhuti + admintalk + adminmsg;
   document.querySelectorAll("[data-anymsg-dot]").forEach((b) => { b.hidden = !n; });
 
   // ---- the drawer's GROUP badges (2026-08-19) ------------------------------
@@ -5276,8 +5291,14 @@ function refreshAnyMsgDot() {
   // carry admintalk too, because the Sutradhar group was nested inside it —
   // that group is now top-level (2026-08-20), so More must NOT keep counting
   // it, or a moderator sees a number on More and finds nothing behind it.
-  group("[data-more-group-badge]", broadcast);
-  group("[data-sutradhar-group-badge]", admintalk);
+  // ⚠ Msg to Admin is counted in EXACTLY ONE of these two, decided by role, and
+  // it has to match which ✉️ row is actually visible: the one under More is
+  // hidden for moderators, and the one in the Sutradhar group exists only for
+  // them (refreshAccountRow). Counting it in both would put a number on a group
+  // holding no row that carries it, which is the sin the note above describes.
+  const modNow = isModerator();
+  group("[data-more-group-badge]", broadcast + (modNow ? 0 : adminmsg));
+  group("[data-sutradhar-group-badge]", admintalk + (modNow ? adminmsg : 0));
 }
 
 // ==========================================================================
@@ -5583,6 +5604,87 @@ const ADMINTALK = (() => {
 
   return { unread, markSeen, refreshBadges, refresh, noteIncoming,
            notSetUp: () => notSetUp, setNotSetUp: (v) => { notSetUp = !!v; } };
+})();
+
+// ==========================================================================
+// MSG TO ADMIN — the private admin ↔ member conversation, and its badge.
+// ADMIN_MSG_PLAN.md §4; the rules live in supabase/add_admin_msg_threads.sql.
+//
+// Mirrors the SPECIAL / LETTERPAD / SATSANG / ANUBHUTI / ADMINTALK badge
+// contract (unread / markSeen / refreshBadges / refresh / noteIncoming) so
+// refreshAnyMsgDot() treats it like the rest and there is no second funnel.
+//
+// ⚠ ONE number, TWO meanings, decided by role — and decided in POSTGRES, not
+// here (admin_msg_unread):
+//
+//     an admin  → how many conversations are waiting to be answered
+//     a member  → how many replies have arrived that this device hasn't read
+//
+// That is why there is one module and not two: a person is one role at a time,
+// and the menu row each role sees is the one the other's is hidden from (the
+// ✉️ row under More is hidden for moderators; the ✉️ row in the Sutradhar group
+// exists only for them).
+//
+// ⚠ markSeen is a MEMBER-ONLY operation. Opening the inbox must not clear an
+// admin's count — a thread stays pending until it is answered or marked done,
+// which is the entire point of the Pending tab.
+// ==========================================================================
+const ADMINMSG = (() => {
+  const SEEN_KEY  = "wa:adminmsg:seen";    // iso of the newest reply read here
+  const COUNT_KEY = "wa:adminmsg:count";   // cached, so the badge paints offline
+  let count = 0;
+  try { count = parseInt(localStorage.getItem(COUNT_KEY) || "0", 10) || 0; } catch {}
+  let lastRefresh = 0;
+
+  function unread() { return count; }
+  function refreshBadges() {
+    const txt = count > 99 ? "99+" : String(count);
+    document.querySelectorAll("[data-adminmsg-badge]").forEach((b) => {
+      b.hidden = !count; b.textContent = txt;
+    });
+    refreshAnyMsgDot();
+  }
+  function setCount(n) {
+    count = Math.max(0, n | 0);
+    try { localStorage.setItem(COUNT_KEY, String(count)); } catch {}
+    refreshBadges();
+  }
+  function seen() { try { return localStorage.getItem(SEEN_KEY) || ""; } catch { return ""; } }
+  function markSeen(iso) {
+    if (isModerator()) return;             // see the ⚠ above
+    if (iso) { try { localStorage.setItem(SEEN_KEY, iso); } catch {} }
+    setCount(0);
+  }
+
+  // Never throws into a caller, and never clears the badge on a failed read —
+  // WA.adminMsgUnread() already answers 0 rather than rejecting.
+  async function refresh(force) {
+    if (!isSignedIn()) { setCount(0); return 0; }
+    if (!force && Date.now() - lastRefresh < 30000) return count;
+    lastRefresh = Date.now();
+    // `since` is meaningless to an admin (the server ignores it for them) and is
+    // the whole question for a member.
+    setCount(await WA.adminMsgUnread(isModerator() ? null : (seen() || null)));
+    return count;
+  }
+
+  // A push that arrived while the app was on some other screen. One increment
+  // serves both roles: a member's reply and an admin's new conversation each add
+  // exactly one to the number that role's badge is showing.
+  function noteIncoming() {
+    if (!isSignedIn()) return;
+    setCount(count + 1);
+  }
+
+  // Sign-out. Both keys are ACCOUNT state, not device state — see the call in
+  // signOutToGate(), and BROADCAST.forget() next to it for the same reasoning.
+  function forget() {
+    try { localStorage.removeItem(SEEN_KEY); } catch {}
+    lastRefresh = 0;
+    setCount(0);
+  }
+
+  return { unread, markSeen, refreshBadges, refresh, noteIncoming, seen, forget };
 })();
 
 // ---- the Samuhik Satsang index: every running discussion, grouped ----------
@@ -11139,7 +11241,13 @@ const MOBILE_UI = (() => {
           <a href="#/favorites"><span class="mi">♥</span> Favorites</a>
           <a href="#/m/gyan"><span class="mi">📿</span> Upanishad Ganga</a>
           <a href="#/m/broadcast"><span class="mi">📢</span> Admin Announcements <span class="m-badge" data-broadcast-badge hidden></span></a>
-          <a href="#/m/contact"><span class="mi">✉️</span> Msg to Admin</a>
+          <!-- The MEMBER's door to Msg to Admin. Hidden for moderators, who get
+               their own row in the Sutradhar group below (refreshAccountRow) —
+               one destination, but an admin looks for work in the shield group
+               and a member should not be sent there. ⚠ Hiding an <a> in this
+               menu needs the .m-menu a[hidden] rule in styles.css; it is
+               already there. -->
+          <a href="#/m/contact" data-adminmsg-member-row><span class="mi">✉️</span> Msg to Admin <span class="m-badge" data-adminmsg-badge hidden></span></a>
           <a href="#/settings"><span class="mi">⚙️</span> Settings</a>
           <a href="#/about"><span class="mi">🕉️</span> Our Goal</a>
         </div>
@@ -11167,6 +11275,11 @@ const MOBILE_UI = (() => {
           <span class="m-badge" data-sutradhar-group-badge hidden></span><span class="m-caret">▾</span></button>
         <div class="m-submenu" data-sub="sutradhar" hidden>
           <a href="#/moderator"><span class="mi">🛡️</span> Moderator</a>
+          <!-- The admins' Msg to Admin inbox. Same route as the members' row —
+               contactPage() renders the inbox for a moderator and the
+               conversation for everybody else — but this is where an admin looks
+               for work, and the badge here is the pending-conversation count. -->
+          <a href="#/m/contact"><span class="mi">✉️</span> Msg to Admin <span class="m-badge" data-adminmsg-badge hidden></span></a>
           <a href="#/m/gyanreview"><span class="mi">📿</span> Upanishad Ganga Review</a>
           <a href="#/m/admintalks"><span class="mi">🔒</span> Admin Talks <span class="m-badge" data-admintalk-badge hidden></span></a>
           <a href="#/stats"><span class="mi">📊</span> Statistics</a>
@@ -11197,6 +11310,15 @@ const MOBILE_UI = (() => {
          <span class="m-acc-name">Sign in<small>for Samuhik Satsang</small></span>`;
     // Moderator/sutradhar-only rows (see the drawer markup above).
     $("m-drawer").querySelectorAll(".m-mod-only").forEach((a) => { a.hidden = !isModerator(); });
+    // …and the one row that is the other way round: Msg to Admin under More is
+    // the MEMBER's door, and an admin has their own in the Sutradhar group. Both
+    // lead to the same route, so showing both would be one destination listed
+    // twice — and would put the pending count on two different group badges.
+    $("m-drawer").querySelectorAll("[data-adminmsg-member-row]")
+      .forEach((a) => { a.hidden = isModerator(); });
+    // The two ✉️ badges now differ in visibility, so repaint them against the
+    // role we have just applied rather than leaving whatever the last paint drew.
+    ADMINMSG.refreshBadges();
   }
   function openDrawer() { refreshAccountRow(); $("m-drawer").classList.add("open"); $("m-scrim").hidden = false; }
   function closeDrawer() {
@@ -11666,6 +11788,7 @@ const MOBILE_UI = (() => {
       SATSANG.refresh(true).catch(() => {});
       ANUBHUTI.refresh(true).catch(() => {});
       ADMINTALK.refresh(true).catch(() => {});
+      ADMINMSG.refresh(true).catch(() => {});
       if (!syncIsSafeToStart()) return;
       if (Date.now() - _lastContentSync < SYNC_ON_WAKE_MS) return;
       contentSync().then((r) => {
@@ -11987,6 +12110,14 @@ const MOBILE_UI = (() => {
         // one kind of message the operator most needs people to notice. Pull it
         // now; the sync is a cheap delta.
         if (d.kind === "broadcast") BROADCAST.sync().catch(() => {});
+        // Msg to Admin, both directions. One increment serves both roles (see
+        // ADMINMSG.noteIncoming) — and an open Msg to Admin screen repaints
+        // itself off this event, since a conversation with nothing arriving on
+        // it while you look at it is the one thing this feature cannot afford.
+        if (d.kind === "admin_msg" || d.kind === "admin_msg_reply") {
+          ADMINMSG.noteIncoming();
+          try { window.dispatchEvent(new CustomEvent("wa:adminmsg")); } catch (_) {}
+        }
         // The approval ping — a DIFFERENT refresh. ⚠ BROADCAST.sync() would not
         // do: it fetches PUBLISHED rows, and a draft awaiting approval is by
         // definition unpublished, so the queue is a separate read. Signalled as
@@ -15882,12 +16013,91 @@ const MOBILE_UI = (() => {
     loadLog();
   }
 
-  async function contactPage() {
+  // ==========================================================================
+  // MSG TO ADMIN (#/m/contact) — a private admin ↔ member conversation.
+  // ADMIN_MSG_PLAN.md; the rules are in supabase/add_admin_msg_threads.sql.
+  //
+  // THREE screens behind ONE route, because the route travels inside live FCM
+  // payloads and must not be split:
+  //
+  //   a member (or a visitor)     → their own conversation
+  //   a moderator                 → the inbox: Pending | Replied
+  //   a moderator with ?u=<uuid>  → that member's conversation
+  //
+  // ⚠ Every screen puts the WRITING BOX ABOVE the list and repaints only the
+  // list. That is the operator's shape ("write first, read under it") and it is
+  // also the trap: a repaint over the textarea destroys a half-typed line, which
+  // is the bug Upanishad Ganga's four separate panes exist to avoid. Here the
+  // box simply is not inside anything that gets repainted.
+  //
+  // ⚠ It stays an ORDINARY SCROLLING PAGE — no `--m-vvh` flex column and NOT in
+  // KB_PRESHRINK. Those belong to pages whose composer is pinned; adding them to
+  // a scrolling page crops it for no reason (see app/static/CLAUDE.md).
+  //
+  // ⚠ No Realtime channel of its own. Concurrent connections are the scarcest
+  // free-tier resource, and there is already a signal for "something arrived":
+  // the push receipt fires `wa:adminmsg`, which every mounted screen here
+  // listens for. `admin_messages` IS published now, so if this ever needs to be
+  // live while the app is backgrounded, subscribing is the change — not polling.
+  // ==========================================================================
+  const ADMIN_MSG_TEAM = "Samarpan Upanishad Team";
+
+  // The note under Send. ⚠ The operator's words, verbatim (2026-08-22) — this is
+  // the whole reason the note exists, so don't tighten the grammar.
+  const ADMIN_MSG_NOTE =
+    "Any bugs and any enhancement required in the app, please feel free to send " +
+    "msg to admin. Your valuable suggestion will be considered on priority basis.";
+
+  // Who a bubble is signed by. ⚠ A member NEVER sees a moderator's name: the
+  // server does not send it (admin_msg_thread returns author_name empty to
+  // anyone but an admin), and this is the second wall, not the first.
+  function amWhoOf(m, forAdmin) {
+    if (!m.fromAdmin) return "";                       // the header names them
+    return forAdmin ? (m.author || "Admin") : ADMIN_MSG_TEAM;
+  }
+  // `forAdmin` decides which side is "mine": the admin's replies on an admin's
+  // screen, the member's messages on the member's.
+  function amBubbleHtml(m, forAdmin) {
+    const mine = forAdmin ? m.fromAdmin : !m.fromAdmin;
+    const who = amWhoOf(m, forAdmin);
+    return `<div class="am-msg ${mine ? "me" : "them"}">
+      <div class="am-bubble">
+        ${who ? `<div class="am-who">${escapeHtml(who)}</div>` : ""}
+        <div class="am-text">${escapeHtml(m.text)}</div>
+        <div class="am-ts">${escapeHtml(timeAgo(m.ts))}</div>
+      </div></div>`;
+  }
+  // Newest first, matching the RPC and the box above it.
+  function amPaintThread(box, rows, forAdmin, emptyMsg) {
+    box.innerHTML = rows.length
+      ? rows.map((m) => amBubbleHtml(m, forAdmin)).join("")
+      : `<div class="m-hint">${escapeHtml(emptyMsg)}</div>`;
+  }
+  // Repaint an open screen when a push lands. Self-removing: a page that has
+  // been navigated away from must not keep answering (and must not keep a
+  // reference to its own DOM alive).
+  function amOnPush(node, fn) {
+    const h = () => { if (!node.isConnected) { window.removeEventListener("wa:adminmsg", h); return; } fn(); };
+    window.addEventListener("wa:adminmsg", h);
+  }
+
+  async function contactPage(params) {
+    const uid = params && params.get("u");
+    // ⚠ isModerator() is a DISPLAY test only. A member who types ?u=<someone> in
+    // the hash lands on their own conversation here, and would be refused by
+    // Postgres even if this branch were wrong (admin_msg_thread raises, and
+    // admin_messages_select never returns another thread's rows).
+    if (isModerator()) return uid ? adminMsgThreadPage(uid) : adminMsgInboxPage();
+    return memberMsgPage();
+  }
+
+  // ---- the member's own conversation --------------------------------------
+  async function memberMsgPage() {
     const node = el(`<div class="m-contact"></div>`);
     pageFrame("Msg to Admin", node);
     if (!isSignedIn()) {
       node.innerHTML = `<p class="m-hint" style="margin-bottom:14px">Sign in to send a message to the admin.</p>` + modSignInHtml();
-      wireModSignIn(node, () => contactPage());
+      wireModSignIn(node, () => memberMsgPage());
       return;
     }
     node.innerHTML = `
@@ -15895,36 +16105,211 @@ const MOBILE_UI = (() => {
         <textarea id="m-msg" rows="4" maxlength="2000" placeholder="Write your message to the admin…"></textarea>
         <button class="btn primary" id="m-msg-send">Send</button>
       </div>
-      <div class="m-msglist" id="m-msg-mine"><div class="loading">Loading…</div></div>
-      <div id="m-msg-mod"></div>`;
+      <div class="am-note">${escapeHtml(ADMIN_MSG_NOTE)}</div>
+      <div class="am-thread" id="m-msg-thread"><div class="loading">Loading…</div></div>`;
+
+    const thread = node.querySelector("#m-msg-thread");
+    const load = async () => {
+      let rows;
+      try { rows = await WA.adminMsgThread(null, 200); }
+      catch (err) { thread.innerHTML = `<div class="m-hint">${escapeHtml((err && err.message) || "Couldn't load your messages.")}</div>`; return; }
+      amPaintThread(thread, rows, false, "Nothing yet — write to the admin above.");
+      // Read: the newest REPLY is what the badge counts, so that is the mark.
+      const newestReply = rows.find((m) => m.fromAdmin);
+      ADMINMSG.markSeen(newestReply ? newestReply.ts : "");
+    };
+
     const send = node.querySelector("#m-msg-send");
     send.addEventListener("click", async () => {
       const ta = node.querySelector("#m-msg");
       if (!ta.value.trim()) return;
       send.disabled = true; send.textContent = "Sending…";
-      try { await WA.sendAdminMessage(ta.value); ta.value = ""; toast("Message sent 🙏"); loadMine(); }
-      catch (err) { toast(err.message); }
+      try {
+        const r = await WA.sendAdminMessage(ta.value);
+        ta.value = "";
+        // Tell the admins. Fire-and-forget by contract — the message is stored
+        // either way, and a failed push must not make a sent message look unsent.
+        WA.notifyAdminMsg(r.id);
+        toast("Message sent 🙏");
+        load();
+      } catch (err) { toast((err && err.message) || "Couldn't send that."); }
       finally { send.disabled = false; send.textContent = "Send"; }
     });
-    const mine = node.querySelector("#m-msg-mine");
-    async function loadMine() {
+
+    amOnPush(node, load);
+    load();
+  }
+
+  // ---- the admins' inbox ---------------------------------------------------
+  // ⚠ ONE query for BOTH tabs (`want: "all"`), split here. Two queries would
+  // make switching tabs a round trip and would still have to ask twice for the
+  // counts the labels carry.
+  async function adminMsgInboxPage() {
+    const node = el(`<div class="m-contact"></div>`);
+    pageFrame("Msg to Admin", node);
+    node.innerHTML = `
+      <div class="m-seg-row">
+        <div class="m-langseg m-msgseg" id="am-seg" role="group" aria-label="Which conversations">
+          <button data-want="pending" class="active" type="button">Pending</button>
+          <button data-want="replied" type="button">Replied</button>
+        </div>
+      </div>
+      <div class="am-list" id="am-list"><div class="loading">Loading…</div></div>`;
+
+    const seg = node.querySelector("#am-seg");
+    const list = node.querySelector("#am-list");
+    let rows = [];
+    let want = "pending";
+
+    const rowHtml = (t) => {
+      // ⚠ The chip says who spoke LAST, not whether anybody is working on it.
+      // With several moderators that is the only cheap thing that stops the same
+      // conversation being answered twice (ADMIN_MSG_PLAN.md §3.3).
+      const chip = t.lastFromAdmin
+        ? `<span class="am-chip ans">Answered</span>`
+        : `<span class="am-chip wait">Waiting</span>`;
+      // ⚠ Shown only when Done is the reason this is not in Pending — the
+      // member spoke last and an admin closed it anyway. A thread the admins
+      // ANSWERED is out of Pending on its own merit, so a Done chip there would
+      // just be history, and stale history at that (the mark may predate the
+      // reply). So this reads "Waiting" and "Done" together, which is exactly
+      // what happened.
+      const done = (!t.lastFromAdmin && t.doneAt)
+        ? `<span class="am-chip done">Done${t.doneName ? " · " + escapeHtml(t.doneName) : ""}</span>`
+        : "";
+      return `<a class="am-row" href="#/m/contact?u=${encodeURIComponent(t.userId)}">
+        <div class="am-row-top">
+          <span class="am-row-name">${escapeHtml(t.username)}</span>
+          <span class="am-row-when">${escapeHtml(timeAgo(t.lastAt))}</span>
+        </div>
+        <div class="am-row-prev">${escapeHtml(t.lastText)}</div>
+        <div class="am-row-tags">${chip}${done}
+          <span class="am-chip n">${t.count} msg${t.count === 1 ? "" : "s"}</span>
+        </div></a>`;
+    };
+
+    const paint = () => {
+      const pend = rows.filter((t) => t.status === "pending");
+      const rep  = rows.filter((t) => t.status !== "pending");
+      seg.querySelector('[data-want="pending"]').textContent = `Pending (${pend.length})`;
+      seg.querySelector('[data-want="replied"]').textContent = `Replied (${rep.length})`;
+      seg.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.want === want));
+      const show = want === "pending" ? pend : rep;
+      list.innerHTML = show.length
+        ? show.map(rowHtml).join("")
+        : `<div class="m-hint">${escapeHtml(want === "pending"
+            ? "Nothing waiting. 🙏"
+            : "No answered conversations yet.")}</div>`;
+    };
+
+    const load = async () => {
+      try { rows = await WA.adminMsgThreads("all", 500); }
+      catch (err) {
+        list.innerHTML = `<div class="m-hint">${escapeHtml((err && err.message) || "Couldn't load the inbox.")}</div>`;
+        return;
+      }
+      paint();
+      // The badge is the PENDING count and the server is what computes it, so
+      // recount rather than trusting what we just filtered.
+      ADMINMSG.refresh(true).catch(() => {});
+    };
+
+    seg.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-want]"); if (!b) return;
+      hapticTick();
+      want = b.dataset.want;
+      paint();
+    });
+
+    amOnPush(node, load);
+    load();
+  }
+
+  // ---- one member's conversation, as an admin sees it ----------------------
+  async function adminMsgThreadPage(uid) {
+    const node = el(`<div class="m-contact"></div>`);
+    pageFrame("Msg to Admin", node);
+    node.innerHTML = `
+      <div class="m-inputcol">
+        <textarea id="am-reply" rows="4" maxlength="2000" placeholder="Write your reply…"></textarea>
+        <div class="am-acts">
+          <button class="btn" id="am-done" type="button">Mark done</button>
+          <button class="btn primary" id="am-send" type="button">Send reply</button>
+        </div>
+      </div>
+      <div class="am-thread" id="am-thread"><div class="loading">Loading…</div></div>`;
+
+    const thread = node.querySelector("#am-thread");
+    const doneBtn = node.querySelector("#am-done");
+    const send = node.querySelector("#am-send");
+    let doneAt = null;
+
+    // ⚠ Done is admin-only, and this is where that is *visible* — but not where
+    // it is enforced. admin_msg_threads has no policy a member can pass, so
+    // their app cannot read this state at all (ADMIN_MSG_PLAN.md §1.3).
+    const paintDone = () => {
+      doneBtn.textContent = doneAt ? "Marked done — undo" : "Mark done";
+      doneBtn.classList.toggle("am-is-done", !!doneAt);
+    };
+
+    const load = async () => {
+      let rows;
+      try { rows = await WA.adminMsgThread(uid, 200); }
+      catch (err) { thread.innerHTML = `<div class="m-hint">${escapeHtml((err && err.message) || "Couldn't load the conversation.")}</div>`; return; }
+      // The page can only name the person once the rows are in — a notification
+      // tap arrives with nothing but the uuid.
+      setChrome("page", rows.threadName || "Msg to Admin", null);
+      amPaintThread(thread, rows, true, "Nothing in this conversation.");
+      const d = await WA.adminMsgDoneState(uid);
+      // ⚠ "Done" means DONE SINCE THE LAST MESSAGE — exactly how Postgres
+      // computes pending. A thread marked done last week and written to again
+      // this morning is not done, and a button claiming it was would contradict
+      // the inbox that just listed it under Pending.
+      //
+      // ⚠ Compared with Date.parse, not as strings: PostgREST returns
+      // "…+00:00" and the optimistic stamp below is new Date().toISOString()
+      // ("…Z"), and "Z" sorts after "+" — a lexicographic compare would call
+      // every freshly-pressed Done newer than it is.
+      const newestTs = rows[0] ? rows[0].ts : null;
+      doneAt = (d.doneAt && (!newestTs || Date.parse(d.doneAt) >= Date.parse(newestTs)))
+        ? d.doneAt : null;
+      paintDone();
+    };
+
+    send.addEventListener("click", async () => {
+      const ta = node.querySelector("#am-reply");
+      if (!ta.value.trim()) return;
+      send.disabled = true; doneBtn.disabled = true; send.textContent = "Sending…";
       try {
-        const d = await WA.myAdminMessages();
-        mine.innerHTML = d.messages.length ? `<div class="m-count">Your messages</div>` : "";
-        d.messages.forEach((m) => mine.appendChild(el(
-          `<div class="m-msgitem"><div class="m-msgtext">${escapeHtml(m.text)}</div><div class="m-msgts">${timeAgo(m.ts)}</div></div>`)));
-      } catch (err) { mine.innerHTML = `<div class="m-hint">${escapeHtml(err.message)}</div>`; }
-    }
-    loadMine();
-    if (isModerator()) {
-      const box = node.querySelector("#m-msg-mod");
+        const r = await WA.replyAdminMessage(uid, ta.value);
+        ta.value = "";
+        WA.notifyAdminMsgReply(r.id);
+        toast("Reply sent 🙏");
+        await load();
+        // The thread has just left Pending, so the admin badge is stale.
+        ADMINMSG.refresh(true).catch(() => {});
+      } catch (err) { toast((err && err.message) || "Couldn't send that."); }
+      finally { send.disabled = false; doneBtn.disabled = false; send.textContent = "Send reply"; }
+    });
+
+    doneBtn.addEventListener("click", async () => {
+      const next = !doneAt;
+      doneBtn.disabled = true;
       try {
-        const d = await WA.listAdminMessages();
-        box.innerHTML = `<div class="m-count">Received messages (${d.messages.length})</div>`;
-        d.messages.forEach((m) => box.appendChild(el(
-          `<div class="m-msgitem"><div class="m-msgfrom">${escapeHtml(m.user || "?")}</div><div class="m-msgtext">${escapeHtml(m.text)}</div><div class="m-msgts">${timeAgo(m.ts)}</div></div>`)));
-      } catch { /* table not set up yet — the sender box already explains */ }
-    }
+        await WA.setAdminMsgDone(uid, next);
+        doneAt = next ? new Date().toISOString() : null;
+        paintDone();
+        // ⚠ NOT "back in Pending": un-marking only restores whatever the
+        // last-sender rule says, and on an already-answered thread that is
+        // Replied. Promising Pending would be wrong half the time.
+        toast(next ? "Marked done." : "Done mark removed.");
+        ADMINMSG.refresh(true).catch(() => {});
+      } catch (err) { toast((err && err.message) || "Couldn't do that."); }
+      finally { doneBtn.disabled = false; }
+    });
+
+    amOnPush(node, load);
+    load();
   }
 
   // ---- Account -------------------------------------------------------------
@@ -16019,7 +16404,9 @@ const MOBILE_UI = (() => {
       // the thing it is about, not on a page to scroll. The page refuses itself
       // to non-moderators, and Postgres refuses every RPC behind it.
       if (p === "gyanreview") return gangaReviewPage();
-      if (p === "contact") return contactPage();
+      // ?u=<uuid> → an admin opening ONE member's conversation, which is also
+      // where the member→admin notification lands.
+      if (p === "contact") return contactPage(params);
       if (p === "account") return accountPage();
       return viewer(null, params, true);
     },
@@ -16643,6 +17030,10 @@ AUTH_GATE.boot(function startApp() {
   // isn't a moderator, so a member's boot costs nothing extra.
   ADMINTALK.refreshBadges();
   ADMINTALK.refresh(true).catch(() => {});
+  // Msg to Admin: same cache-first contract. Its refresh no-ops for a
+  // signed-out device, so it costs nothing before the startup gate is passed.
+  ADMINMSG.refreshBadges();
+  ADMINMSG.refresh(true).catch(() => {});
 
   // Home screen widget: rebuild the snapshot once the two caches it reads have
   // actually landed. Building it before they resolve would hand the widget a
