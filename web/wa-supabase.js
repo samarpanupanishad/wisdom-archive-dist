@@ -1793,14 +1793,20 @@ const WA = {
   // ⚠ Sending is a plain INSERT, not an RPC, deliberately: shells older than
   // this release insert {text} and nothing else, and the trigger files those
   // into the sender's own thread so they keep working untouched.
-  async sendAdminMessage(text) {
+  async sendAdminMessage(text, atts) {
     const { data: { session } } = await _sb.auth.getSession();
     if (!session) throw Object.assign(new Error("Please sign in first."), { code: "AUTH" });
     const body = (text || "").trim();
     if (!body) throw new Error("Please write a message.");
     if (body.length > 2000) throw new Error("Message is too long (max 2000 characters).");
+    // ⚠ `attachments` is only SENT when there are some. The column arrives with
+    // add_admin_msg_media.sql, and naming it on a server that has not run that
+    // file yet is a 400 — so a phone that has taken the OTA before the operator
+    // has run the SQL keeps working for ordinary text messages.
+    const row = { text: body };
+    if (atts && atts.length) row.attachments = atts;
     const { data, error } = await _sb.from("admin_messages")
-      .insert({ text: body }).select("*").single();
+      .insert(row).select("*").single();
     if (error) throw new Error(_tableMissing(error) || error.message);
     return { id: data.id, text: data.text, ts: data.created_at };
   },
@@ -1808,17 +1814,69 @@ const WA = {
   // reads it, checks wa_is_mod() for itself, and only then marks the row
   // from_admin. A member sending this exact call has it filed as their own
   // ordinary message instead, which is the intended failure.
-  async replyAdminMessage(threadUserId, text) {
+  async replyAdminMessage(threadUserId, text, atts) {
     const { data: { session } } = await _sb.auth.getSession();
     if (!session) throw Object.assign(new Error("Please sign in first."), { code: "AUTH" });
     if (!threadUserId) throw new Error("Which conversation?");
     const body = (text || "").trim();
     if (!body) throw new Error("Please write a reply.");
     if (body.length > 2000) throw new Error("Reply is too long (max 2000 characters).");
+    const row = { text: body, thread_user_id: threadUserId };
+    if (atts && atts.length) row.attachments = atts;   // see sendAdminMessage
     const { data, error } = await _sb.from("admin_messages")
-      .insert({ text: body, thread_user_id: threadUserId }).select("*").single();
+      .insert(row).select("*").single();
     if (error) throw new Error(_adminMsgErr(error) || error.message);
     return { id: data.id, text: data.text, ts: data.created_at };
+  },
+
+  // ---- attachments (phase two) ------------------------------------------
+  // A THIRD bucket, and the reason is the reader, not tidiness:
+  //   satsang-media   is readable by every approved member
+  //   broadcast-media is readable by every signed-in account
+  //   admin-msg-media is readable by the owner OR an admin, and nobody else
+  // A private conversation whose pictures any member could fetch would not be
+  // private, so neither existing bucket could be borrowed. See
+  // supabase/add_admin_msg_media.sql §4.
+  //
+  // ⚠ THE PATH IS THE ACCESS RULE: `<threadUserId>/<random>.<ext>`. The storage
+  // policy reads the first folder and compares it to auth.uid(), so a flat key
+  // would be refused. `threadUserId` is the MEMBER — their own id when they
+  // write, the member's id when an admin replies (allowed by wa_is_mod()).
+  //
+  // ⚠ Upload FIRST, insert the message second (the caller does this): a row
+  // pointing at a missing object is unrecoverable, an orphaned object is just
+  // garbage. Same three gates as everywhere else — MEDIA_MIMES here, the
+  // extension check in app.js, the bucket's allowed_mime_types. Never widen any.
+  async uploadAdminMsgMedia(threadUserId, blob, name, extra) {
+    if (!threadUserId) throw new Error("Which conversation?");
+    const mime = blob.type || "application/octet-stream";
+    if (!WA.MEDIA_MIMES.includes(mime)) {
+      throw new Error("Only images and PDF files can be attached.");
+    }
+    const ext = (mime === "application/pdf") ? "pdf" : (mime.split("/")[1] || "bin");
+    const rand = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+    const path = `${threadUserId}/${rand}.${ext}`;
+    const { error } = await _sb.storage.from("admin-msg-media")
+      .upload(path, blob, { contentType: mime, upsert: false });
+    if (error) {
+      if (/Bucket not found|not found/i.test(error.message || "")) {
+        throw new Error("Attachments aren't set up yet. (Admin: run supabase/add_admin_msg_media.sql.)");
+      }
+      throw new Error(error.message);
+    }
+    return Object.assign({ path, mime, bytes: blob.size, name: name || "" }, extra || {});
+  },
+
+  // Private bucket → signed URLs. ⚠ Batched: one round trip per screenful, not
+  // one per picture. Returns {path: url}.
+  async signedAdminMsgUrls(paths, seconds) {
+    if (!paths || !paths.length) return {};
+    const { data, error } = await _sb.storage.from("admin-msg-media")
+      .createSignedUrls(paths, seconds || 3600);
+    if (error) throw new Error(error.message);
+    const out = {};
+    (data || []).forEach((d) => { if (d && d.path && d.signedUrl) out[d.path] = d.signedUrl; });
+    return out;
   },
   // One conversation, newest first — the only door to a thread's messages, for
   // both sides. `uid` null = my own. `author` is the moderator who wrote a
@@ -1831,6 +1889,9 @@ const WA = {
       id: r.id, text: r.body, fromAdmin: !!r.from_admin,
       author: r.author_name || "", ts: r.created_at,
       threadName: r.thread_name || "",
+      // `attachments` only exists once add_admin_msg_media.sql has run; an older
+      // server simply omits the key, and every reader treats that as none.
+      atts: Array.isArray(r.attachments) ? r.attachments : [],
     }));
     // Carried on the array as well as on every row: an EMPTY thread still has a
     // name the page needs for its title, and a notification tap is exactly the

@@ -2140,11 +2140,45 @@ body.m-mode.m-kb .m-page-admsg { transform: translateY(var(--m-vvtop, 0px)); }
 .am-chip.ans  { color: #1565c0; }
 
 /* ---- the admin's reply box ---- */
-.am-acts { display: flex; gap: 10px; }
-.am-acts .btn { flex: 1; }
+.am-acts { display: flex; gap: 8px; }
+.am-acts .btn { flex: 1; min-width: 0; }
 /* Done is a toggle, and a pressed toggle has to look pressed — otherwise the
    only way to tell is to read the label. */
 .am-is-done { background: var(--accent-soft, #e3f2fd); border-color: var(--accent); color: var(--accent); }
+
+/* ---- attachments (phase two) ----
+   The clip / camera buttons are square and must NOT flex: the admin's row
+   carries four buttons on a 375px phone, and letting the icons grow would
+   squeeze "Done" and "Send" into ellipses. */
+.am-iconbtn {
+  flex: 0 0 auto !important; width: 42px; padding: 8px 0;
+  font-size: 17px; line-height: 1; text-align: center;
+}
+/* The picked-but-not-yet-uploaded strip. Nothing here has left the phone —
+   files upload only on Send, so an abandoned message leaves nothing behind. */
+.am-picks { display: flex; flex-direction: column; gap: 6px; }
+.am-picks:empty { display: none; }
+.am-pick {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px 8px 6px 10px;
+}
+.am-pick-n {
+  flex: 1; min-width: 0; font: 400 12.5px var(--sans); color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.am-pick-x {
+  flex: none; border: none; background: none; cursor: pointer;
+  color: var(--muted); font-size: 13px; padding: 2px 4px; line-height: 1;
+}
+/* Attachments INSIDE a bubble reuse the .bc-att-* primitives (see
+   bcPaintAttachments). ⚠ Their own padding is sized for the Important Updates
+   reader's full-width column; the bubble already has its own, so it is dropped
+   here rather than doubled. The height cap is smaller too — a bubble is at most
+   84% of the screen, and a 220px picture inside one dwarfs the conversation. */
+.am-bubble .bc-atts { padding: 6px 0 0; }
+.am-bubble .bc-att-img { max-height: 170px; }
+.am-bubble .bc-att-doc { background: var(--bg); }
 
 /* Upanishad Ganga (#/m/gyan) — room for the instructions, then the member's own
    box, then the last three thoughts under them. It reuses the .m-msgitem card

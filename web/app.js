@@ -1794,6 +1794,26 @@ async function bcMediaUrls(paths) {
   return out;
 }
 
+// ---- Msg to Admin: the same helper again, pointed at the THIRD bucket -------
+// Three buckets now, and the difference is always the READER, never neatness:
+// satsang-media is readable by every approved member, broadcast-media by every
+// signed-in account, and `admin-msg-media` by the owner OR an admin and nobody
+// else. A private conversation whose pictures any member could fetch would not
+// be private, so neither of the others could be borrowed here.
+// See supabase/add_admin_msg_media.sql §4.
+const AM_MEDIA_URLS = new Map();       // path -> {url, exp}
+async function amMediaUrls(paths) {
+  const now = Date.now();
+  const need = paths.filter((p) => { const e = AM_MEDIA_URLS.get(p); return !e || e.exp < now + 60000; });
+  if (need.length) {
+    const got = await WA.signedAdminMsgUrls(need, 3600);
+    Object.keys(got).forEach((p) => AM_MEDIA_URLS.set(p, { url: got[p], exp: now + 3300000 }));
+  }
+  const out = {};
+  paths.forEach((p) => { const e = AM_MEDIA_URLS.get(p); if (e) out[p] = e.url; });
+  return out;
+}
+
 // ⚠ An external link must NOT be followed by the WebView. Inside the Capacitor
 // shell that REPLACES THE SPA — the whole app is gone and there is no way back
 // to it short of force-quitting. @capacitor/browser opens a real system browser
@@ -1842,11 +1862,19 @@ function bcAttachmentsHtml(atts) {
 
 // One BATCH sign for every image in the message before the first paint — one
 // round trip, not one per picture — then fill the srcs in.
-async function bcPaintAttachments(root, atts) {
+// ⚠ `urlsFn` defaults to bcMediaUrls so every existing caller is untouched.
+// It exists because Msg to Admin needs the identical markup, batching, offline
+// caching and zoom behaviour against a DIFFERENT bucket — and a third copy of
+// this and bcOpenAttachment would be two more places to fix a rendering bug in.
+// The `bc-` names stay: these are the shared attachment primitives now, not
+// broadcast-only, and renaming live CSS across two shipped features to prove a
+// point is not worth the regression.
+async function bcPaintAttachments(root, atts, urlsFn) {
   const imgs = (atts || []).filter(isImageAtt);
   if (!imgs.length) return;
+  const sign = urlsFn || bcMediaUrls;
   let urls;
-  try { urls = await bcMediaUrls(imgs.map((a) => a.path)); } catch { return; }
+  try { urls = await sign(imgs.map((a) => a.path)); } catch { return; }
   const wn = window.WA_NATIVE;
   for (let i = 0; i < atts.length; i++) {
     if (!isImageAtt(atts[i])) continue;
@@ -1864,17 +1892,18 @@ async function bcPaintAttachments(root, atts) {
 
 // Open one attachment. Images go to the same zoom shell a shared photo uses;
 // a PDF goes to the system browser (see openExternalLink).
-async function bcOpenAttachment(atts, index) {
+async function bcOpenAttachment(atts, index, urlsFn) {
   const att = atts[index];
   if (!att) return;
+  const sign = urlsFn || bcMediaUrls;
   let url;
-  try { url = (await bcMediaUrls([att.path]))[att.path]; } catch { url = null; }
+  try { url = (await sign([att.path]))[att.path]; } catch { url = null; }
   if (!url) { toast("Couldn't open that file."); return; }
   if (!isImageAtt(att)) { openExternalLink(url); return; }
   if (typeof MOBILE_UI !== "undefined" && MOBILE_UI.active) {
     const imgAtts = atts.filter(isImageAtt);
     let urls;
-    try { urls = await bcMediaUrls(imgAtts.map((a) => a.path)); } catch { urls = { [att.path]: url }; }
+    try { urls = await sign(imgAtts.map((a) => a.path)); } catch { urls = { [att.path]: url }; }
     MOBILE_UI.openChatZoom(imgAtts.map((a) => urls[a.path]).filter(Boolean), imgAtts.indexOf(att));
     return;
   }
@@ -16328,6 +16357,79 @@ const MOBILE_UI = (() => {
     "Any bugs and any enhancement required in the app, please feel free to send " +
     "msg to admin. Your valuable suggestion will be considered on priority basis.";
 
+  // ---- attachments (phase two) -------------------------------------------
+  // The two hidden inputs, shared by both composers. ⚠ The camera one is a
+  // SECOND input with capture="environment" and NOT a plugin — the WebView
+  // delegates to the system camera by intent, which needs no permission unless
+  // the app declares one, and declaring CAMERA without a runtime request would
+  // break capture instead of enabling it. Don't "fix" that by adding it.
+  const AM_ATTACH_INPUTS =
+    `<input type="file" class="am-file" accept="${MEDIA_ACCEPT}" multiple hidden>` +
+    `<input type="file" class="am-cam" accept="image/*" capture="environment" hidden>`;
+
+  // The clip / camera buttons for an .am-acts row.
+  const AM_ATTACH_BTNS =
+    `<button class="btn am-iconbtn am-clip" type="button" title="Attach a photo or PDF" aria-label="Attach a photo or PDF">📎</button>` +
+    `<button class="btn am-iconbtn am-cam-btn" type="button" title="Take a photo" aria-label="Take a photo">📷</button>`;
+
+  // One place that knows how to pick, cap, shrink and upload — both composers
+  // use it, so the gates cannot drift apart between them.
+  //
+  // `getThreadUid` is called at UPLOAD time, not now: for a member it is their
+  // own id, for an admin the member's, and it becomes the first folder of the
+  // storage path — which IS the access rule (add_admin_msg_media.sql §4).
+  function amWireAttach(node, getThreadUid) {
+    const picksEl = node.querySelector(".am-picks");
+    const fileEl = node.querySelector(".am-file");
+    const camEl = node.querySelector(".am-cam");
+    const picked = [];
+    const paint = () => {
+      picksEl.innerHTML = picked.map((pk, i) =>
+        `<div class="am-pick"><span class="am-pick-n">${escapeHtml(
+            pk.name || (pk.blob.type === "application/pdf" ? "File" : "Photo"))}</span>` +
+        `<button type="button" class="am-pick-x" data-drop="${i}" aria-label="Remove">✕</button></div>`).join("");
+    };
+    picksEl.addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-drop]"); if (!b) return;
+      picked.splice(parseInt(b.dataset.drop, 10), 1);
+      paint();
+    });
+    const take = async (inputEl) => {
+      const files = [...(inputEl.files || [])];
+      inputEl.value = "";                    // so re-picking the same file fires
+      for (const f of files) {
+        if (picked.length >= MEDIA_MAX) { toast("Up to " + MEDIA_MAX + " attachments."); break; }
+        // ⚠ MIME *and* extension, so a renamed .mp4 fails here as well as at
+        // the bucket. Audio and video are never allowed — three separate gates.
+        if (!isMediaOk(f)) { toast("Only images and PDF files can be attached."); continue; }
+        if (f.size > MEDIA_MAX_BYTES) { toast((f.name || "That file") + " is too large (max 10 MB)."); continue; }
+        const { blob, w, h } = await downscaleImage(f);
+        picked.push({ blob, w, h, name: f.name || "" });
+      }
+      paint();
+    };
+    fileEl.addEventListener("change", () => take(fileEl));
+    camEl.addEventListener("change", () => take(camEl));
+    node.querySelectorAll(".am-clip").forEach((b) => b.addEventListener("click", () => fileEl.click()));
+    node.querySelectorAll(".am-cam-btn").forEach((b) => b.addEventListener("click", () => camEl.click()));
+    return {
+      any: () => picked.length > 0,
+      // ⚠ Upload FIRST, insert the message second (the caller does that): a
+      // row pointing at a missing object is unrecoverable, an orphan object is
+      // just garbage. Nothing uploads until Send, so an abandoned message leaves
+      // nothing in the bucket at all.
+      async upload() {
+        const uid = getThreadUid();
+        const out = [];
+        for (const pk of picked) {
+          out.push(await WA.uploadAdminMsgMedia(uid, pk.blob, pk.name, { w: pk.w, h: pk.h }));
+        }
+        return out;
+      },
+      clear() { picked.length = 0; paint(); },
+    };
+  }
+
   // Who a bubble is signed by. ⚠ A member NEVER sees a moderator's name: the
   // server does not send it (admin_msg_thread returns author_name empty to
   // anyone but an admin), and this is the second wall, not the first.
@@ -16360,18 +16462,52 @@ const MOBILE_UI = (() => {
   function amBubbleHtml(m, forAdmin) {
     const mine = forAdmin ? m.fromAdmin : !m.fromAdmin;
     const who = amWhoOf(m, forAdmin);
-    return `<div class="am-msg ${mine ? "me" : "them"}">
+    const atts = (m.atts && m.atts.length) ? m.atts : null;
+    // ⚠ A media-only message's `text` IS the placeholder (the column is NOT
+    // NULL, so there is always something there), and printing it above the photo
+    // it describes is noise. Same rule as the Satsang bubble.
+    const caption = (atts && m.text === mediaPlaceholder(atts)) ? "" : m.text;
+    return `<div class="am-msg ${mine ? "me" : "them"}" data-mid="${escapeHtml(String(m.id))}">
       <div class="am-bubble">
         ${who ? `<div class="am-who">${escapeHtml(who)}</div>` : ""}
-        <div class="am-text">${escapeHtml(m.text)}</div>
+        ${caption ? `<div class="am-text">${escapeHtml(caption)}</div>` : ""}
+        ${atts ? bcAttachmentsHtml(atts) : ""}
         <div class="am-ts">${escapeHtml(timeAgo(m.ts))}</div>
       </div></div>`;
   }
   // Newest first, matching the RPC and the box above it.
+  //
+  // Attachments reuse Important Updates' renderers (bcAttachmentsHtml /
+  // bcPaintAttachments / bcOpenAttachment) with amMediaUrls passed in as the
+  // signer — same markup, same one-round-trip batching, same offline caching
+  // and zoom, different bucket. A third copy would be two more places to fix a
+  // rendering bug in.
+  //
+  // ⚠ One thread is on screen at a time, so this map is module-level rather
+  // than per-box, and it is rebuilt on every paint so a stale row cannot be
+  // opened by a tap that arrives after a refresh.
+  const _amAtts = new Map();            // mid -> attachment records
   function amPaintThread(box, rows, forAdmin, emptyMsg) {
+    _amAtts.clear();
     box.innerHTML = rows.length
       ? rows.map((m) => amBubbleHtml(m, forAdmin)).join("")
       : `<div class="m-hint">${escapeHtml(emptyMsg)}</div>`;
+    rows.forEach((m) => {
+      if (!m.atts || !m.atts.length) return;
+      _amAtts.set(String(m.id), m.atts);
+      const root = box.querySelector(`.am-msg[data-mid="${CSS.escape(String(m.id))}"]`);
+      if (root) bcPaintAttachments(root, m.atts, amMediaUrls);
+    });
+    // Bound once per box, delegated — a repaint must not stack a second handler.
+    if (!box.dataset.amWired) {
+      box.dataset.amWired = "1";
+      box.addEventListener("click", (ev) => {
+        const b = ev.target.closest(".bc-att-img, .bc-att-doc"); if (!b) return;
+        const msg = b.closest(".am-msg"); if (!msg) return;
+        const atts = _amAtts.get(msg.dataset.mid); if (!atts) return;
+        bcOpenAttachment(atts, parseInt(b.dataset.att, 10) || 0, amMediaUrls);
+      });
+    }
   }
   // Repaint an open screen when a push lands. Self-removing: a page that has
   // been navigated away from must not keep answering (and must not keep a
@@ -16407,9 +16543,14 @@ const MOBILE_UI = (() => {
       <div class="am-head">
         <div class="m-inputcol">
           <textarea id="m-msg" rows="4" maxlength="2000" placeholder="Write your message to the admin…"></textarea>
-          <button class="btn primary" id="m-msg-send">Send</button>
+          <div class="am-picks"></div>
+          <div class="am-acts">
+            ${AM_ATTACH_BTNS}
+            <button class="btn primary" id="m-msg-send" type="button">Send</button>
+          </div>
         </div>
         <div class="am-note">${escapeHtml(ADMIN_MSG_NOTE)}</div>
+        ${AM_ATTACH_INPUTS}
       </div>
       <div class="am-scroll">
         <div class="am-thread" id="m-msg-thread"><div class="loading">Loading…</div></div>
@@ -16426,14 +16567,22 @@ const MOBILE_UI = (() => {
       ADMINMSG.markSeen(newestReply ? newestReply.ts : "");
     };
 
+    // The member's own id: their attachments live under their own folder, which
+    // is the only folder the storage policy lets them write to.
+    const attach = amWireAttach(node, () => (currentUser() || {}).id);
+
     const send = node.querySelector("#m-msg-send");
     send.addEventListener("click", async () => {
       const ta = node.querySelector("#m-msg");
-      if (!ta.value.trim()) return;
+      const typed = ta.value.trim();
+      // A photo on its own is a complete bug report; words are not required.
+      if (!typed && !attach.any()) return;
       send.disabled = true; send.textContent = "Sending…";
       try {
-        const r = await WA.sendAdminMessage(ta.value);
+        const atts = await attach.upload();
+        const r = await WA.sendAdminMessage(typed || mediaPlaceholder(atts), atts);
         ta.value = "";
+        attach.clear();
         // Tell the admins. Fire-and-forget by contract — the message is stored
         // either way, and a failed push must not make a sent message look unsent.
         WA.notifyAdminMsg(r.id);
@@ -16547,11 +16696,14 @@ const MOBILE_UI = (() => {
       <div class="am-head">
         <div class="m-inputcol">
           <textarea id="am-reply" rows="4" maxlength="2000" placeholder="Write your reply…"></textarea>
+          <div class="am-picks"></div>
           <div class="am-acts">
-            <button class="btn" id="am-done" type="button">Mark done</button>
-            <button class="btn primary" id="am-send" type="button">Send reply</button>
+            ${AM_ATTACH_BTNS}
+            <button class="btn" id="am-done" type="button">Done</button>
+            <button class="btn primary" id="am-send" type="button">Send</button>
           </div>
         </div>
+        ${AM_ATTACH_INPUTS}
       </div>
       <div class="am-scroll">
         <div class="am-thread" id="am-thread"><div class="loading">Loading…</div></div>
@@ -16566,7 +16718,8 @@ const MOBILE_UI = (() => {
     // it is enforced. admin_msg_threads has no policy a member can pass, so
     // their app cannot read this state at all (ADMIN_MSG_PLAN.md §1.3).
     const paintDone = () => {
-      doneBtn.textContent = doneAt ? "Marked done — undo" : "Mark done";
+      // Short labels: the row now carries four buttons on a 375px phone.
+      doneBtn.textContent = doneAt ? "Undo done" : "Done";
       doneBtn.classList.toggle("am-is-done", !!doneAt);
     };
 
@@ -16594,13 +16747,20 @@ const MOBILE_UI = (() => {
       paintDone();
     };
 
+    // ⚠ The MEMBER's id, not the admin's: a reply's attachment belongs to that
+    // member's folder, which the policy allows because the writer is wa_is_mod().
+    const attach = amWireAttach(node, () => uid);
+
     send.addEventListener("click", async () => {
       const ta = node.querySelector("#am-reply");
-      if (!ta.value.trim()) return;
+      const typed = ta.value.trim();
+      if (!typed && !attach.any()) return;
       send.disabled = true; doneBtn.disabled = true; send.textContent = "Sending…";
       try {
-        const r = await WA.replyAdminMessage(uid, ta.value);
+        const atts = await attach.upload();
+        const r = await WA.replyAdminMessage(uid, typed || mediaPlaceholder(atts), atts);
         ta.value = "";
+        attach.clear();
         WA.notifyAdminMsgReply(r.id);
         toast("Reply sent 🙏");
         await load();
