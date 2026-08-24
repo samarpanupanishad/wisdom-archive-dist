@@ -8410,6 +8410,10 @@ const SIT_AUDIO = (() => {
     omPlayed = false;
     endAtMs = Date.now() + Math.max(0, msUntilEnd);
     armedAt = Date.now();               // the stall recorder's zero — see heartbeat()
+    hbAt = 0;
+    // ⚠ Cleared per sitting, or a sitting inherits the previous one's dark window
+    // and the report describes a sitting that already ended.
+    try { localStorage.removeItem(HB_KEY); localStorage.removeItem(GAP_KEY); } catch (_) {}
     // The bed goes first and SYNCHRONOUSLY. It is the one play() certain to sit
     // inside the gesture, and it holds audio focus for the moment or two the
     // whole-sitting file takes to build.
@@ -8599,7 +8603,11 @@ const SIT_AUDIO = (() => {
   // ⚠ It records. It must never influence playback — no pausing, no seeking,
   // no re-arming. Reading .currentTime is free; anything else here would be
   // changing the thing being measured.
-  const HB_KEY = "wa:dhyan:hb", LOG_KEY = "wa:dhyan:omlog";
+  const HB_KEY = "wa:dhyan:hb", GAP_KEY = "wa:dhyan:gap", LOG_KEY = "wa:dhyan:omlog";
+  // A tick arriving more than this long after the previous one means nothing of
+  // ours ran in between. 15 s against a 5 s beat: comfortably past a slow frame
+  // or a throttled background tick, comfortably short of any real lock.
+  const HB_GAP_MS = 15000;
 
   function mediaClock() {
     try { return tailEl ? tailEl.currentTime : null; } catch (_) { return null; }
@@ -8609,15 +8617,55 @@ const SIT_AUDIO = (() => {
   function heartbeat() {
     const now = Date.now();
     if (now - hbAt < 5000) return;
-    hbAt = now;
     const m = mediaClock();
-    try {
-      localStorage.setItem(HB_KEY, JSON.stringify({
-        awakeSec: armedAt ? Math.round((now - armedAt) / 1000) : null,
-        media: m == null ? null : +m.toFixed(1),
-        paused: !!(tailEl && tailEl.paused),
-      }));
-    } catch (_) {}
+    const cur = {
+      awakeSec: armedAt ? Math.round((now - armedAt) / 1000) : null,
+      media: m == null ? null : +m.toFixed(1),
+      paused: !!(tailEl && tailEl.paused),
+    };
+    // ⚠ THE FIX THE OPERATOR'S FIRST REPORT FORCED (2026-08-24). paint() runs
+    // again the instant the screen comes back, so this key was OVERWRITTEN on
+    // unlock and "page last awake" only ever reported the unlock — never the
+    // freeze. All four of the first reports showed it: "page last awake 9:45"
+    // beside "screen returned 9:45". The number that was wanted was lost every
+    // time.
+    //
+    // So watch for the GAP instead. Two consecutive ticks more than HB_GAP_MS
+    // apart bracket a window in which none of our JS ran — that window IS the
+    // locked stretch, and its two edges are the measurement:
+    //
+    //   gapSec        how long we were not running
+    //   mediaMovedSec how far the FILE advanced across that same window
+    //
+    // ⚠ mediaMovedSec is the whole answer. ~0 over a long gap means the media
+    // clock died with the page, so "already inside the audio pipeline" does not
+    // survive a lock on this device and the §3 premise is wrong. A value near
+    // gapSec means the file kept playing and stopped for some other reason.
+    // Nothing else here can distinguish those two.
+    //
+    // The LARGEST gap of the sitting is kept: a sitting can be unlocked and
+    // relocked, and the long dark stretch is the one that matters.
+    if (hbAt && now - hbAt > HB_GAP_MS) {
+      try {
+        const prev = JSON.parse(localStorage.getItem(HB_KEY) || "null");
+        if (prev) {
+          const g = {
+            frozeAtSec: prev.awakeSec, frozeMedia: prev.media,
+            wokeAtSec: cur.awakeSec, wokeMedia: cur.media,
+            gapSec: (cur.awakeSec != null && prev.awakeSec != null)
+              ? cur.awakeSec - prev.awakeSec : Math.round((now - hbAt) / 1000),
+            mediaMovedSec: (cur.media != null && prev.media != null)
+              ? +(cur.media - prev.media).toFixed(1) : null,
+          };
+          const best = JSON.parse(localStorage.getItem(GAP_KEY) || "null");
+          if (!best || (g.gapSec || 0) > (best.gapSec || 0)) {
+            localStorage.setItem(GAP_KEY, JSON.stringify(g));
+          }
+        }
+      } catch (_) {}
+    }
+    hbAt = now;
+    try { localStorage.setItem(HB_KEY, JSON.stringify(cur)); } catch (_) {}
   }
 
   // ⚠ MUST be called BEFORE playOmNow(), which nulls tailEl — and tailEl's
@@ -8625,8 +8673,9 @@ const SIT_AUDIO = (() => {
   function recordOutcome() {
     const now = Date.now();
     const m = mediaClock();
-    let hb = null;
+    let hb = null, gap = null;
     try { hb = JSON.parse(localStorage.getItem(HB_KEY) || "null"); } catch (_) {}
+    try { gap = JSON.parse(localStorage.getItem(GAP_KEY) || "null"); } catch (_) {}
     const rec = {
       at: new Date(now).toTimeString().slice(0, 5),
       targetSec: +tailSilenceSec.toFixed(1),
@@ -8651,6 +8700,7 @@ const SIT_AUDIO = (() => {
       // said it should have. This number is what confirms or kills that.
       driftSec: (hb && hb.awakeSec != null && hb.media != null)
         ? +(hb.awakeSec - hb.media).toFixed(1) : null,
+      gap: gap || null,
       mode: wholeRate ? "whole@" + wholeRate : "tail",
       why: whyNotWhole || "",
       paused: !!(tailEl && tailEl.paused),
@@ -8706,10 +8756,17 @@ function ddOmClock(n) {
 function ddOmLine(r) {
   if (!r) return "";
   const bits = ["file stopped at " + ddOmClock(r.mediaSec) + " of " + ddOmClock(r.targetSec)
-                  + (r.reached || r.shortBySec == null ? "" : " (short by " + r.shortBySec + "s)"),
-                "page last awake " + ddOmClock(r.lastAwakeSec) + ", file at " + ddOmClock(r.lastAwakeMedia)
-                  + (r.driftSec == null ? "" : " (behind by " + r.driftSec + "s)"),
-                String(r.mode || "?")];
+                  + (r.reached || r.shortBySec == null ? "" : " (short by " + r.shortBySec + "s)")];
+  // ⚠ FIRST, because it is the answer. Everything else is context.
+  if (r.gap) {
+    bits.push("DARK " + ddOmClock(r.gap.frozeAtSec) + "→" + ddOmClock(r.gap.wokeAtSec)
+              + " (" + r.gap.gapSec + "s), file moved "
+              + (r.gap.mediaMovedSec == null ? "?" : r.gap.mediaMovedSec + "s"));
+  } else {
+    bits.push("no dark window recorded");
+  }
+  bits.push("last tick " + ddOmClock(r.lastAwakeSec) + ", file at " + ddOmClock(r.lastAwakeMedia));
+  bits.push(String(r.mode || "?"));
   if (r.wallSec != null) bits.push("screen returned " + ddOmClock(r.wallSec));
   if (r.paused) bits.push("element paused");
   if (r.ended) bits.push("element ended");
