@@ -8058,6 +8058,7 @@ const SIT_AUDIO = (() => {
   let wholeRate = 0;                  // sample rate of the whole-sitting file, 0 = not used
   let endAtMs = 0, armTimer = null, netTimer = null, arming = false;
   let whyNotWhole = "";              // why the whole-sitting file was not used
+  let armedAt = 0, hbAt = 0;         // the stall recorder's clocks — see heartbeat()
   let omPlayed = false;
 
   // Assets ship over the air like artwork, so on a phone they live wherever the
@@ -8408,6 +8409,7 @@ const SIT_AUDIO = (() => {
     disarm();
     omPlayed = false;
     endAtMs = Date.now() + Math.max(0, msUntilEnd);
+    armedAt = Date.now();               // the stall recorder's zero — see heartbeat()
     // The bed goes first and SYNCHRONOUSLY. It is the one play() certain to sit
     // inside the gesture, and it holds audio focus for the moment or two the
     // whole-sitting file takes to build.
@@ -8566,6 +8568,107 @@ const SIT_AUDIO = (() => {
   // deliver the Om, so if it is counting down, the Om is coming.
   function whyTail() { return whyNotWhole; }
 
+  // ---- the stall recorder (diagnostic, added 2026-08-22) -------------------
+  // ⚠ WHY THIS EXISTS. The locked-phone Om was fixed and confirmed at UI 9.50
+  // — but all three of those adb runs were FIVE-MINUTE sittings (status §3,
+  // 01:32:50→01:38:10 and the two after it, each 5 min 20 s). The operator has
+  // since found that 15 minutes fails, and that even 5 minutes is INTERMITTENT.
+  // The sit screen says "You may lock the phone", so whole-file mode armed and
+  // play() resolved; and the Om that arrives on unlock proves omHasPlayed() read
+  // the media clock as still short of the Om. So the stream starts and then
+  // stops advancing. What is not known is when, and whether anything of ours
+  // was still alive at the time.
+  //
+  // Nothing of ours runs while the phone is locked, so this cannot watch the
+  // stall happen. It leaves two traces instead, and it is the PAIR that
+  // discriminates:
+  //
+  //   HEARTBEAT — rewritten every 5 s while the sit screen is awake, carrying
+  //   {wall clock, media clock}. The last one written is the moment the page
+  //   froze and how far the file had got by then.
+  //
+  //   REPORT — written when the sitting ends, carrying where the media clock
+  //   actually stopped against where the Om sits.
+  //
+  // ⚠ If the media clock stopped at the same instant as the last heartbeat, the
+  // whole page was suspended and the media went with it. If it ran on past the
+  // last heartbeat and stopped later, the media stack was suspended separately
+  // and the page freeze is a red herring. One number cannot tell those apart,
+  // which is the whole reason both are kept.
+  //
+  // ⚠ It records. It must never influence playback — no pausing, no seeking,
+  // no re-arming. Reading .currentTime is free; anything else here would be
+  // changing the thing being measured.
+  const HB_KEY = "wa:dhyan:hb", LOG_KEY = "wa:dhyan:omlog";
+
+  function mediaClock() {
+    try { return tailEl ? tailEl.currentTime : null; } catch (_) { return null; }
+  }
+  // One overwritten key, never appended to, so it cannot grow; and throttled to
+  // 5 s so a 2-hour sitting is ~1440 writes rather than 7200.
+  function heartbeat() {
+    const now = Date.now();
+    if (now - hbAt < 5000) return;
+    hbAt = now;
+    const m = mediaClock();
+    try {
+      localStorage.setItem(HB_KEY, JSON.stringify({
+        awakeSec: armedAt ? Math.round((now - armedAt) / 1000) : null,
+        media: m == null ? null : +m.toFixed(1),
+        paused: !!(tailEl && tailEl.paused),
+      }));
+    } catch (_) {}
+  }
+
+  // ⚠ MUST be called BEFORE playOmNow(), which nulls tailEl — and tailEl's
+  // clock is the entire evidence. Called after, this reads null every time.
+  function recordOutcome() {
+    const now = Date.now();
+    const m = mediaClock();
+    let hb = null;
+    try { hb = JSON.parse(localStorage.getItem(HB_KEY) || "null"); } catch (_) {}
+    const rec = {
+      at: new Date(now).toTimeString().slice(0, 5),
+      targetSec: +tailSilenceSec.toFixed(1),
+      mediaSec: m == null ? null : +m.toFixed(1),
+      // The verdict, decided the same way omHasPlayed() decides it — the two
+      // must never disagree, because this record exists to explain why THAT
+      // test sent the Om down the recovery path.
+      reached: m != null && m >= tailSilenceSec - 0.25,
+      // ⚠ Sub-second, and deliberately so. mm:ss rounding once printed
+      // "stopped at 0:46 of 0:46" for a file that was 0.6s short, which reads as
+      // a success. The verdict is decided on floats, so the shortfall is
+      // reported on floats too.
+      shortBySec: m == null ? null : +(tailSilenceSec - m).toFixed(1),
+      wallSec: armedAt ? Math.round((now - armedAt) / 1000) : null,
+      lastAwakeSec: hb ? hb.awakeSec : null,
+      lastAwakeMedia: hb ? hb.media : null,
+      // ⚠ How far the media clock had fallen behind the wall clock at the last
+      // moment we know the page was AWAKE — i.e. drift with the screen on, with
+      // no freeze involved. Measured at 1.3s in 45s in the browser. If that rate
+      // holds on the phone it is ~25s over a 15-minute sitting, which would by
+      // itself explain a sitting whose Om had not arrived when the wall clock
+      // said it should have. This number is what confirms or kills that.
+      driftSec: (hb && hb.awakeSec != null && hb.media != null)
+        ? +(hb.awakeSec - hb.media).toFixed(1) : null,
+      mode: wholeRate ? "whole@" + wholeRate : "tail",
+      why: whyNotWhole || "",
+      paused: !!(tailEl && tailEl.paused),
+      ended: !!(tailEl && tailEl.ended),
+      ready: (() => { try { return tailEl ? tailEl.readyState : null; } catch (_) { return null; } })(),
+      err: (() => { try { return (tailEl && tailEl.error) ? tailEl.error.code : null; } catch (_) { return null; } })(),
+    };
+    try {
+      const log = JSON.parse(localStorage.getItem(LOG_KEY) || "[]");
+      log.unshift(rec);
+      localStorage.setItem(LOG_KEY, JSON.stringify(log.slice(0, 12)));
+    } catch (_) {}
+    return rec;
+  }
+  function omLog() {
+    try { return JSON.parse(localStorage.getItem(LOG_KEY) || "[]"); } catch (_) { return []; }
+  }
+
   function diag() {
     let tt = null;
     try { if (tailEl) tt = +tailEl.currentTime.toFixed(1); } catch (_) {}
@@ -8583,8 +8686,38 @@ const SIT_AUDIO = (() => {
   }
 
   return { arm, disarm, mantraReady, assetUrl, testOm, playOmNow, omHasPlayed,
-           markOmPlayed, resumeIfParked, diag, whyTail, MANTRA_FILE, DHUN_FILE };
+           markOmPlayed, resumeIfParked, diag, whyTail, MANTRA_FILE, DHUN_FILE,
+           heartbeat, recordOutcome, omLog };
 })();
+
+// ---- reading the stall recorder --------------------------------------------
+// ⚠ The two file positions sit side by side on purpose, and they are the whole
+// point of the line. `file stopped at` is where the media clock died. `page last
+// awake` is the last moment any JS of ours ran, with the file's position at that
+// moment in brackets. If those two file positions are the SAME, the page and the
+// media were suspended together — one cause. If the file ran on PAST the page,
+// the media stack was suspended by itself and the page freeze is not the cause —
+// a different cause, and a different fix. Everything after them is context.
+function ddOmClock(n) {
+  if (n == null) return "?";
+  const t = Math.max(0, Math.round(n));
+  return Math.floor(t / 60) + ":" + (t % 60 < 10 ? "0" : "") + (t % 60);
+}
+function ddOmLine(r) {
+  if (!r) return "";
+  const bits = ["file stopped at " + ddOmClock(r.mediaSec) + " of " + ddOmClock(r.targetSec)
+                  + (r.reached || r.shortBySec == null ? "" : " (short by " + r.shortBySec + "s)"),
+                "page last awake " + ddOmClock(r.lastAwakeSec) + ", file at " + ddOmClock(r.lastAwakeMedia)
+                  + (r.driftSec == null ? "" : " (behind by " + r.driftSec + "s)"),
+                String(r.mode || "?")];
+  if (r.wallSec != null) bits.push("screen returned " + ddOmClock(r.wallSec));
+  if (r.paused) bits.push("element paused");
+  if (r.ended) bits.push("element ended");
+  if (r.err != null) bits.push("media error " + r.err);
+  if (r.ready != null) bits.push("readyState " + r.ready);
+  if (r.why) bits.push(String(r.why));
+  return bits.join(" · ");
+}
 
 // Offered durations. 30 is the prescription the diary presents; the rest is
 // the operator's "let user adjust more or less according to his likings".
@@ -8757,6 +8890,9 @@ function openSitScreen(armed) {
     const live = SADHANA.activeState();
     if (!live) { finish(true); return; }
     try { SIT_AUDIO.resumeIfParked(); } catch (_) {}
+    // Leaves the "page was still awake at N seconds, file was at M" trace that
+    // the stall recorder needs. Self-throttled to one write every 5 s.
+    try { SIT_AUDIO.heartbeat(); } catch (_) {}
     const total = Math.max(1, (live.a.targetMin || 1) * 60);
     const left = Math.max(0, live.remainSec == null ? total : live.remainSec);
     const m = Math.floor(left / 60), s = left % 60;
@@ -8770,6 +8906,11 @@ function openSitScreen(armed) {
   // up four minutes later did not sit for thirty-four minutes.
   function complete() {
     done = true;
+    // ⚠ RECORD FIRST. playOmNow() nulls tailEl, and tailEl's clock is the only
+    // evidence of where the file actually got to — read it afterwards and it is
+    // null every time. See SIT_AUDIO.recordOutcome().
+    let audio = null;
+    try { audio = SIT_AUDIO.recordOutcome(); } catch (_) {}
     // WARNING If the sitting finished while we were backgrounded and the audio
     // clock had been parked, the Om never sounded. The user is looking at the
     // screen right now, so play it late rather than not at all.
@@ -8779,7 +8920,16 @@ function openSitScreen(armed) {
     ov.classList.add("dd-sit-done");
     timeEl.textContent = "🙏";
     modeEl.textContent = "Sitting complete";
+    // ⚠ Only speaks up when the Om did NOT come from the file. A sitting that
+    // worked says what it always said; there is nothing to report and nothing to
+    // make anyone anxious about.
     noteEl.textContent = rec ? "Recorded in your diary." : "";
+    if (audio && !audio.reached) {
+      noteEl.textContent = (rec ? "Recorded in your diary. " : "")
+        + "⚠ The closing sound did not come from the sitting — it played just now instead. "
+        + ddOmLine(audio);
+      noteEl.classList.add("dd-sit-warn");
+    }
     ov.querySelector(".dd-sit-end").textContent = "Done";
     if (timer) { clearInterval(timer); timer = null; }
   }
@@ -10482,7 +10632,31 @@ async function mountDhyanDiary(node) {
       <div class="dd-backup-note">Nothing leaves this device on its own. Uninstalling the app, or
         moving to a new phone, is the one thing that can lose your diary — so keep a copy somewhere
         safe.</div>
-      <div class="dd-backup-when${backupOverdue() ? " warn" : ""}">${escapeHtml(when)}</div>`;
+      <div class="dd-backup-when${backupOverdue() ? " warn" : ""}">${escapeHtml(when)}</div>
+      ${omDiagHtml()}`;
+  }
+
+  // ⚠ TEMPORARY DIAGNOSTIC (2026-08-22), not a feature. It appears ONLY on a
+  // device that has actually recorded a sitting whose Om did not come from the
+  // file, so a phone where the closing sound works never shows it at all. It
+  // lives in Backup because that is the least-travelled panel in the diary.
+  // Remove this together with SIT_AUDIO's recorder once the locked-phone stall
+  // is understood — it exists to be read out to whoever is fixing it.
+  function omDiagHtml() {
+    let log = [];
+    try { log = SIT_AUDIO.omLog(); } catch (_) { return ""; }
+    if (!log.length || !log.some((r) => !r.reached)) return "";
+    return `
+      <div class="dd-sect-label">Closing sound — recent sittings</div>
+      <div class="dd-omlog">${log.map((r) => `
+        <div class="dd-omrow${r.reached ? "" : " bad"}">
+          <b>${r.reached ? "✓" : "✕"} ${escapeHtml(String(r.at || "?"))} · ${
+            escapeHtml(ddOmClock(r.targetSec))} sitting</b>
+          <span>${escapeHtml(ddOmLine(r))}</span>
+        </div>`).join("")}</div>
+      <div class="dd-backup-note">✕ means the Om did not come from the sitting itself — it played
+        late, when the screen came back. The two file positions in each line are what identify the
+        cause, so read them out as they are when reporting this.</div>`;
   }
 
   function render() {

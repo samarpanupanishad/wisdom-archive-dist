@@ -3789,6 +3789,19 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 .dd-pill.nil { opacity: .42; }
 .dd-backup-when { margin-top: 12px; font-size: 11.5px; font-weight: 650; color: var(--muted); text-align: center; }
 .dd-backup-when.warn { color: var(--accent); }
+
+/* ---- closing-sound stall recorder (TEMPORARY DIAGNOSTIC, 2026-08-22) ----
+   Shown only on a device that has actually failed to deliver the Om from the
+   sitting itself. Delete this block together with SIT_AUDIO's recorder once the
+   locked-phone stall is understood. */
+.dd-omlog { margin-top: 4px; }
+.dd-omrow { border-top: 1px solid var(--border); padding: 7px 2px; font-size: 11px; line-height: 1.55; }
+.dd-omrow b { display: block; font-size: 11.5px; color: var(--text); }
+.dd-omrow span { color: var(--muted); word-break: break-word; }
+.dd-omrow.bad b { color: var(--accent); }
+/* The sitting screen is dark, so .dd-sit-note's grey is too quiet for a warning
+   — and the message is longer than the 260px the ordinary note is sized for. */
+.dd-sit-warn { color: #d8a765; max-width: 300px; }
 /* ---- Granth Pathan (status §10.9) ----
    Asks for ONE number — the page you are on — and derives pages-read from it,
    so the diary doubles as a bookmark. */
