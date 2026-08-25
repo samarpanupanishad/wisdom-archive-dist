@@ -11766,7 +11766,7 @@ const MOBILE_UI = (() => {
     <nav class="m-tabbar" id="m-tabbar">
       <a class="m-tab" href="#/?latest=1"><span class="m-tab-ico">${IC.sun}</span><span>Daily</span></a>
       <a class="m-tab m-tab-fav" href="#/favorites"><span class="m-tab-ico">${IC.heart}</span><span>Favourites</span></a>
-      <a class="m-tab" href="#/m/gyan"><span class="m-tab-ico">${IC.diya}</span><span>U. Ganga</span></a>
+      <a class="m-tab m-tab-ganga" href="#/m/gyan"><span class="m-tab-ico">${IC.diya}</span><span>U. Ganga</span></a>
       <button class="m-tab m-tab-more" id="m-tab-more" type="button"><span class="m-tab-ico m-tab-disc">${IC.dots6}</span><span>More</span></button>
     </nav>
     <div class="m-scrim" id="m-scrim" hidden></div>
@@ -17467,7 +17467,7 @@ const MOBILE_UI = (() => {
       <h3 class="mm-h">Guru's msgs</h3>
       <div class="mm-grid3">
         ${tile("#/?latest=1", IC.sun, "Daily", "Today's Message", "")}
-        ${tile("#/m/special", IC.star, "Special", "Special Occasions", "special")}
+        ${tile("#/m/special", IC.star, "Special", "Telegram Messages", "special")}
         ${tile("#/m/letterpad", IC.pen, "Letterhead", "Letters from Guru", "letterpad")}
       </div>
 

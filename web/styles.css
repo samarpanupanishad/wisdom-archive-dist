@@ -1824,10 +1824,18 @@ body.m-mode.m-libpage .content {
 .m-tab-disc > svg { width: 19px; height: 19px; }
 .m-tab:active { transform: scale(.92); background: #f6f2ee; }
 .m-tab-more { color: #6d28a8; }
+/* ⚠ U. Ganga's label alone is coloured; Daily and Favourites keep the grey.
+   That is the operator's choice, made after being shown that colouring all
+   four to match their glyphs would be more coherent. Don't "finish the job". */
+.m-tab-ganga { color: #9b1b3f; }
 /* The heart is red because it IS a favourite (operator, 2026-08-25): red
    outline at rest, solid red while pressed. When this bar starts persisting
    across the screens it links to, that same fill becomes the selected state. */
-.m-tab-fav { color: #e53935; }
+/* ⚠ The RED is on the glyph, not the whole tab. Setting it on .m-tab-fav made
+   the LABEL red too, which is how "Favourites" came out red while Daily stayed
+   grey — and the operator's colour pass (2026-08-25) asked for U. Ganga alone
+   to carry a coloured label. Icon red, label grey, exactly like Daily's sun. */
+.m-tab-fav .m-tab-ico { color: #e53935; }
 .m-tab-fav:active svg { fill: #e53935; }
 .m-tab-disc {
   width: 32px; border-radius: 50%; background: #6d28a8; color: #fff;
@@ -1872,7 +1880,18 @@ body.m-mode.m-libpage .content {
   background: var(--surface); border: 1px solid var(--border); color: #6f6a7a;
   box-shadow: 0 1px 2px rgba(38, 28, 60, .05);
 }
-.mm-h { margin: 0 0 11px; font: 700 16.5px var(--sans); color: var(--text); }
+/* ==== TEXT COLOUR (operator, 2026-08-25) ================================
+   Black was doing nothing for a spiritual screen and, worse, it left seven
+   coloured icons sitting over seven black labels, so the colour never tied to
+   anything. One colour per SECTION, and the sub-lines stay grey so the names
+   lead. ⚠ The orange is #c2571d, NOT the theme's #d9662a: at this size the
+   accent orange lands around 3.6:1 against white, under the readable
+   threshold. This is the same orange a shade deeper (~4.6:1) and is already
+   what the Menu tile uses. Don't "restore" it to var(--accent). */
+.mm-h { margin: 0 0 11px; font: 700 16.5px var(--sans); color: #c2571d; }
+.mm-t-daily .mm-name, .mm-t-special .mm-name, .mm-t-letterhead .mm-name { color: #c2185b; }
+.mm-r-satsang .mm-name, .mm-r-anubhuti .mm-name { color: #6b3fa0; }
+.mm-r-diary .mm-name, .mm-r-lucky .mm-name { color: #9b1b3f; }
 .mm-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-bottom: 16px; }
 .mm-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-bottom: 26px; }
 .mm-tile, .mm-row {
@@ -2033,7 +2052,7 @@ body.m-mode.m-libpage .content {
 }
 .ms-x:active { transform: scale(.9); }
 .ms-sechead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-.ms-sectitle { font: 700 13.5px var(--sans); color: var(--text); }
+.ms-sectitle { font: 700 13.5px var(--sans); color: #c2571d; }
 .ms-note { font: 600 11px var(--sans); color: #c2568c; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .ms-role { color: #6b3fa0; }
 .ms-role svg { width: 14px; height: 14px; }
@@ -2051,7 +2070,7 @@ body.m-mode.m-libpage .content {
   background: #ece4f7; color: #6b3fa0;
 }
 .ms-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.ms-name { font: 700 13px var(--sans); }
+.ms-name { font: 700 13px var(--sans); color: #6b3fa0; }   /* every glyph in this sheet is purple */
 .ms-sub { font: 500 11px var(--sans); color: #8b8794; }
 .ms-div { height: 1px; background: var(--border); margin: 26px 0 18px; }
 @media (prefers-reduced-motion: reduce) {
