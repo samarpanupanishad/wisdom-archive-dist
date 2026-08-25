@@ -3633,7 +3633,12 @@ async function renderRandom() {
     if (!current(nav)) return;
     // On mobile this is a single, standalone pick — no swiping away to other
     // days (that's what the vertical feed everywhere else is for).
-    go("#/entry/" + id + (MOBILE_UI.active ? "?single=1" : ""));
+    //
+    // ⚠ goReplace, NOT go. #/random is a DRAW, not a destination: pushing from
+    // it meant back landed here again, which immediately drew and pushed
+    // forward again — the user could never get out of the Lucky Msg. Replacing
+    // it means back returns to whatever opened it (the जीवन्त Library).
+    goReplace("#/entry/" + id + (MOBILE_UI.active ? "?single=1" : ""));
   } catch { if (current(nav)) $view.innerHTML = `<div class="empty">No Guru's msg available.</div>`; }
 }
 
@@ -11918,6 +11923,12 @@ const MOBILE_UI = (() => {
   // screen's More tab until the More screen is specced.
   $("m-menu-btn").addEventListener("click", () => go("#/m/menu"));
   $("m-tab-more").addEventListener("click", openMoreSheet);
+  // Every route out of the Library to home - the Daily tab here, the Daily tile
+  // in the page - arms _homeFromMenu, so back comes back rather than offering
+  // to close the app. Delegated on the bar so a future tab gets it for free.
+  $("m-tabbar").addEventListener("click", (e) => {
+    if (e.target.closest("a[href^='#/?']")) _homeFromMenu = true;
+  });
   // Reading a Special Telegram / Letterpad message? Open THAT message's
   // discussion. The id travels in the URL (not just in _chatCtx) so the chat is
   // deep-linkable and Android back returns to the reader.
@@ -12293,6 +12304,7 @@ const MOBILE_UI = (() => {
     if (closeDrawer()) return;
     if (_pageBackHook && _pageBackHook()) return;   // e.g. reader → its own list
     const atHome = !location.hash || /^#\/?(\?.*)?$/.test(location.hash);
+    if (atHome && _homeFromMenu) { _homeFromMenu = false; history.back(); return; }
     if (atHome) { showExitSheet(); return; }
     const before = location.hash;
     history.back();
@@ -15811,6 +15823,11 @@ const MOBILE_UI = (() => {
         if (a.getBoundingClientRect().bottom - top > 64) { pick = a; break; }
       }
       if (!pick || pick === curArt) return;
+      // A tick the moment the message — and so the date on the panel — changes,
+      // so a scroll that lands somewhere new is felt and not just seen
+      // (operator, 2026-08-25). Skipped on the FIRST message: entering a reader
+      // is not a change, and buzzing on arrival reads as a stray vibration.
+      if (curArt) hapticTick();
       curArt = pick;
       // ?d= (or ?from=search) rides along so a reload — or the back hook reading
       // the URL — still knows which list this reader was opened from. Scrolling
@@ -17261,6 +17278,23 @@ const MOBILE_UI = (() => {
   // can change under a live session (refreshModNav exists for exactly that), and
   // a sheet built at boot would still be a member's sheet after a promotion.
   let _moreClose = null;
+  // ---- two one-shot "back should go somewhere else" flags -------------------
+  // Both are set at the moment of a tap and consumed once, and both are cleared
+  // by route() the moment the user goes anywhere that is not their destination.
+  // That is what stops either from firing on a journey it was not set for.
+  //
+  // _homeFromMenu: the Library's Daily tile (and the Daily tab) go to #/, and
+  // back from #/ normally offers to EXIT THE APP — onHardwareBack treats any
+  // bare #/ as home. Correct from a cold start, wrong when the Library is the
+  // thing behind you. Deliberately a flag and not a URL marker: the daily feed
+  // replaceStates the hash as you scroll, so a marker would be lost by the
+  // first swipe, and "back to the menu I came from" should survive scrolling.
+  //
+  // _moreAgain: a tile in the More sheet navigates away, and back should return
+  // to the SHEET, not to the bare Library behind it (operator, 2026-08-25).
+  let _homeFromMenu = false;
+  let _moreAgain = false;
+  let _libScroll = 0;      // the Library's scroll offset, held across visits
   function openMoreSheet() {
     if (_moreClose) return;
     const mod = isModerator();
@@ -17361,6 +17395,7 @@ const MOBILE_UI = (() => {
       const b = e.target.closest(".ms-tile");
       if (!b || dragged) return;
       hapticTick();
+      _moreAgain = true;   // …so back reopens this sheet, not the bare Library
       close();
       go(b.dataset.href);
     });
@@ -17398,8 +17433,11 @@ const MOBILE_UI = (() => {
 
     const node = el(`<div class="mm">
       <header class="mm-head">
-        <button class="mm-back" id="mm-back" type="button" aria-label="Back">‹</button>
-        <!-- Account, left of the title: a circle carrying the first letter and
+        <!-- ⚠ NO back chevron. Removed on the operator's instruction
+             (2026-08-25): "nobody is going to press that button, all will use
+             mobile back key only". Android's own back is the way out of this
+             screen - don't restore a chevron here without asking.
+             Account, left of the title: a circle carrying the first letter and
              nothing else (operator, 2026-08-25). Tapping it reveals the full
              name and Sign out. It is the ONLY way into the account since the
              slide-out drawer lost its entry point, so don't remove it without
@@ -17409,9 +17447,12 @@ const MOBILE_UI = (() => {
           <h2 class="mm-title">जीवन्त Library</h2>
           <!-- ⚠ OPERATOR COPY, verbatim (2026-08-25). It replaced "Explore.
                Reflect. Grow." — don't restore that from git history, and don't
-               "correct" the Devanagari or re-word the English line. -->
-          <div class="mm-mantra">मृत्योर्मा अमृतं गमय</div>
-          <div class="mm-mantra-en">Lead me from death to immortality</div>
+               "correct" either language.
+               ONE line, not two: tapping it swaps the language, which the
+               operator asked for so the translation costs no vertical space.
+               The colour changes with it (red → purple) on purpose - that is
+               the signal that the tap did something. -->
+          <button class="mm-mantra" id="mm-mantra" type="button" aria-label="Translate">(मृत्योर्मा अमृतं गमय)</button>
         </div>
         <span class="mm-headpad" aria-hidden="true"></span>
       </header>
@@ -17433,7 +17474,7 @@ const MOBILE_UI = (() => {
       <a class="mm-anush" href="#/m/anushthan">
         <span class="mm-anush-txt">
           <span class="mm-anush-name">Anushthan</span>
-          <span class="mm-sub2">45-day spiritual practice period</span>
+          <span class="mm-sub2">45-day spiritual<br>practise period</span>
         </span>
         <span class="mm-anush-lotus" aria-hidden="true"></span>
         <span class="mm-anush-btn">View</span>
@@ -17455,8 +17496,35 @@ const MOBILE_UI = (() => {
     pageFrame("जीवन्त Library", node, "m-page-lib");
     document.body.classList.add("m-libpage");   // …AFTER pageFrame — setChrome clears it
 
-    node.querySelector("#mm-back").addEventListener("click", goBack);
+    // ⚠ Restore the scroll offset SYNCHRONOUSLY, before this frame is painted.
+    // Left to itself the browser restores it a beat after our render, and the
+    // operator sees the menu drift and settle on every arrival. Landing already
+    // at the right offset makes the browser's own restore a no-op instead of a
+    // visible movement. Re-asserted once more next frame because on the frame a
+    // page mounts its scrollHeight can still be the unlaid-out height, which
+    // clamps the assignment to 0 - the same trap restoreScroll() documents.
+    const sc = document.scrollingElement || document.documentElement;
+    sc.scrollTop = _libScroll;
+    requestAnimationFrame(() => {
+      if (document.body.classList.contains("m-libpage")) sc.scrollTop = _libScroll;
+    });
+    const onScroll = () => {
+      if (document.body.classList.contains("m-libpage")) _libScroll = sc.scrollTop;
+      else window.removeEventListener("scroll", onScroll);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+
     wireAccountCircle(node);
+    // Tap the mantra to read it in the other language, and again to go back.
+    const mantra = node.querySelector("#mm-mantra");
+    mantra.addEventListener("click", () => {
+      hapticTick();
+      const en = mantra.classList.toggle("en");
+      mantra.textContent = en ? "(Lead me from death to immortality)"
+                              : "(मृत्योर्मा अमृतं गमय)";
+    });
+    // The Daily tile goes home; arm the same flag the Daily tab does.
+    node.querySelector(".mm-t-daily").addEventListener("click", () => { _homeFromMenu = true; });
     node.querySelector("#mm-search").addEventListener("click", () => go("#/m/search"));
     // The sliders mean "search by date", which is a tab on the same page — the
     // Date tab opens its calendar on entry, so this lands the user straight in
@@ -17466,6 +17534,9 @@ const MOBILE_UI = (() => {
     [SPECIAL, LETTERPAD, SATSANG, ANUBHUTI].forEach((m) => {
       try { if (m && m.refreshBadges) m.refreshBadges(); } catch {}
     });
+    // Arrived by backing out of something the More sheet opened -> put the
+    // sheet back. One shot: route() clears the flag on any trip through home.
+    if (_moreAgain) { _moreAgain = false; openMoreSheet(); }
   }
 
   // ---- router --------------------------------------------------------------
@@ -17486,6 +17557,13 @@ const MOBILE_UI = (() => {
     openDatePicker,
     handles(seg) { return !seg.length || seg[0] === "entry" || seg[0] === "m" || seg[0] === "favorites" || seg[0] === "special" || seg[0] === "letterpad" || seg[0] === "anubhuti" || seg[0] === "admintalks" || seg[0] === "dhyan"; },
     async route(seg, params) {
+      // ⚠ Cleared here, not in the pages: reaching the Library any way OTHER
+      // than back goes through the landing page first (the Menu tile lives
+      // there), so clearing on a home route is what keeps the More sheet from
+      // popping open on a journey that never touched it. _homeFromMenu is the
+      // mirror image — it must SURVIVE a home route, since home is where it
+      // points, and dies on any other page.
+      if (seg.length) _homeFromMenu = false; else _moreAgain = false;
       closeDrawer();
       exitZoom();
       closeChatStream();
