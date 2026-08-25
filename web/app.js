@@ -17452,7 +17452,7 @@ const MOBILE_UI = (() => {
                operator asked for so the translation costs no vertical space.
                The colour changes with it (red → purple) on purpose - that is
                the signal that the tap did something. -->
-          <button class="mm-mantra" id="mm-mantra" type="button" aria-label="Translate">(मृत्योर्मा अमृतं गमय)</button>
+          <button class="mm-mantra" id="mm-mantra" type="button" aria-label="Translate">( मृत्योर्मा अमृतं गमय )</button>
         </div>
         <span class="mm-headpad" aria-hidden="true"></span>
       </header>
@@ -17520,8 +17520,9 @@ const MOBILE_UI = (() => {
     mantra.addEventListener("click", () => {
       hapticTick();
       const en = mantra.classList.toggle("en");
-      mantra.textContent = en ? "(Lead me from death to immortality)"
-                              : "(मृत्योर्मा अमृतं गमय)";
+      // ⚠ The spaces inside the brackets are the operator's (2026-08-25).
+      mantra.textContent = en ? "( Lead me from death to immortality )"
+                              : "( मृत्योर्मा अमृतं गमय )";
     });
     // The Daily tile goes home; arm the same flag the Daily tab does.
     node.querySelector(".mm-t-daily").addEventListener("click", () => { _homeFromMenu = true; });

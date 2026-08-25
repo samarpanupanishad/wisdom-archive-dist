@@ -1858,14 +1858,16 @@ body.m-mode.m-libpage .content {
 
 .mm-searchrow { display: flex; gap: 9px; margin-bottom: 24px; }
 .mm-search {
-  flex: 1; min-width: 0; height: 50px; padding: 0 15px; border-radius: 15px;
+  flex: 1; min-width: 0; height: 56px; padding: 0 15px; border-radius: 15px;
   display: flex; align-items: center; gap: 10px; text-align: left;
   background: var(--surface); border: 1px solid var(--border); color: #8b8794;
   font: 500 14px var(--sans); box-shadow: 0 1px 2px rgba(38, 28, 60, .05);
 }
 .mm-search span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mm-filter {
-  flex: none; width: 50px; height: 50px; border-radius: 15px;
+  /* Taller with the box, but the SAME WIDTH — the operator asked for height,
+     not width, and every px here comes off the search box. */
+  flex: none; width: 50px; height: 56px; border-radius: 15px;
   display: flex; align-items: center; justify-content: center;
   background: var(--surface); border: 1px solid var(--border); color: #6f6a7a;
   box-shadow: 0 1px 2px rgba(38, 28, 60, .05);
@@ -2223,7 +2225,15 @@ body.m-mode.m-libpage .content {
 }
 .m-dp {
   width: min(342px, 94vw);
-  max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--m-bot-h) - 64px);
+  /* ⚠ Reserve only the top panel and a small margin. It used to reserve the
+     whole bottom bar as well, and when that bar grew to --m-bot-h in 9.74 the
+     ceiling fell below the picker's own 548px of content on shorter phones —
+     which scrolled Clear/Cancel/Set out of sight and read as "the buttons were
+     removed" (operator, 2026-08-25). Reserving the bar was pointless anyway:
+     .m-dp-scrim already covers the whole screen, so nothing behind it is usable
+     while the picker is open. The sticky button row below is the real guarantee;
+     this only stops the picker scrolling at all on most phones. */
+  max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 76px);
   overflow-y: auto; overflow-x: hidden;   /* never a horizontal scrollbar */
   background: var(--surface); border-radius: 20px; box-shadow: var(--shadow-lg);
   font-family: var(--sans); color: var(--text);
@@ -2308,7 +2318,18 @@ body.m-mode.m-libpage .content {
 .m-dp-day.sel > span { background: var(--dp-dark); color: #fff; font-weight: 500; }
 .m-dp-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--dp-dark); margin-top: -2px; }
 .m-dp-day.sel .m-dp-dot { background: #fff; }
-.m-dp-btns { display: flex; justify-content: space-between; gap: 8px; padding: 6px 14px 10px; border-top: 1px solid var(--border-soft); }
+/* ⚠ PINNED to the bottom of the picker. Without this the row is simply the
+   last thing in a scrolling box, so any screen too short for the calendar hides
+   the only way to choose a date — and the failure is silent, because the
+   calendar above it looks perfectly normal. Sticky works here because .m-dp is
+   itself the scroll container and this is its direct child; don't wrap these in
+   a div with its own overflow or transform. */
+.m-dp-btns {
+  position: sticky; bottom: 0; z-index: 1;
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 6px 14px 10px; background: var(--surface);
+  border-top: 1px solid var(--border-soft);
+}
 .m-dp-btn { flex: 1; background: transparent; border: none; color: var(--muted); font: 500 16px var(--sans); padding: 10px 6px; border-radius: 10px; cursor: pointer; }
 .m-dp-set { color: var(--dp-dark); }
 .m-vact-disabled { opacity: .3; pointer-events: none; }
