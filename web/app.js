@@ -15236,7 +15236,7 @@ const MOBILE_UI = (() => {
     // into a `calc(100vh - …)` flex column has no scroll height on the frame it
     // is inserted, and the assignment would clamp to 0.
     if (want) {
-      const apply = () => { if (results.isConnected) results.scrollTop = want; };
+      const apply = () => { if (results.isConnected) jumpScroll(results, want); };
       apply();
       requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
     }
@@ -15544,6 +15544,37 @@ const MOBILE_UI = (() => {
     }
     return { shown: () => shown };
   }
+  // ---- put a scroller AT an offset, without travelling there ----------------
+  // ⚠ `html { scroll-behavior: smooth }` (styles.css, the "Design polish"
+  // block) turns a plain `scrollTop = y` on the PAGE scroller into an
+  // ANIMATION. So every list that restored its place scrolled visibly from the
+  // newest message down to the row the reader had left — "when back button is
+  // pressed the user can see the scroll" (operator, 2026-08-26). The offset was
+  // always right; what was wrong was that you watched it being applied.
+  //
+  // An inline `auto` outranks the stylesheet rule. It is set for the assignment
+  // and dropped again on the next frame, so ordinary scrolling and the date
+  // strip's own chip taps keep their smoothness.
+  //
+  // ⚠ NOT `scrollTo({ behavior: "instant" })`: an unrecognised enum value in a
+  // dictionary is a TypeError, and "instant" is absent from the older WebViews
+  // this app still runs on — it would throw on exactly the phones that need it.
+  // Element scrollers (`.m-results`, the chat panes) are unaffected either way:
+  // scroll-behavior is not inherited and is set only on <html>. They go through
+  // here regardless, so this stays true if that ever changes.
+  // ⚠ Released SYNCHRONOUSLY, not on a rAF. Under `auto` the assignment lands
+  // during that same statement (measured), so nothing is left to wait for — and
+  // a rAF here would never run at all if the app were backgrounded at that
+  // moment, leaving <html> pinned to `auto` and every later scroll un-smoothed.
+  // removeProperty touches this one property, so the inline --m-vvh/--m-vvtop
+  // the keyboard code keeps on <html> are untouched.
+  function jumpScroll(el, y) {
+    if (!el) return;
+    el.style.scrollBehavior = "auto";
+    el.scrollTop = y;
+    el.style.removeProperty("scroll-behavior");
+  }
+
   // ---- Daily Msg (#/m/daily) ------------------------------------------------
   // The Library's Daily tile. A pinned strip of date chips over a list of days
   // built exactly like the Special / Letterhead lists — same rows, same markup,
@@ -15707,8 +15738,12 @@ const MOBILE_UI = (() => {
       if (row) {
         // Measured against the live pin line instead of left to the row's
         // `scroll-margin-top`, for the reason pinLine() documents.
-        const y = sc.scrollTop + row.getBoundingClientRect().top - pinLine() - 6;
-        window.scrollTo({ top: Math.max(0, y), behavior: smooth ? "smooth" : "auto" });
+        const y = Math.max(0, sc.scrollTop + row.getBoundingClientRect().top - pinLine() - 6);
+        // ⚠ `behavior: "auto"` would NOT be instant here — it defers to the
+        // CSS, which is smooth. Under prefers-reduced-motion that has to be a
+        // jump, so it goes through jumpScroll like every other one.
+        if (smooth) window.scrollTo({ top: y, behavior: "smooth" });
+        else jumpScroll(sc, y);
       }
     });
     rowsBox.addEventListener("click", (e) => {
@@ -15751,8 +15786,8 @@ const MOBILE_UI = (() => {
       // to scroll and the offset is thrown away — backing out of a message
       // would drop the reader at the top of the list every time. Re-asserted
       // once more next frame for the reason restoreScroll() documents.
-      sc.scrollTop = _dailyScroll;
-      requestAnimationFrame(() => { if (node.isConnected) sc.scrollTop = _dailyScroll; });
+      jumpScroll(sc, _dailyScroll);
+      requestAnimationFrame(() => { if (node.isConnected) jumpScroll(sc, _dailyScroll); });
     });
   }
 
@@ -15797,7 +15832,7 @@ const MOBILE_UI = (() => {
     // page's restoreScroll() documents.
     const restoreScroll = () => {
       if (!want || !want.top) return;
-      const apply = () => { if (node.isConnected) sc.scrollTop = want.top; };
+      const apply = () => { if (node.isConnected) jumpScroll(sc, want.top); };
       apply();
       requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
     };
@@ -17787,9 +17822,9 @@ const MOBILE_UI = (() => {
     // page mounts its scrollHeight can still be the unlaid-out height, which
     // clamps the assignment to 0 - the same trap restoreScroll() documents.
     const sc = document.scrollingElement || document.documentElement;
-    sc.scrollTop = _libScroll;
+    jumpScroll(sc, _libScroll);
     requestAnimationFrame(() => {
-      if (document.body.classList.contains("m-libpage")) sc.scrollTop = _libScroll;
+      if (document.body.classList.contains("m-libpage")) jumpScroll(sc, _libScroll);
     });
     const onScroll = () => {
       if (document.body.classList.contains("m-libpage")) _libScroll = sc.scrollTop;
