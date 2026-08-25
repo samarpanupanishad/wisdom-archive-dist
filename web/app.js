@@ -17457,18 +17457,24 @@ const MOBILE_UI = (() => {
         <span class="mm-headpad" aria-hidden="true"></span>
       </header>
 
+      <!-- ⚠ The grey sub-lines below are LOWERCASE on purpose, first letter
+           included — the operator's instruction (2026-08-25). The one exception
+           is "letters from Guru", where Guru keeps its capital. The coloured
+           tile NAMES and the section headings are unaffected, and so is the
+           More sheet, which was deliberately left capitalised. Don't
+           sentence-case these back. -->
       <div class="mm-searchrow">
         <button class="mm-search" id="mm-search" type="button">
-          ${IC.search}<span>Search Guru's msgs, date, or word…</span>
+          ${IC.search}<span>search Guru's msgs, date, or word…</span>
         </button>
         <button class="mm-filter" id="mm-filter" type="button" aria-label="Search by date">${IC.sliders}</button>
       </div>
 
       <h3 class="mm-h">Guru's msgs</h3>
       <div class="mm-grid3">
-        ${tile("#/?latest=1", IC.sun, "Daily", "Today's Message", "")}
-        ${tile("#/m/special", IC.star, "Special", "Telegram Messages", "special")}
-        ${tile("#/m/letterpad", IC.pen, "Letterhead", "Letters from Guru", "letterpad")}
+        ${tile("#/?latest=1", IC.sun, "Daily", "today's message", "")}
+        ${tile("#/m/special", IC.star, "Special", "telegram messages", "special")}
+        ${tile("#/m/letterpad", IC.pen, "Letterhead", "letters from Guru", "letterpad")}
       </div>
 
       <a class="mm-anush" href="#/m/anushthan">
@@ -17482,14 +17488,14 @@ const MOBILE_UI = (() => {
 
       <h3 class="mm-h">Samuhik Satsang</h3>
       <div class="mm-grid2">
-        ${row("#/m/community", "mm-r-satsang", IC.people, "Samuhik Satsang", "Join Satsang", "satsang")}
-        ${row("#/m/anubhuti", "mm-r-anubhuti", IC.bubble, "Anubhuti Sharing", "Share Experiences", "anubhuti")}
+        ${row("#/m/community", "mm-r-satsang", IC.people, "Samuhik Satsang", "join satsang", "satsang")}
+        ${row("#/m/anubhuti", "mm-r-anubhuti", IC.bubble, "Anubhuti Sharing", "share experiences", "anubhuti")}
       </div>
 
       <h3 class="mm-h">Important Links</h3>
       <div class="mm-grid2">
-        ${row("#/m/dhyan", "mm-r-diary", IC.book, "Personal Diary", "Your Private Space", "")}
-        ${row("#/random", "mm-r-lucky", IC.bouquet, "Your Lucky Msg", "Receive Blessings", "")}
+        ${row("#/m/dhyan", "mm-r-diary", IC.book, "Personal Diary", "your private space", "")}
+        ${row("#/random", "mm-r-lucky", IC.bouquet, "Your Lucky Msg", "receive blessings", "")}
       </div>
     </div>`);
 
