@@ -11764,7 +11764,7 @@ const MOBILE_UI = (() => {
          still the only way to reach Settings, Our Goal, Msg to Admin, Admin
          Announcements and every Sutradhar tool. Don't delete the drawer. -->
     <nav class="m-tabbar" id="m-tabbar">
-      <a class="m-tab" href="#/?latest=1"><span class="m-tab-ico">${IC.sun}</span><span>Today's Msg</span></a>
+      <a class="m-tab" href="#/?latest=1"><span class="m-tab-ico">${IC.sun}</span><span>Today</span></a>
       <a class="m-tab m-tab-fav" href="#/favorites"><span class="m-tab-ico">${IC.heart}</span><span>Favourites</span></a>
       <a class="m-tab m-tab-ganga" href="#/m/gyan"><span class="m-tab-ico">${IC.diya}</span><span>U. Ganga</span></a>
       <button class="m-tab m-tab-more" id="m-tab-more" type="button"><span class="m-tab-ico m-tab-disc">${IC.dots6}</span><span>More</span></button>
