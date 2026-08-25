@@ -11764,7 +11764,7 @@ const MOBILE_UI = (() => {
          still the only way to reach Settings, Our Goal, Msg to Admin, Admin
          Announcements and every Sutradhar tool. Don't delete the drawer. -->
     <nav class="m-tabbar" id="m-tabbar">
-      <a class="m-tab" href="#/?latest=1"><span class="m-tab-ico">${IC.sun}</span><span>Daily</span></a>
+      <a class="m-tab" href="#/?latest=1"><span class="m-tab-ico">${IC.sun}</span><span>Today's Msg</span></a>
       <a class="m-tab m-tab-fav" href="#/favorites"><span class="m-tab-ico">${IC.heart}</span><span>Favourites</span></a>
       <a class="m-tab m-tab-ganga" href="#/m/gyan"><span class="m-tab-ico">${IC.diya}</span><span>U. Ganga</span></a>
       <button class="m-tab m-tab-more" id="m-tab-more" type="button"><span class="m-tab-ico m-tab-disc">${IC.dots6}</span><span>More</span></button>
@@ -17307,7 +17307,6 @@ const MOBILE_UI = (() => {
       </button>`;
 
     const forEveryone = `
-      <div class="ms-sechead"><span class="ms-sectitle">For everyone</span><span class="ms-note">Member access</span></div>
       <div class="ms-grid">
         ${tile("#/settings", "ms-t-set", PATHS.gear, "Settings", "Account and device", "")}
         ${tile("#/m/broadcast", "ms-t-ann", IC.megaphone, "Announcements", "Important updates", "broadcast")}
@@ -17331,10 +17330,11 @@ const MOBILE_UI = (() => {
       <div class="ms-card" id="ms-card" role="dialog" aria-modal="true" aria-label="More">
         <span class="ms-grip" aria-hidden="true"></span>
         <div class="ms-head">
-          <div class="ms-headtxt">
-            <div class="ms-title">More</div>
-            <div class="ms-sub2">${mod ? "Member and role-specific features" : "Member features"}</div>
-          </div>
+          <!-- ⚠ No subtitle and no "For everyone" heading (operator, 2026-08-25):
+               "the member should not know about other things". Every label that
+               named this half as one of several is gone — don't reintroduce one.
+               The Sutradhar heading below stays; only an admin ever sees it. -->
+          <div class="ms-headtxt"><div class="ms-title">More</div></div>
           <button class="ms-x" id="ms-x" type="button" aria-label="Close">&#10005;</button>
         </div>
         <div class="ms-body">${forEveryone}${roleHalf}</div>
@@ -17442,7 +17442,7 @@ const MOBILE_UI = (() => {
              name and Sign out. It is the ONLY way into the account since the
              slide-out drawer lost its entry point, so don't remove it without
              putting the account somewhere else first. -->
-        <button class="mm-acc" id="mm-acc" type="button" aria-label="Account" aria-expanded="false"></button>
+        <span class="mm-headpad" aria-hidden="true"></span>
         <div class="mm-titlewrap">
           <h2 class="mm-title">जीवन्त Library</h2>
           <!-- ⚠ OPERATOR COPY, verbatim (2026-08-25). It replaced "Explore.
@@ -17452,9 +17452,9 @@ const MOBILE_UI = (() => {
                operator asked for so the translation costs no vertical space.
                The colour changes with it (red → purple) on purpose - that is
                the signal that the tap did something. -->
-          <button class="mm-mantra" id="mm-mantra" type="button" aria-label="Translate">( मृत्योर्मा अमृतं गमय )</button>
+          <button class="mm-mantra" id="mm-mantra" type="button" aria-label="Translate"><span class="mm-mantra-t">( मृत्योर्मा अमृतं गमय )</span><span class="mm-mantra-x" aria-hidden="true">⇄</span></button>
         </div>
-        <span class="mm-headpad" aria-hidden="true"></span>
+        <button class="mm-acc" id="mm-acc" type="button" aria-label="Account" aria-expanded="false"></button>
       </header>
 
       <!-- ⚠ The grey sub-lines below are LOWERCASE on purpose, first letter
@@ -17526,9 +17526,12 @@ const MOBILE_UI = (() => {
     mantra.addEventListener("click", () => {
       hapticTick();
       const en = mantra.classList.toggle("en");
+      // ⚠ Only the TEXT span is rewritten. Setting textContent on the button
+      // itself would delete the ⇄ that tells the user it can be tapped.
       // ⚠ The spaces inside the brackets are the operator's (2026-08-25).
-      mantra.textContent = en ? "( Lead me from death to immortality )"
-                              : "( मृत्योर्मा अमृतं गमय )";
+      mantra.querySelector(".mm-mantra-t").textContent =
+        en ? "( Lead me from death to immortality )"
+           : "( मृत्योर्मा अमृतं गमय )";
     });
     // The Daily tile goes home; arm the same flag the Daily tab does.
     node.querySelector(".mm-t-daily").addEventListener("click", () => { _homeFromMenu = true; });
