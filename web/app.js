@@ -15211,14 +15211,35 @@ const MOBILE_UI = (() => {
   }
 
   // ---- Favorites (search-list styling; opens like any Home msg) -----------
+  // Where the list was left, on the same one-shot rule as _mxScroll: saved by
+  // the tap that leaves it, spent by the next mount. Opening Favourites from
+  // the tab bar therefore still starts at the top (operator, 2026-08-26).
+  let _favScroll = 0;
   async function favoritesPage() {
     const node = el(`<div class="m-searchwrap"><div class="m-results"></div></div>`);
     pageFrame("Favorites", node, "m-page-scroll");
     const results = node.querySelector(".m-results");
+    // ⚠ `.m-results` is its OWN scroller here (m-page-scroll), not the
+    // document — reading the page's scrollTop instead would be 0 every time.
+    // Capture phase, because the row is an <a> and the navigation happens on
+    // the way back up.
+    results.addEventListener("click", (ev) => {
+      if (ev.target.closest("a")) _favScroll = results.scrollTop;
+    }, true);
+    const want = _favScroll;
+    _favScroll = 0;
     results.innerHTML = `<div class="loading">Loading…</div>`;
     const ids = archiveFavs();
     const entries = (await Promise.all(ids.map((id) => api("/api/entry/" + id).catch(() => null)))).filter(Boolean);
     showResults(results, entries, "No favorites yet. Open a Guru's msg and tap ♡ to add it here.", (id) => "#/entry/" + id, true);
+    // Two more frames, for the reason restoreScroll() documents: a list painted
+    // into a `calc(100vh - …)` flex column has no scroll height on the frame it
+    // is inserted, and the assignment would clamp to 0.
+    if (want) {
+      const apply = () => { if (results.isConnected) results.scrollTop = want; };
+      apply();
+      requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
+    }
   }
 
   // ---- placeholders (content arrives later) -------------------------------
@@ -15538,6 +15559,12 @@ const MOBILE_UI = (() => {
   // time puts the screen up immediately; those resolves are cached, so
   // re-asking for a superset costs almost nothing.
   const DAILY_STEP = 120;
+  // How deep the list had got when it was last left, kept beside _dailyScroll.
+  // ⚠ Restoring the OFFSET without the DEPTH is the same as not restoring it
+  // at all: the list comes back 120 rows long, the document is shorter than the
+  // saved offset, the assignment silently clamps — and that is exactly what
+  // "it opens on the latest msg again" looks like (operator, 2026-08-26).
+  let _dailyLimit = DAILY_STEP;
   const DAILY_SEC = {
     key: "daily",
     icon: "\u2600\ufe0f",
@@ -15573,7 +15600,27 @@ const MOBILE_UI = (() => {
     const more = node.querySelector("#dl-more");
     const sc = document.scrollingElement || document.documentElement;
     const smooth = !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-    let rows = [], limit = DAILY_STEP, loading = false, done = false, sel = "";
+    let rows = [], limit = _dailyLimit, loading = false, done = false, sel = "";
+
+    // ---- the line the strip pins to, MEASURED -------------------------------
+    // ⚠ NEVER the CSS's `52px + inset + 80px` guess. Android scales px fonts
+    // by the system font-size setting, so on a phone set to a large font the
+    // strip is ~15px taller than that guess — and `env(safe-area-inset-top)`
+    // differs between shells besides. Landing a tapped row against the guess
+    // tucks it UNDER the strip, and the selector below then finds the NEXT row
+    // down: the day BEFORE the one that was tapped. That is the "on one phone
+    // the date before is showing at the top" the operator reported
+    // (2026-08-26) — two phones, two font scales, one hard-coded number.
+    const pinLine = () => {
+      let h = 0;
+      document.querySelectorAll(".m-top, .m-vpanel").forEach((b) => {
+        const r = b.getBoundingClientRect();
+        if (r.height) h = Math.max(h, r.bottom);   // a hidden bar measures 0
+      });
+      return h + strip.getBoundingClientRect().height;
+    };
+    // A row peeking 2px out from under the strip is not the day you are on.
+    const DL_EDGE = 24;
 
     const chipHtml = (r) => {
       const t = r.date.split("-");
@@ -15611,7 +15658,14 @@ const MOBILE_UI = (() => {
         c.classList.toggle("on", on);
         if (on) chip = c;
       });
-      if (chip && centre) chip.scrollIntoView({ inline: "center", block: "nearest" });
+      // ⚠ Not scrollIntoView: `block:"nearest"` is free to move the PAGE as
+      // well as the strip, and this runs from the scroll handler — on a phone
+      // where the strip is a pixel short of fully visible that becomes the
+      // selector fighting the finger. Setting scrollLeft moves the strip alone.
+      if (chip && centre) {
+        const mid = chip.offsetLeft - (strip.clientWidth - chip.offsetWidth) / 2;
+        strip.scrollLeft = Math.max(0, Math.min(track.scrollWidth - strip.clientWidth, mid));
+      }
     }
 
     async function loadMore() {
@@ -15622,6 +15676,11 @@ const MOBILE_UI = (() => {
         done = got.length < limit;      // fewer than asked for = that is all there is
         rows = got.filter((r) => r && r.date);
         limit += DAILY_STEP;
+        // …so backing in here reloads exactly this deep. ⚠ The DISPLAYED
+        // count, never `limit` — limit is already the NEXT request's size, so
+        // remembering it would make every visit fetch one step more than the
+        // one before whether or not anybody scrolled.
+        _dailyLimit = Math.max(DAILY_STEP, rows.length);
         if (!node.isConnected) return;
         if (!rows.length) {
           rowsBox.innerHTML = `<div class="empty">No Guru's msg yet.</div>`;
@@ -15645,7 +15704,12 @@ const MOBILE_UI = (() => {
       hapticTick();
       select(c.dataset.d, true);
       const row = rowsBox.querySelector('[data-d="' + c.dataset.d + '"]');
-      if (row) row.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+      if (row) {
+        // Measured against the live pin line instead of left to the row's
+        // `scroll-margin-top`, for the reason pinLine() documents.
+        const y = sc.scrollTop + row.getBoundingClientRect().top - pinLine() - 6;
+        window.scrollTo({ top: Math.max(0, y), behavior: smooth ? "smooth" : "auto" });
+      }
     });
     rowsBox.addEventListener("click", (e) => {
       const a = e.target.closest("a.mx-row");
@@ -15662,7 +15726,10 @@ const MOBILE_UI = (() => {
       if (tick) return;
       tick = requestAnimationFrame(() => {
         tick = 0;
-        const top = strip.getBoundingClientRect().bottom;
+        // + DL_EDGE: a row must be properly clear of the strip before it counts
+        // as the day you are on, or a sliver of the row above keeps the
+        // highlight one day behind what the eye reads as the top of the list.
+        const top = strip.getBoundingClientRect().bottom + DL_EDGE;
         for (const n of rowsBox.children) {
           if (n.getBoundingClientRect().bottom > top) {
             if (n.dataset.d && n.dataset.d !== sel) select(n.dataset.d, true);
@@ -15689,6 +15756,20 @@ const MOBILE_UI = (() => {
     });
   }
 
+  // ---- where each message list was left --------------------------------------
+  // "<section>?d=<filter>" → { top, shown }. Written the moment a row is TAPPED
+  // and consumed by the very next mount of that list — which is what makes it
+  // mean "come back to the message I opened" rather than "remember this list for
+  // ever": leaving the list any other way (the tab bar, the Library, a
+  // notification) saves nothing, so the next visit starts at the top the way a
+  // fresh visit should (operator, 2026-08-26).
+  //
+  // ⚠ `shown` is not optional. paintMsgIndex paints 30 rows at a time, so a
+  // list rebuilt at 30 rows is SHORTER than the offset it is being asked to
+  // restore, the assignment clamps, and the result is indistinguishable from
+  // never having saved anything at all.
+  const _mxScroll = Object.create(null);
+
   function msgIndexPage(key, params) {
     const sec = MSG_SECTIONS[key] || (key === "anushthan" ? ANUSHTHAN_INDEX_SEC : null);
     if (!sec) return placeholderPage("Message", "");
@@ -15702,6 +15783,29 @@ const MOBILE_UI = (() => {
     // come BACK to the same filtered list (see msgReaderPage's back hook).
     const fromUrl = (params && params.get("d")) || "";
     let painter = null, all = [], filterDate = isIsoDate(fromUrl) ? fromUrl : "";
+    // ---- come back to the row that was tapped --------------------------------
+    // Taken ONCE, here, and deleted from the store immediately; re-applied after
+    // every paint of this visit, because there are two of them — the cache
+    // paint, then the refresh paint, which replaces the rows underneath us.
+    const sc = document.scrollingElement || document.documentElement;
+    const scKey = () => key + (filterDate ? "?d=" + filterDate : "");
+    let want = _mxScroll[scKey()] || null;
+    delete _mxScroll[scKey()];
+    // ⚠ Re-asserted across the next two frames, not set once: on the frame a
+    // list is painted its scrollHeight can still be the unlaid-out height, and
+    // assigning scrollTop then silently clamps to 0 — the same trap the Search
+    // page's restoreScroll() documents.
+    const restoreScroll = () => {
+      if (!want || !want.top) return;
+      const apply = () => { if (node.isConnected) sc.scrollTop = want.top; };
+      apply();
+      requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
+    };
+    // The moment the user touches the list it is theirs — a late refresh must
+    // not haul them back to where they came in.
+    const drop = () => { want = null; };
+    node.addEventListener("touchstart", drop, { passive: true });
+    node.addEventListener("wheel", drop, { passive: true });
     const listHref = () => "#/m/" + sec.key + (filterDate ? "?d=" + filterDate : "");
     // Keep the address bar in step WITHOUT re-routing (a full re-render would
     // throw away the painted rows and the scroll position for a filter change
@@ -15716,6 +15820,7 @@ const MOBILE_UI = (() => {
     const setFilter = (iso) => {
       filterDate = iso || "";
       painter = null;
+      want = null;                 // a new filter is a new list — start at the top
       syncUrl();
       paint(all);
     };
@@ -15734,6 +15839,9 @@ const MOBILE_UI = (() => {
       const a = ev.target.closest("a.mx-row");
       if (!a || !a.getAttribute("href") || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
       ev.preventDefault();
+      // Where this list was standing when the message was opened. The reader's
+      // back hook comes straight back here, and this is what it lands on.
+      _mxScroll[scKey()] = { top: sc.scrollTop, shown: painter ? painter.shown() : 0 };
       goReplace(a.getAttribute("href"));
     });
 
@@ -15775,9 +15883,11 @@ const MOBILE_UI = (() => {
           : msgHolderHtml(sec);
         return;
       }
-      painter = paintMsgIndex(rowsBox, sec, shown, painter ? painter.shown() : 0, seen,
+      painter = paintMsgIndex(rowsBox, sec, shown,
+        painter ? painter.shown() : (want ? want.shown : 0), seen,
         filterDate ? "?d=" + filterDate : "");
       if (sec.markSeen) sec.markSeen();
+      restoreScroll();
     };
     paint(sec.cached());            // cache first — instant, works with no signal
     _pageLangHook = () => paint(all);
@@ -17705,7 +17815,7 @@ const MOBILE_UI = (() => {
     // and the tab bar's own delegated handler arms the flag for it.
     // Opening the list FROM here starts it at the top; every other way in is a
     // back out of a message, which must keep the reader's place.
-    node.querySelector(".mm-t-daily").addEventListener("click", () => { _dailyScroll = 0; });
+    node.querySelector(".mm-t-daily").addEventListener("click", () => { _dailyScroll = 0; _dailyLimit = DAILY_STEP; });
     node.querySelector("#mm-search").addEventListener("click", () => go("#/m/search"));
     // The sliders mean "search by date", which is a tab on the same page — the
     // Date tab opens its calendar on entry, so this lands the user straight in

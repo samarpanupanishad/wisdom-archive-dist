@@ -1916,12 +1916,17 @@ body.m-mode.m-libpage .content {
 .mm-sub2 { font: 500 11.5px var(--sans); color: #8b8794; line-height: 1.25; }
 /* Tile tints + glyph colours, straight from menu.png. */
 .mm-t-daily { background: #fdf5e6; } .mm-t-daily .mm-ico { color: #eda600; }
-/* ⚠ Golden, not pink (operator, 2026-08-25). It sits next to Daily's cream,
-   so the two are told apart by WHERE the warm colour is: Daily's yellow is on
-   the GLYPH over a near-white tile, Special's is the TILE under a magenta
-   star. Don't make Special's star yellow or Daily's tile gold — either one
-   collapses that distinction, which was the operator's own concern. */
-.mm-t-special { background: #fdf0c4; } .mm-t-special .mm-ico { color: #c2185b; }
+/* ⚠ LIGHT PINK since 2026-08-26, on the operator's instruction — it was gold
+   (#fdf0c4) for one day. Don't restore the gold from git history.
+   The 2026-08-25 rule it was built on still holds and still matters: Special
+   and Daily sit side by side, and they are told apart by WHERE the colour is
+   — Daily's yellow is on the GLYPH over a near-white tile, Special's is the
+   TILE under a magenta star. Pink keeps that (and reads further from Daily's
+   cream than the gold did); making Special's star pale or Daily's tile
+   coloured would collapse it, which was the operator's own concern.
+   #fce4ec is the pink the viewer panel's date key already wears, so this is a
+   colour the app owns rather than a fourth one. */
+.mm-t-special { background: #fce4ec; } .mm-t-special .mm-ico { color: #c2185b; }
 .mm-t-letterhead { background: #faf6f2; } .mm-t-letterhead .mm-ico { color: #6a5a4e; }
 .mm-r-satsang { background: #f2ecfa; } .mm-r-satsang .mm-ico { color: #6b3fa0; }
 .mm-r-anubhuti { background: #eef7f4; } .mm-r-anubhuti .mm-ico { color: #0e8074; }
@@ -2103,14 +2108,14 @@ body.m-mode.m-libpage .content {
   .mm-accpop { animation: none; }
 }
 
-/* ==== Daily Msg (#/m/daily) \u2014 the date strip over the list ================
+/* ==== Daily Msg (#/m/daily) — the date strip over the list ================
    The rows themselves are the ordinary `.mx-row` markup every message section
    uses; only the strip is new. */
 .m-page-daily { max-width: 640px; margin: 0 auto; }
-/* \u26a0 PINNED under the top bar. It has to be: the strip is how you move around
+/* ⚠ PINNED under the top bar. It has to be: the strip is how you move around
    this screen, and a strip that scrolls away with the list is decoration. It
    works because nothing between here and the document sets `overflow` or a
-   `transform` \u2014 `.content` and `.m-page` are both plain blocks. Don't wrap the
+   `transform` — `.content` and `.m-page` are both plain blocks. Don't wrap the
    page in a scroller. */
 .dl-strip {
   position: sticky; z-index: 5;
@@ -2140,8 +2145,13 @@ body.m-mode.m-libpage .content {
   box-shadow: 0 1px 3px rgba(107, 63, 160, .18);
 }
 .dl-chip.on .dl-d, .dl-chip.on .dl-w, .dl-chip.on .dl-m { color: #5b2d91; }
-/* Tapping a chip scrolls its row up \u2014 clear of the fixed top bar AND the
-   pinned strip, which is what this margin buys. */
+/* ⚠ A BACKSTOP ONLY — this is no longer what positions a tapped chip's row.
+   The 80px is a guess at the strip's height and the 52px a guess at the bar's,
+   and both are wrong on a phone whose system font size scales our px type: the
+   row lands under the strip and the highlighted chip falls a day behind.
+   app.js measures the real pin line instead (see pinLine()) and scrolls to it.
+   This rule stays for any other scrollIntoView that may reach a row here —
+   don't trust the numbers, and don't reinstate them as the mechanism. */
 .m-daily .mx-row { scroll-margin-top: calc(52px + env(safe-area-inset-top) + 80px); }
 .m-daily .sp-more { text-align: center; color: var(--muted); padding: 14px 0 22px; }
 @media (prefers-reduced-motion: reduce) { .dl-chip { transition: none; } }
