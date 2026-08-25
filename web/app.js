@@ -11639,6 +11639,59 @@ const MOBILE_UI = (() => {
 
   document.body.classList.add("m-mode");
 
+  // ---- जीवन्त Library icons ------------------------------------------------
+  // The menu screen's own icon set, from the operator's menu.png plus two the
+  // canvas mock (option 1a) supplied: `sun` and `star`. Kept as one object
+  // because three of them are used twice — the sun on the Daily tile AND the
+  // Daily tab, the heart and the diya on the tab bar — and a second copy of an
+  // SVG is a second thing to edit.
+  // ⚠ Declared BEFORE the chrome injection below, which uses `diya`/`sun`/
+  // `heart`/`dots6`: this is a `const` in the same scope, so a declaration
+  // after that statement is a temporal-dead-zone error at startup, not a
+  // hoisted definition.
+  //
+  // ⚠ FOUR of these carry BAKED colours and ignore `currentColor` — the sun
+  // (yellow), the pencil (brown barrel, black graphite), the bouquet (red
+  // blooms, green stems) and the diya (yellow flame, brown bowl). All four are
+  // the operator's explicit instruction, so a `.mm-ico { color: … }` rule has
+  // no effect on them; change the colour in the SVG here.
+  const IC = {
+    // Golden yellow, not pure #ffff00 — the operator asked for yellow and pure
+    // yellow is invisible on the pale tile. Shared with the Daily TAB.
+    sun: `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#eda600" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4" fill="#fde28a" stroke="#eda600"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/></svg>`,
+    star: `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4l1.7 4.8L17.5 10.5l-4.8 1.7L11 17l-1.7-4.8L4.5 10.5l4.8-1.7L11 4z"/><path d="M18.5 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9.9-2.3z"/></svg>`,
+    // A pencil, not an outline pen: brown wooden barrel, black graphite point
+    // (operator, 2026-08-25).
+    pen: `<svg viewBox="0 0 24 24" width="26" height="26" fill="none"><path d="M15.7 4.3l4 4-8.7 8.7-4-4z" fill="#a5642e" stroke="#7a4620" stroke-width="1.1" stroke-linejoin="round"/><path d="M14.3 5.7l4 4" stroke="#7a4620" stroke-width="1.1"/><path d="M7 13l4 4-5.7 1.7z" fill="#2a2730" stroke="#2a2730" stroke-width="1" stroke-linejoin="round"/><path d="M4.5 21h15" stroke="#a5642e" stroke-width="1.6" stroke-linecap="round" opacity=".4"/></svg>`,
+    // FIVE people, three behind and two in front — "so it should look like
+    // collectivity" (operator, 2026-08-25). The stroke is lighter than the
+    // other glyphs on purpose: five figures at 26px need the thinner line to
+    // stay readable as separate people rather than one grey mass.
+    people: `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="7.1" r="1.85"/><path d="M2.1 12.9c0-1.8 1.3-2.9 2.9-2.9s2.9 1.1 2.9 2.9"/><circle cx="19" cy="7.1" r="1.85"/><path d="M16.1 12.9c0-1.8 1.3-2.9 2.9-2.9s2.9 1.1 2.9 2.9"/><circle cx="12" cy="6.1" r="2"/><path d="M8.7 12.4c0-2 1.5-3.2 3.3-3.2s3.3 1.2 3.3 3.2"/><circle cx="8.3" cy="14.3" r="2.1"/><path d="M4.5 21c0-2.2 1.7-3.6 3.8-3.6s3.8 1.4 3.8 3.6"/><circle cx="15.7" cy="14.3" r="2.1"/><path d="M11.9 21c0-2.2 1.7-3.6 3.8-3.6s3.8 1.4 3.8 3.6"/></svg>`,
+    bubble: `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12.2c0 3.8-3.6 6.9-8.1 6.9-.9 0-1.8-.1-2.6-.4L4.5 20.5l1.3-3.6c-1.4-1.3-2.3-3-2.3-4.7 0-3.8 3.6-6.9 8.1-6.9s8.9 3.1 8.9 6.9z"/><circle cx="8.6" cy="12.2" r=".95" fill="currentColor" stroke="none"/><circle cx="12" cy="12.2" r=".95" fill="currentColor" stroke="none"/><circle cx="15.4" cy="12.2" r=".95" fill="currentColor" stroke="none"/></svg>`,
+    book: `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.6C10.4 5.1 8.2 4.5 4 4.8v13c4.2-.3 6.4.3 8 1.8 1.6-1.5 3.8-2.1 8-1.8v-13c-4.2-.3-6.4.3-8 1.8z"/><path d="M12 6.6v13"/></svg>`,
+    // A rose bouquet — red blooms, green stems (operator, 2026-08-25; it was a
+    // four-leaf clover). The pale white spiral inside each bloom is what makes
+    // three red circles read as roses at 26px; don't drop it.
+    bouquet: `<svg viewBox="0 0 24 24" width="26" height="26" fill="none"><path d="M12 21.4V12M12 21.4c-.5-3-1.7-5.2-3.6-6.7M12 21.4c.5-3 1.7-5.2 3.6-6.7" stroke="#4e7a35" stroke-width="1.4" stroke-linecap="round"/><path d="M8.2 17.4c-1.6.2-2.7-.4-3.4-1.7 1.6-.2 2.7.4 3.4 1.7z" fill="#5f8f40"/><path d="M15.8 17.4c1.6.2 2.7-.4 3.4-1.7-1.6-.2-2.7.4-3.4 1.7z" fill="#5f8f40"/><circle cx="7.1" cy="10.4" r="2.9" fill="#c62828"/><circle cx="16.9" cy="10.4" r="2.9" fill="#c62828"/><circle cx="12" cy="7.3" r="3.2" fill="#e03131"/><path d="M12 5.9a1.4 1.4 0 1 0 1.3 1.9" stroke="#fff" stroke-width=".85" stroke-linecap="round" opacity=".7"/><path d="M7.1 9.2a1.2 1.2 0 1 0 1.1 1.7" stroke="#fff" stroke-width=".8" stroke-linecap="round" opacity=".6"/><path d="M16.9 9.2a1.2 1.2 0 1 0 1.1 1.7" stroke="#fff" stroke-width=".8" stroke-linecap="round" opacity=".6"/></svg>`,
+    heart: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20S4 14.5 4 9a4 4 0 0 1 8-1 4 4 0 0 1 8 1c0 5.5-8 11-8 11z"/></svg>`,
+    // ⚠ The one COLOURED glyph on the tab bar, and deliberately so: the operator
+    // asked for a diya — yellow flame, brown bowl — so its colours are baked in
+    // and it does NOT follow `currentColor` like every other tab icon.
+    diya: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none"><path d="M12 3.6c2 2.2 3 3.7 3 5.2a3 3 0 0 1-6 0c0-1.5 1-3 3-5.2z" fill="#f3b32b"/><path d="M12 6.6c.9 1.1 1.3 1.9 1.3 2.6a1.3 1.3 0 0 1-2.6 0c0-.7.4-1.5 1.3-2.6z" fill="#fde68a"/><path d="M3.8 13.9h16.4c-.7 3.5-4 5.8-8.2 5.8s-7.5-2.3-8.2-5.8z" fill="#8d5524"/><path d="M3.8 13.9h16.4" stroke="#6b3f18" stroke-width="1.4" stroke-linecap="round"/></svg>`,
+    dots6: `<svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor"><circle cx="7.5" cy="9.5" r="1.5"/><circle cx="12" cy="9.5" r="1.5"/><circle cx="16.5" cy="9.5" r="1.5"/><circle cx="7.5" cy="14.5" r="1.5"/><circle cx="12" cy="14.5" r="1.5"/><circle cx="16.5" cy="14.5" r="1.5"/></svg>`,
+    search: `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>`,
+    // ---- the More sheet's glyphs. Only the five PATHS does not already have;
+    // Settings / Msg to Admin / Our Goal / Moderator's section shield reuse
+    // PATHS.gear / letter / help / shield, so there is one copy of each.
+    megaphone: `<path d="M4 10.5v3a1 1 0 0 0 1 1h2.2l6.8 3.8V5.7L7.2 9.5H5a1 1 0 0 0-1 1z"/><path d="M17.4 8.6a4.8 4.8 0 0 1 0 6.8"/><path d="M8.2 15.5l1.1 4.2"/>`,
+    checklist: `<rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M7.6 8.4l1.5 1.5 2.6-2.7"/><path d="M7.6 14.4l1.5 1.5 2.6-2.7"/><path d="M14.4 8.2h2.6M14.4 14.2h2.6"/>`,
+    bubbles: `<path d="M3.5 8.4a2.4 2.4 0 0 1 2.4-2.4h8.6a2.4 2.4 0 0 1 2.4 2.4v3.8a2.4 2.4 0 0 1-2.4 2.4H8.3L4.8 17v-2.4H5.9a2.4 2.4 0 0 1-2.4-2.4z"/><path d="M17.9 9.6h.7a2 2 0 0 1 2 2v3.2a2 2 0 0 1-2 2h-.4v2l-2.6-2"/>`,
+    bars: `<path d="M3.5 20.5h17"/><rect x="5.2" y="11" width="3.4" height="7" rx="1"/><rect x="10.3" y="6" width="3.4" height="12" rx="1"/><rect x="15.4" y="13.5" width="3.4" height="4.5" rx="1"/>`,
+    people2: `<circle cx="9.2" cy="8" r="2.8"/><path d="M3.6 19c0-3.1 2.5-5.1 5.6-5.1s5.6 2 5.6 5.1"/><circle cx="17.2" cy="9.4" r="2.1"/><path d="M15.8 14.2c2.9-.3 4.8 1.5 4.8 4.3"/>`,
+    sliders: `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7.5h16M4 12h16M4 16.5h16"/><circle cx="9.5" cy="7.5" r="2.2" fill="var(--surface)"/><circle cx="15" cy="12" r="2.2" fill="var(--surface)"/><circle cx="8" cy="16.5" r="2.2" fill="var(--surface)"/></svg>`,
+  };
+
   // ---- chrome (top bar, bottom bar, drawer) — injected once -------------
   document.body.insertAdjacentHTML("beforeend", `
     <header class="m-top" id="m-top">
@@ -11656,21 +11709,60 @@ const MOBILE_UI = (() => {
         <a class="m-vact m-vact-dl" id="m-panel-dl" title="Download image" aria-label="Download image">${DOWNLOAD_ICON}</a>
       </div>
     </div>
+    <!-- ⚠ TWO TIERS since 9.74 (operator's design, canvas option "1h" + the
+         lower-menu drawing). What changed and why it must not drift back:
+
+         1. The satsang CHAT ICON and the HOME ICON are gone. Join Satsang is
+            the chat icon, grown into a full-width card, and it carries the
+            unread count that used to have nowhere to sit on this bar
+            ([data-satsang-badge] — the same hook the drawer row uses).
+            Home went with them on the operator's call: this bar only ever
+            appears on a screen that already IS a message, and the way back to
+            today's is the Menu or the back gesture.
+         2. THE WHOLE CARD IS THE TAP TARGET. The round arrow is decoration —
+            it is a <span>, not a button, on purpose. Don't "fix" it into one.
+         3. The card's second line names the message ON SCREEN, not today —
+            see setJoinDate(), called from all three places that set the top
+            panel's date pill, and reset by setChrome().
+         4. The bar is now ~126px tall instead of 64. That height is NOT
+            repeated anywhere: it lives in --m-bot-h (styles.css) and every
+            screen-height calculation reads it from there. -->
     <nav class="m-bottom" id="m-bottom">
-      <button class="m-navbtn m-menu-btn" id="m-menu-btn" title="Menu" aria-label="Menu">
-        <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-        <span class="m-menudot" data-anymsg-dot hidden></span>
+      <button class="m-join" id="m-join" type="button" aria-label="Join Satsang">
+        <span class="m-join-txt">
+          <span class="m-join-t">Join Satsang</span>
+          <span class="m-join-d" id="m-join-date" hidden></span>
+        </span>
+        <span class="m-join-go" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h12.5"/><path d="m12 6.5 6 5.5-6 5.5"/></svg>
+        </span>
+        <span class="m-join-badge" data-satsang-badge hidden></span>
       </button>
-      <button class="m-navbtn m-comm-btn" id="m-comm-btn" title="Samuhik Satsang" aria-label="Samuhik Satsang">
-        <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      </button>
-      <button class="m-navbtn m-home-btn" id="m-home-btn" title="Latest Guru's msg" aria-label="Latest Guru's msg">
-        <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/></svg>
-      </button>
-      <div class="m-langseg" id="m-langseg" role="group" aria-label="Language">
-        <button data-lang="hi" class="active">हिंदी</button>
-        <button data-lang="en">English</button>
+      <div class="m-botrow">
+        <div class="m-langseg" id="m-langseg" role="group" aria-label="Language">
+          <button data-lang="hi" class="active">हिंदी</button>
+          <button data-lang="en">English</button>
+        </div>
+        <button class="m-navbtn m-menu-btn" id="m-menu-btn" title="Menu" aria-label="Menu">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg>
+          <span class="m-menulabel">Menu</span>
+          <span class="m-menudot" data-anymsg-dot hidden></span>
+        </button>
       </div>
+    </nav>
+    <!-- The जीवन्त Library's four-tab bar. Injected with the rest of the chrome
+         (not built inside the page) so the tabs a future screen wants are one
+         class on <body> away, not a second copy of this markup. Shown only
+         under body.m-libpage, which setChrome() clears on every route.
+         ⚠ More is drawn ACTIVE, as in the operator's menu.png, and until the
+         More screen is specced it opens the old slide-out drawer — which is
+         still the only way to reach Settings, Our Goal, Msg to Admin, Admin
+         Announcements and every Sutradhar tool. Don't delete the drawer. -->
+    <nav class="m-tabbar" id="m-tabbar">
+      <a class="m-tab" href="#/?latest=1"><span class="m-tab-ico">${IC.sun}</span><span>Daily</span></a>
+      <a class="m-tab m-tab-fav" href="#/favorites"><span class="m-tab-ico">${IC.heart}</span><span>Favourites</span></a>
+      <a class="m-tab" href="#/m/gyan"><span class="m-tab-ico">${IC.diya}</span><span>U. Ganga</span></a>
+      <button class="m-tab m-tab-more" id="m-tab-more" type="button"><span class="m-tab-ico m-tab-disc">${IC.dots6}</span><span>More</span></button>
     </nav>
     <div class="m-scrim" id="m-scrim" hidden></div>
     <aside class="m-drawer" id="m-drawer" aria-label="Menu">
@@ -11820,7 +11912,12 @@ const MOBILE_UI = (() => {
       g.classList.toggle("open", opening);
     });
   });
-  $("m-menu-btn").addEventListener("click", openDrawer);
+  // The landing bar's Menu tile opens the जीवन्त Library screen, not the
+  // slide-out drawer (operator, 2026-08-25). The drawer still exists and still
+  // holds everything that screen does not show yet — it is reached from that
+  // screen's More tab until the More screen is specced.
+  $("m-menu-btn").addEventListener("click", () => go("#/m/menu"));
+  $("m-tab-more").addEventListener("click", openMoreSheet);
   // Reading a Special Telegram / Letterpad message? Open THAT message's
   // discussion. The id travels in the URL (not just in _chatCtx) so the chat is
   // deep-linkable and Android back returns to the reader.
@@ -11830,11 +11927,35 @@ const MOBILE_UI = (() => {
   // "discuss what I'm reading" flow into a list. Deliberately no lastViewed()
   // fallback either — from a page with nothing on screen, the index is the honest
   // destination, not some message read days ago.
-  $("m-comm-btn").addEventListener("click", () => {
+  $("m-join").addEventListener("click", () => {
     const wid = (_chatCtx && _chatCtx.wid) || _stageId;
     go(wid ? "#/m/community?wid=" + encodeURIComponent(wid) : "#/m/community");
   });
-  $("m-home-btn").addEventListener("click", () => go("#/?latest=1"));
+
+  // One buzz the moment a panel control is PRESSED (not on click), so the
+  // press animation and the vibration land together — that pairing is what
+  // makes a tap feel like a key going down. Delegated, so every current and
+  // future control in either panel gets it for free.
+  // ⚠ Anything inside these two panels that also calls hapticTick() in its own
+  // handler now buzzes twice; the reader's favourite button had exactly that
+  // line and it was removed (see msgReaderPage). Keep it that way.
+  ["m-bottom", "m-vpanel", "m-tabbar"].forEach((id) => {
+    const n = $(id);
+    if (n) n.addEventListener("pointerdown", (e) => { if (e.target.closest("button, a")) hapticTick(); });
+  });
+
+  // The Join Satsang card's second line. Takes the message's own date so the
+  // card always says which satsang it opens — the daily feed re-publishes it
+  // on every swipe (wireVPanel), the section readers on every scroll, and
+  // setChrome() clears it so a page that has no date can never inherit the
+  // last one. No date → the line disappears and the card opens the index.
+  function setJoinDate(iso) {
+    const d = $("m-join-date");
+    if (!d) return;
+    const t = iso ? dpSlashText(iso) : "";
+    d.textContent = t ? "for " + t : "";
+    d.hidden = !t;
+  }
   $("m-scrim").addEventListener("click", closeDrawer);
   $("m-drawer").addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
   const goBack = () => { if (_pageBackHook && _pageBackHook()) return; history.back(); };
@@ -12165,6 +12286,7 @@ const MOBILE_UI = (() => {
   function onHardwareBack() {
     if (_dpClose && _dpClose()) return;
     if (_axSheetClose && _axSheetClose()) return;
+    if (_moreClose && _moreClose()) return;      // the More sheet, over the जीवन्त Library
     if (ddOverlayBack()) return;   // a diary popup, or the live sitting's own question
     if (hideExitSheet()) return;
     if (exitZoom()) return;
@@ -12676,10 +12798,15 @@ const MOBILE_UI = (() => {
     // takes its place. Every other page (Search, Settings, …) keeps the
     // normal back/title bar since it has no image to sit on top of.
     document.body.classList.toggle("m-notop", isImageScreen);
+    // The जीवन्त Library wears its own header and the four-tab bar. Cleared on
+    // EVERY route, like setTopAction/setTopDate below — menuPage() re-adds it
+    // after its pageFrame(), and a page that forgets simply doesn't get tabs.
+    document.body.classList.remove("m-libpage");
     $("m-back").style.visibility = mode === "home" ? "hidden" : "visible";
     $("m-title").textContent = title || "Samarpan Upanishad";
     setTopAction(null);   // pages that want one re-set it after pageFrame()
     setTopDate(null);     // …same for the left-hand date pill
+    setJoinDate(null);    // …and the Join Satsang card's "for dd/mm/yyyy" line
   }
 
   // ==========================================================================
@@ -12858,6 +12985,10 @@ const MOBILE_UI = (() => {
       dEl.classList.remove("m-datepill-flat");   // shared element — see wireVPanel
       dEl.onclick = () => openDatePicker(s, goDate);
     }
+    // ⚠ Deliberately NO setJoinDate() here. This screen is a date with no
+    // message, so there is no discussion attached to it — the card must not
+    // say "for 24/08/2026" and then open the satsang index. setChrome() has
+    // already cleared the line; leave it cleared.
     ["m-panel-fav", "m-panel-share", "m-panel-dl"].forEach((id) => { const b = $(id); if (b) b.classList.add("m-vact-disabled"); });
     const wrap = el(`<div class="m-msgwrap"><div class="m-msg">
       <div class="m-msg-ico">🕉️</div>
@@ -13771,6 +13902,7 @@ const MOBILE_UI = (() => {
     // that looks unclickable while being perfectly clickable.
     dEl.classList.remove("m-datepill-flat");
     dEl.onclick = () => openDatePicker(e.date, goDate);
+    setJoinDate(e.date || null);   // bottom bar: "Join Satsang / for dd/mm/yyyy"
     $("m-panel-fav").classList.remove("m-vact-disabled");
     $("m-panel-share").classList.remove("m-vact-disabled");
 
@@ -14436,6 +14568,11 @@ const MOBILE_UI = (() => {
         ? ""    // a literal Anushthan row with no pages has nothing to open
         : "#/m/" + readerKeyOf(sec) + "/" + encodeURIComponent(v.id) + "?from=search";
     const st = forChat ? _searchState.chat : _searchState.plain;
+    // ?by=word|date|range — which tab to open on. The जीवन्त Library's sliders
+    // button uses it to mean "search by date". Only ever an OPENING position:
+    // the tab the user then picks is remembered in `st` as it always was.
+    const by = params && params.get("by");
+    if (by === "word" || by === "date" || by === "range") st.tab = by;
 
     const node = el(`<div class="m-searchwrap">
       <div class="m-tabs">
@@ -15622,6 +15759,7 @@ const MOBILE_UI = (() => {
         scope: sec.key, sectionOnly: true, title: sec.listTitle,
         emptyMsg: "No dates to pick yet — " + sec.listTitle + " has no messages.",
       });
+      setJoinDate(v.date || null);                     // bottom bar: which satsang this card opens
       setEnglishAvailable(!!v.hasEn);                  // Hindi-only post → English toggle off
       // Bind the Community button to this message (see _chatCtx). Re-published
       // on every scroll, so the discussion always follows what's on screen.
@@ -15636,7 +15774,10 @@ const MOBILE_UI = (() => {
       const fav = $("m-panel-fav");
       fav.classList.remove("m-vact-disabled");
       fav.classList.toggle("on", store.isFav(favId));
-      fav.onclick = () => { store.toggleFav(favId); fav.classList.toggle("on", store.isFav(favId)); hapticTick(); };
+      // No hapticTick() here: the whole .m-vpanel now buzzes on pointerdown
+      // (see the delegated listener with the chrome wiring). Calling it again
+      // on click gave this one button a double buzz.
+      fav.onclick = () => { store.toggleFav(favId); fav.classList.toggle("on", store.isFav(favId)); };
 
       const share = $("m-panel-share");
       share.classList.remove("m-vact-disabled");
@@ -17053,6 +17194,280 @@ const MOBILE_UI = (() => {
     wireModSignIn(node, () => { refreshModNav(); accountPage(); });
   }
 
+  // ---- the account circle on the जीवन्त Library header ---------------------
+  // Just the initial, per the operator; the name appears only when tapped. The
+  // startup gate (AUTH_GATE) means there is always a verified account by the
+  // time this screen can be reached, so there is no signed-out variant here.
+  //
+  // ⚠ It carries ONE row the operator did not ask for, and only for the people
+  // who need it: a visitor or a pending account gets "Samuhik Satsang access",
+  // which is the way to `accessBox()` on #/m/account. Without it, losing the
+  // drawer would leave a visitor with no route to ask for access at all — the
+  // popover would show them their own name and a way out of the app. A member
+  // sees exactly what was asked for: the name, and Sign out.
+  function wireAccountCircle(node) {
+    const btn = node.querySelector("#mm-acc");
+    if (!btn) return;
+    const u = currentUser() || {};
+    const name = u.username || "";
+    btn.textContent = (name[0] || "॥").toUpperCase();
+    let pop = null;
+    const away = (e) => { if (pop && !pop.contains(e.target) && e.target !== btn) shut(); };
+    function shut() {
+      if (!pop) return;
+      pop.remove(); pop = null;
+      btn.setAttribute("aria-expanded", "false");
+      document.removeEventListener("click", away, true);
+    }
+    btn.addEventListener("click", () => {
+      if (pop) return shut();
+      const needsAccess = !isCommunityMember();
+      pop = el(`<div class="mm-accpop" role="dialog" aria-label="Account">
+        <div class="mm-accname">${escapeHtml(name || "Account")}</div>
+        <div class="mm-accrole">${escapeHtml(roleLabel(u.role))}</div>
+        ${needsAccess ? `<button class="mm-accbtn" type="button" data-go="1">Samuhik Satsang access</button>` : ""}
+        <button class="mm-accbtn mm-accout" type="button" data-out="1">Sign out</button>
+      </div>`);
+      btn.insertAdjacentElement("afterend", pop);
+      btn.setAttribute("aria-expanded", "true");
+      pop.addEventListener("click", (e) => {
+        const b = e.target.closest("button"); if (!b) return;
+        shut();
+        if (b.dataset.out) signOutToGate(); else go("#/m/account");
+      });
+      // Capture phase: a tap anywhere else closes it, including on a tile that
+      // is about to navigate — the popover must not survive the route change.
+      setTimeout(() => document.addEventListener("click", away, true), 0);
+    });
+  }
+
+  // ---- More: the role-aware bottom sheet ------------------------------------
+  // Handoff §6 (member) and §7 (moderator / sutradhar). Opens over the जीवन्त
+  // Library, which stays on screen and dimmed — so it is an OVERLAY, not a
+  // route. Built in JS for the same reason AUTH_GATE is: OTA publishes ship
+  // app.js/styles.css only, so markup put in index.html would never reach an
+  // installed APK.
+  //
+  // ⚠ THE ROLE SECTION IS NOT BUILT AT ALL FOR A MEMBER — not built-then-hidden,
+  // not disabled, not a locked card. Two reasons, and the second is the one that
+  // matters: the handoff forbids showing doors that don't open, and the anon
+  // Supabase key ships inside wa-supabase.js, so a member who reads the DOM
+  // learns nothing they could use anyway — every route behind these four tiles
+  // is refused by Postgres (RLS + SECURITY DEFINER), which is where the actual
+  // enforcement lives. `isModerator()` here decides what to DRAW, and must never
+  // be mistaken for the check that protects the data.
+  //
+  // ⚠ Rebuilt on every open rather than injected once with the chrome: a role
+  // can change under a live session (refreshModNav exists for exactly that), and
+  // a sheet built at boot would still be a member's sheet after a promotion.
+  let _moreClose = null;
+  function openMoreSheet() {
+    if (_moreClose) return;
+    const mod = isModerator();
+    const gl = (p) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+    const tile = (href, cls, path, name, sub, badge) => `
+      <button class="ms-tile ${cls}" type="button" data-href="${href}">
+        <span class="ms-ico">${gl(path)}</span>
+        <span class="ms-txt"><span class="ms-name">${name}</span><span class="ms-sub">${sub}</span></span>
+        ${badge ? `<span class="mm-dot" data-${badge}-badge hidden></span>` : ""}
+      </button>`;
+
+    const forEveryone = `
+      <div class="ms-sechead"><span class="ms-sectitle">For everyone</span><span class="ms-note">Member access</span></div>
+      <div class="ms-grid">
+        ${tile("#/settings", "ms-t-set", PATHS.gear, "Settings", "Account and device", "")}
+        ${tile("#/m/broadcast", "ms-t-ann", IC.megaphone, "Announcements", "Important updates", "broadcast")}
+        ${tile("#/m/contact", "ms-t-msg", PATHS.letter, "Msg to Admin", "Private support", "adminmsg")}
+        ${tile("#/about", "ms-t-goal", PATHS.help, "Our Goal", "Purpose of the app", "")}
+      </div>`;
+    // ⚠ Statistics is moderator-only and has been since 2026-08-19 — a member
+    // has no menu route to #/stats. It belongs in THIS half, not the one above.
+    const roleHalf = !mod ? "" : `
+      <div class="ms-div"></div>
+      <div class="ms-sechead"><span class="ms-sectitle">Sutradhar &amp; Moderator</span><span class="ms-note ms-role">${gl(PATHS.shield)}Role access only</span></div>
+      <div class="ms-grid">
+        ${tile("#/moderator", "ms-t-mod", IC.people2, "Moderator", "Community controls", "")}
+        ${tile("#/m/gyanreview", "ms-t-rev", IC.checklist, "Ganga Review", "Review submissions", "")}
+        ${tile("#/m/admintalks", "ms-t-talk", IC.bubbles, "Admin Talks", "Internal discussion", "admintalk")}
+        ${tile("#/stats", "ms-t-stat", IC.bars, "Statistics", "Usage and activity", "")}
+      </div>`;
+
+    const wrap = el(`<div class="ms-wrap${mod ? " ms-mod" : ""}" id="ms-wrap">
+      <div class="ms-scrim" id="ms-scrim"></div>
+      <div class="ms-card" id="ms-card" role="dialog" aria-modal="true" aria-label="More">
+        <span class="ms-grip" aria-hidden="true"></span>
+        <div class="ms-head">
+          <div class="ms-headtxt">
+            <div class="ms-title">More</div>
+            <div class="ms-sub2">${mod ? "Member and role-specific features" : "Member features"}</div>
+          </div>
+          <button class="ms-x" id="ms-x" type="button" aria-label="Close">&#10005;</button>
+        </div>
+        <div class="ms-body">${forEveryone}${roleHalf}</div>
+      </div>
+    </div>`);
+    document.body.appendChild(wrap);
+    const card = wrap.querySelector("#ms-card");
+    // The dots are the same [data-*-badge] hooks the drawer and the Library use,
+    // so the modules paint them — but these spans did not exist at the last
+    // count change, hence the repaint on open.
+    [BROADCAST, ADMINMSG, ADMINTALK].forEach((m) => {
+      try { if (m && m.refreshBadges) m.refreshBadges(); } catch {}
+    });
+
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    let closing = false;
+    function close() {
+      if (closing || !wrap.parentNode) return;
+      closing = true;
+      _moreClose = null;
+      document.removeEventListener("keydown", onKey);
+      wrap.classList.add("ms-out");
+      // Match .ms-card's exit animation. Not transitionend/animationend: neither
+      // fires under prefers-reduced-motion, where there is no animation at all.
+      setTimeout(() => { if (wrap.parentNode) wrap.remove(); }, 200);
+    }
+    _moreClose = () => { close(); return true; };
+    document.addEventListener("keydown", onKey);
+    wrap.querySelector("#ms-x").addEventListener("click", close);
+    wrap.querySelector("#ms-scrim").addEventListener("click", close);
+
+    // Swipe down to dismiss. Tiles are <button data-href> rather than <a> so a
+    // drag that ends on one can be told apart from a tap without fighting a
+    // link's default navigation.
+    let y0 = null, dy = 0, dragged = false;
+    card.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      y0 = e.touches[0].clientY; dy = 0; dragged = false;
+      card.style.transition = "none";
+    }, { passive: true });
+    card.addEventListener("touchmove", (e) => {
+      if (y0 == null) return;
+      dy = e.touches[0].clientY - y0;
+      if (dy > 6) dragged = true;
+      card.style.transform = "translateY(" + Math.max(0, dy) + "px)";
+    }, { passive: true });
+    card.addEventListener("touchend", () => {
+      if (y0 == null) return;
+      card.style.transition = "";
+      card.style.transform = "";
+      y0 = null;
+      if (dy > 70) close();
+    });
+
+    // One delegated handler: close first, then navigate — the handoff is
+    // explicit that a tool must not open a second sheet on top of this one.
+    wrap.addEventListener("click", (e) => {
+      const b = e.target.closest(".ms-tile");
+      if (!b || dragged) return;
+      hapticTick();
+      close();
+      go(b.dataset.href);
+    });
+  }
+
+  // ---- जीवन्त Library (#/m/menu) -------------------------------------------
+  // What the landing bar's Menu tile opens. Replaces the slide-out drawer as
+  // the way into the app's sections; the drawer survives behind the More tab
+  // (see the tab bar's own comment) because this screen deliberately shows only
+  // what the operator's menu.png shows — no Settings, no admin tools.
+  //
+  // ⚠ THE DOTS ARE NOT PAINTED HERE. Each `[data-*-badge]` span is the same
+  // hook the drawer rows use, so SPECIAL/LETTERPAD/SATSANG/ANUBHUTI's own
+  // refreshBadges() finds them and toggles `hidden` — no new painting code and
+  // no second thing to forget when a count changes. They set textContent to a
+  // number too; `.mm-dot` is font-size:0, which is what makes it a DOT rather
+  // than a count (operator, 2026-08-25). Wanting numbers back is one CSS line.
+  // Because these spans are created per visit, the modules must be asked to
+  // repaint on mount — an element that did not exist at the last refresh is
+  // otherwise left hidden until something changes.
+  function menuPage() {
+    const tile = (href, icon, name, sub, badge) => `
+      <a class="mm-tile mm-t-${name.toLowerCase().replace(/[^a-z]/g, "")}" href="${href}">
+        <span class="mm-ico">${icon}</span>
+        <span class="mm-name">${name}</span>
+        <span class="mm-sub2">${sub}</span>
+        ${badge ? `<span class="mm-dot" data-${badge}-badge hidden></span>` : ""}
+      </a>`;
+    const row = (href, cls, icon, name, sub, badge) => `
+      <a class="mm-row ${cls}" href="${href}">
+        <span class="mm-ico">${icon}</span>
+        <span class="mm-rowtxt"><span class="mm-name">${name}</span><span class="mm-sub2">${sub}</span></span>
+        ${badge ? `<span class="mm-dot" data-${badge}-badge hidden></span>` : ""}
+      </a>`;
+
+    const node = el(`<div class="mm">
+      <header class="mm-head">
+        <button class="mm-back" id="mm-back" type="button" aria-label="Back">‹</button>
+        <!-- Account, left of the title: a circle carrying the first letter and
+             nothing else (operator, 2026-08-25). Tapping it reveals the full
+             name and Sign out. It is the ONLY way into the account since the
+             slide-out drawer lost its entry point, so don't remove it without
+             putting the account somewhere else first. -->
+        <button class="mm-acc" id="mm-acc" type="button" aria-label="Account" aria-expanded="false"></button>
+        <div class="mm-titlewrap">
+          <h2 class="mm-title">जीवन्त Library</h2>
+          <!-- ⚠ OPERATOR COPY, verbatim (2026-08-25). It replaced "Explore.
+               Reflect. Grow." — don't restore that from git history, and don't
+               "correct" the Devanagari or re-word the English line. -->
+          <div class="mm-mantra">मृत्योर्मा अमृतं गमय</div>
+          <div class="mm-mantra-en">Lead me from death to immortality</div>
+        </div>
+        <span class="mm-headpad" aria-hidden="true"></span>
+      </header>
+
+      <div class="mm-searchrow">
+        <button class="mm-search" id="mm-search" type="button">
+          ${IC.search}<span>Search Guru's msgs, date, or word…</span>
+        </button>
+        <button class="mm-filter" id="mm-filter" type="button" aria-label="Search by date">${IC.sliders}</button>
+      </div>
+
+      <h3 class="mm-h">Guru's msgs</h3>
+      <div class="mm-grid3">
+        ${tile("#/?latest=1", IC.sun, "Daily", "Today's Message", "")}
+        ${tile("#/m/special", IC.star, "Special", "Special Occasions", "special")}
+        ${tile("#/m/letterpad", IC.pen, "Letterhead", "Letters from Guru", "letterpad")}
+      </div>
+
+      <a class="mm-anush" href="#/m/anushthan">
+        <span class="mm-anush-txt">
+          <span class="mm-anush-name">Anushthan</span>
+          <span class="mm-sub2">45-day spiritual practice period</span>
+        </span>
+        <span class="mm-anush-lotus" aria-hidden="true"></span>
+        <span class="mm-anush-btn">View</span>
+      </a>
+
+      <h3 class="mm-h">Samuhik Satsang</h3>
+      <div class="mm-grid2">
+        ${row("#/m/community", "mm-r-satsang", IC.people, "Samuhik Satsang", "Join Satsang", "satsang")}
+        ${row("#/m/anubhuti", "mm-r-anubhuti", IC.bubble, "Anubhuti Sharing", "Share Experiences", "anubhuti")}
+      </div>
+
+      <h3 class="mm-h">Important Links</h3>
+      <div class="mm-grid2">
+        ${row("#/m/dhyan", "mm-r-diary", IC.book, "Personal Diary", "Your Private Space", "")}
+        ${row("#/random", "mm-r-lucky", IC.bouquet, "Your Lucky Msg", "Receive Blessings", "")}
+      </div>
+    </div>`);
+
+    pageFrame("जीवन्त Library", node, "m-page-lib");
+    document.body.classList.add("m-libpage");   // …AFTER pageFrame — setChrome clears it
+
+    node.querySelector("#mm-back").addEventListener("click", goBack);
+    wireAccountCircle(node);
+    node.querySelector("#mm-search").addEventListener("click", () => go("#/m/search"));
+    // The sliders mean "search by date", which is a tab on the same page — the
+    // Date tab opens its calendar on entry, so this lands the user straight in
+    // the picker rather than on a page with three tabs to read.
+    node.querySelector("#mm-filter").addEventListener("click", () => go("#/m/search?by=date"));
+    // Repaint the dots for spans that did not exist at the last count change.
+    [SPECIAL, LETTERPAD, SATSANG, ANUBHUTI].forEach((m) => {
+      try { if (m && m.refreshBadges) m.refreshBadges(); } catch {}
+    });
+  }
+
   // ---- router --------------------------------------------------------------
   const PAGE_TITLES = { favorites: "Favorites", browse: "Browse by Date", random: "Your Lucky Msg for Today",
     stats: "Statistics", settings: "Settings", about: "Our Goal", help: "Help & Support",
@@ -17098,6 +17513,7 @@ const MOBILE_UI = (() => {
       if (seg[0] === "admintalks") return adminTalksPage();      // desktop-style link → same page
       if (seg[0] === "dhyan") return dhyanPage();                // desktop-style link → same page
       const p = seg[1];
+      if (p === "menu") return menuPage();
       if (p === "search") return searchPage(params);
       if (p === "nomsg") return renderDateMessage(params.get("d"));
       if (p === "community") return communityPage(params);

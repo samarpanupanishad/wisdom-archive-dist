@@ -1552,7 +1552,7 @@ body.m-mode .content {
   max-width: 100%;
   min-height: 100vh;
 }
-body.m-mode.m-viewing .content { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+body.m-mode.m-viewing .content { padding-bottom: calc(var(--m-bot-h) + env(safe-area-inset-bottom)); }
 /* Home/entry screens: the title bar (.m-top) is swapped for the slimmer
    .m-vpanel (date left + fav/share/download right) below — still a real
    layout bar, not an overlay on the image, so the top inset here matches
@@ -1606,7 +1606,15 @@ body.m-mode.m-notop .m-top { display: none; }
 }
 .m-top .m-topdate[hidden] { display: none; }
 .m-top .m-topdate::after { content: " ▾"; font-size: 10px; opacity: .7; }
-.m-top .m-topdate:active { background: #e7dbf7; }
+/* Same raised key as the viewer panel's pill, in this bar's purple. */
+.m-top .m-topdate {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 0 #ddc9f2, 0 4px 9px rgba(106, 27, 154, .15), inset 0 1px 0 rgba(255, 255, 255, .85);
+}
+.m-top .m-topdate:active {
+  background: #e7dbf7; transform: translateY(1px) scale(.97);
+  box-shadow: inset 0 2px 6px rgba(106, 27, 154, .2);
+}
 .m-top.has-date .m-title { font-size: 12.5px; letter-spacing: .02em; }
 /* The action slot normally holds its 42px even when empty, to keep the centred
    title from jumping between pages. A bar with a date pill isn't centred
@@ -1625,39 +1633,425 @@ body.m-mode.m-notop .m-top { display: none; }
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
 body.m-mode.m-notop .m-vpanel { display: flex; }
-.m-vpanel .m-vdate { color: #c2185b; background: #fce4ec; font: 700 13px var(--sans); padding: 5px 12px; border-radius: 999px; }
+/* The date reads as a RAISED key, not a printed chip (operator, 2026-08-25):
+   it sits 1px proud of the bar on a hard shadow with a white top edge, and
+   presses in when tapped — see the press-physics block below. */
+.m-vpanel .m-vdate {
+  color: #c2185b; background: #fce4ec; font: 700 13px var(--sans);
+  padding: 7px 14px; border-radius: 999px; border: 1px solid #f6cdda;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 0 #f0c2d3, 0 4px 9px rgba(194, 24, 91, .17), inset 0 1px 0 rgba(255, 255, 255, .85);
+}
+.m-vpanel .m-vdate:active {
+  transform: translateY(1px) scale(.97);
+  box-shadow: inset 0 2px 6px rgba(194, 24, 91, .22);
+}
+/* Display-only variant (Important Updates): raised, but nothing happens when
+   you touch it — so it must not perform a press either. */
+.m-vpanel .m-vdate.m-datepill-flat:active {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 0 #f0c2d3, 0 4px 9px rgba(194, 24, 91, .17), inset 0 1px 0 rgba(255, 255, 255, .85);
+}
 
-/* ---- bottom bar (viewer pages only) ---- */
+/* ---- bottom bar (viewer pages only) — TWO TIERS ------------------------
+   Tier 1: Join Satsang, full width. Tier 2: language + Menu.
+   ⚠ --m-bot-h is the bar's height MINUS the safe-area inset, and it is the
+   single source of that number: the content padding, the reading feed, the
+   single-message view, the section reader's band and the date picker's
+   ceiling all subtract it. Change the bar's padding or either tier's height
+   and you must change --m-bot-h in the same edit, or the image band and the
+   bar disagree — which shows up as the picture sliding UNDER the bar. */
+:root { --m-bot-h: 129px; }   /* 8 + 58 (Join) + 9 (gap) + 46 (row) + 8 */
 .m-bottom {
   position: fixed; inset: auto 0 0 0; z-index: 600;
-  height: calc(64px + env(safe-area-inset-bottom));
+  height: calc(var(--m-bot-h) + env(safe-area-inset-bottom));
   padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
-  display: none; align-items: center; justify-content: space-evenly; gap: 6px;
+  display: none; flex-direction: column; align-items: stretch; justify-content: center; gap: 9px;
   background: var(--surface); border-top: 1px solid var(--border);
   box-shadow: 0 -4px 18px rgba(40, 30, 60, .08);
 }
 body.m-mode.m-viewing .m-bottom { display: flex; }
-/* icon-only nav buttons — Menu · Community · Home, each its own coloured glyph
-   (a companion palette to the orange theme; the language toggle keeps orange). */
+
+/* Tier 1 — the Join Satsang card. The round arrow is a decorative <span>
+   inside the button, so the entire card is the tap target (operator's
+   requirement); the padding-right is what keeps the centred label from
+   running under it. */
+.m-join {
+  position: relative; flex: none; height: 58px; width: 100%;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 62px 0 18px;
+  border: 1px solid #f2d3e0; border-radius: 16px; background: #f9e9f0;
+  color: #bd1762; cursor: pointer;
+  box-shadow: 0 2px 0 #eec3d6, 0 5px 14px rgba(189, 23, 98, .14), inset 0 1px 0 rgba(255, 255, 255, .8);
+}
+.m-join-txt { display: flex; flex-direction: column; align-items: center; gap: 1px; line-height: 1.15; min-width: 0; }
+.m-join-t { font: 700 17px var(--sans); letter-spacing: .01em; }
+.m-join-d { font: 500 12.5px var(--sans); color: #c4568e; }
+.m-join-d[hidden] { display: none; }
+.m-join-go {
+  position: absolute; right: 9px; top: 50%; margin-top: -21px;
+  width: 42px; height: 42px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #bd1762; color: #fff; box-shadow: 0 2px 7px rgba(189, 23, 98, .38);
+}
+/* Unread satsang count, on the arrow's shoulder. Same [data-satsang-badge]
+   hook as the drawer row — until now the mobile bar had nowhere to show it. */
+.m-join-badge {
+  position: absolute; top: 3px; right: 4px;
+  min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
+  background: #e0483e; color: #fff; font: 700 11px var(--sans);
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid #f9e9f0;
+}
+.m-join-badge[hidden] { display: none; }
+
+/* Tier 2 — language (flexes) + Menu (fixed), as drawn. */
+.m-botrow { display: flex; align-items: stretch; gap: 9px; height: 46px; flex: none; }
 .m-navbtn {
   display: flex; align-items: center; justify-content: center;
   width: 46px; height: 46px; border-radius: 50%; flex: none;
   border: none; background: none; padding: 0; cursor: pointer;
 }
 .m-navbtn:active { background: var(--accent-soft, #f6e7dc); }
-.m-menu-btn { color: #7e57c2; }   /* purple */
-.m-comm-btn { color: #4fa6e8; }   /* light blue */
-.m-home-btn { color: #f48fb1; }   /* light pink */
+.m-menu-btn { color: #7e57c2; }   /* purple (drawer/menu colour elsewhere) */
+/* …but on the bottom bar it is the orange tile from the drawing: icon over
+   label, sized to sit beside the language pill without squeezing it. */
+.m-bottom .m-menu-btn {
+  flex: 0 0 104px; width: auto; height: 46px; border-radius: 14px;
+  flex-direction: column; gap: 1px;
+  background: var(--accent-soft); color: #c2571d;
+  box-shadow: 0 2px 0 #f2ddc9, inset 0 1px 0 rgba(255, 255, 255, .7);
+}
+.m-bottom .m-menu-btn:active { background: var(--accent-soft); }
+.m-menulabel { font: 700 12px var(--sans); }
 .m-langseg { display: flex; border: 1px solid var(--border); border-radius: 24px; overflow: hidden; flex: none; }
 .m-langseg button {
   border: none; background: var(--surface); color: var(--muted);
   font: 600 15px var(--sans); padding: 10px 16px; cursor: pointer;
 }
 .m-langseg button.active { background: var(--accent); color: #fff; }
+/* On the bottom bar only (the message-section pills elsewhere keep the filled
+   orange tab), the selected language is a RAISED WHITE pill inside a sunken
+   track — the same physical language as the date pill and the two tiles. */
+.m-bottom .m-langseg {
+  flex: 1; min-width: 0; height: 46px; padding: 4px; gap: 4px;
+  border-radius: 14px; background: #f4f1ec; border: 1px solid var(--border);
+  box-shadow: inset 0 1px 3px rgba(40, 30, 60, .07);
+}
+.m-bottom .m-langseg button {
+  flex: 1; min-width: 0; padding: 0; border-radius: 11px;
+  background: transparent; color: var(--muted); font: 600 14.5px var(--sans);
+}
+.m-bottom .m-langseg button.active {
+  background: var(--surface); color: #bd1762;
+  box-shadow: 0 1px 0 rgba(40, 30, 60, .05), 0 2px 6px rgba(40, 30, 60, .13);
+}
+.m-bottom .m-langseg button:disabled, .m-bottom .m-langseg button.m-lang-off { background: transparent; }
 /* Greyed out when the message on screen has no English version (see
    setEnglishAvailable in app.js) — Hindi-only posts are normal, not an error. */
 .m-langseg button:disabled, .m-langseg button.m-lang-off {
   opacity: .35; cursor: default; background: var(--surface); color: var(--muted);
+}
+
+/* ---- press physics (both panels) --------------------------------------
+   Every control in the top and bottom panels is drawn as a raised key — a
+   1-2px lift, a hard shadow directly beneath it and a white top edge — and
+   PRESSES IN when touched: it sinks by the height of its own lift, shrinks
+   slightly, and its shadow inverts to an inset. The buzz is fired from JS on
+   pointerdown (see the delegated listener in app.js) so the two land together.
+   ⚠ Keep the lift and the pressed translate in step per element: an element
+   whose lift is 2px must sink 2px, or pressing it appears to move it. */
+.m-join, .m-bottom .m-menu-btn, .m-bottom .m-langseg button,
+.m-vpanel .m-vdate, .m-top .m-topdate, .m-vact {
+  transition: transform .12s var(--ease), box-shadow .12s var(--ease), background .12s var(--ease);
+}
+.m-join:active {
+  transform: translateY(2px) scale(.985);
+  box-shadow: inset 0 2px 7px rgba(189, 23, 98, .22);
+}
+.m-join:active .m-join-go { box-shadow: none; }
+.m-bottom .m-menu-btn:active {
+  transform: translateY(2px) scale(.97);
+  box-shadow: inset 0 2px 6px rgba(194, 87, 29, .24);
+}
+.m-bottom .m-langseg button:active { transform: scale(.93); }
+.m-bottom .m-langseg button.active:active {
+  transform: translateY(1px) scale(.95);
+  box-shadow: inset 0 2px 5px rgba(40, 30, 60, .16);
+}
+.m-vact:active { transform: scale(.88); box-shadow: inset 0 1px 5px rgba(40, 30, 60, .25); }
+@media (prefers-reduced-motion: reduce) {
+  .m-join, .m-bottom .m-menu-btn, .m-bottom .m-langseg button,
+  .m-vpanel .m-vdate, .m-top .m-topdate, .m-vact { transition: none; }
+}
+
+/* ==== जीवन्त Library (#/m/menu) and its four-tab bar =====================
+   The screen the landing bar's Menu tile opens (operator's menu.png, 2026-08-25).
+   ⚠ Its palette is menu.png's — pastel tints per tile, a purple title — not the
+   app's orange theme. That is deliberate and was chosen from the mock; don't
+   "correct" it back to var(--accent).
+   ⚠ `.m-tabbar` is NOT `.m-tabs` — that class is already Search By's
+   Word|Date|Range segment, and reusing it here would restyle that control. */
+:root { --m-tab-h: 66px; }
+.m-tabbar {
+  position: fixed; inset: auto 0 0 0; z-index: 600;
+  height: calc(var(--m-tab-h) + env(safe-area-inset-bottom));
+  padding: 5px 6px calc(4px + env(safe-area-inset-bottom));
+  display: none; align-items: center; justify-content: space-around; gap: 4px;
+  background: var(--surface); border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 18px rgba(40, 30, 60, .07);
+}
+body.m-mode.m-libpage .m-tabbar { display: flex; }
+body.m-mode.m-libpage .m-top { display: none; }
+body.m-mode.m-libpage .content {
+  padding: env(safe-area-inset-top) 0 calc(var(--m-tab-h) + env(safe-area-inset-bottom));
+  background: var(--surface);
+}
+.m-tab {
+  flex: 1; min-width: 0; border: none; background: none; border-radius: 14px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 5px 2px; color: #6f6a7a; font: 600 11px var(--sans);
+  text-decoration: none; cursor: pointer;
+  transition: transform .12s var(--ease), background .12s var(--ease);
+}
+/* One fixed icon box for all four, so the labels sit on a straight line even
+   though More's disc is half again as tall as the line icons. */
+.m-tab-ico { height: 32px; display: flex; align-items: center; justify-content: center; flex: none; }
+/* …and one size for the glyphs inside it. The sun is shared with the Daily
+   TILE, where it is drawn larger; sizing here rather than in the SVG is what
+   lets one icon serve both without a second copy. */
+.m-tab-ico > svg { width: 23px; height: 23px; }
+.m-tab-disc > svg { width: 19px; height: 19px; }
+.m-tab:active { transform: scale(.92); background: #f6f2ee; }
+.m-tab-more { color: #6d28a8; }
+/* The heart is red because it IS a favourite (operator, 2026-08-25): red
+   outline at rest, solid red while pressed. When this bar starts persisting
+   across the screens it links to, that same fill becomes the selected state. */
+.m-tab-fav { color: #e53935; }
+.m-tab-fav:active svg { fill: #e53935; }
+.m-tab-disc {
+  width: 32px; border-radius: 50%; background: #6d28a8; color: #fff;
+  box-shadow: 0 2px 7px rgba(109, 40, 168, .32);
+}
+.m-tab-more:active .m-tab-disc { box-shadow: none; }
+
+.m-page-lib { max-width: 640px; margin: 0 auto; }
+.mm { display: flex; flex-direction: column; padding: 4px 16px 24px; }
+.mm-head { position: relative; display: flex; align-items: flex-start; gap: 4px; padding: 4px 0 18px; }
+.mm-back {
+  width: 32px; height: 36px; flex: none; border: none; background: none;
+  color: #3f1259; font: 300 30px/1 var(--sans); border-radius: 50%; cursor: pointer;
+}
+.mm-back:active { background: #f2ecf8; }
+.mm-headpad { width: 68px; flex: none; }   /* = back 32 + gap 4 + circle 32 */
+.mm-titlewrap { flex: 1; min-width: 0; text-align: center; }
+.mm-title { margin: 0; font: 700 26px/1.2 var(--serif); color: #3f1259; }
+/* The mantra under the title (operator copy, 2026-08-25 — it replaced
+   "Explore. Reflect. Grow."). The Devanagari needs the loose line-height:
+   at 1.2 the matras above and the nukta below both clip. */
+.mm-mantra { margin-top: 5px; font: 700 14.5px/1.55 var(--sans); color: #c62828; }
+.mm-mantra-en { margin-top: 1px; font: italic 500 11.5px/1.35 var(--sans); color: #6b3fa0; }
+
+.mm-searchrow { display: flex; gap: 9px; margin-bottom: 24px; }
+.mm-search {
+  flex: 1; min-width: 0; height: 50px; padding: 0 15px; border-radius: 15px;
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  background: var(--surface); border: 1px solid var(--border); color: #8b8794;
+  font: 500 14px var(--sans); box-shadow: 0 1px 2px rgba(38, 28, 60, .05);
+}
+.mm-search span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mm-filter {
+  flex: none; width: 50px; height: 50px; border-radius: 15px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface); border: 1px solid var(--border); color: #6f6a7a;
+  box-shadow: 0 1px 2px rgba(38, 28, 60, .05);
+}
+.mm-h { margin: 0 0 11px; font: 700 16.5px var(--sans); color: var(--text); }
+.mm-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-bottom: 16px; }
+.mm-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-bottom: 26px; }
+.mm-tile, .mm-row {
+  position: relative; border-radius: 16px; color: var(--text); text-decoration: none;
+  box-shadow: 0 1px 2px rgba(38, 28, 60, .06);
+}
+.mm-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 20px 6px 16px; text-align: center;
+}
+.mm-row { display: flex; align-items: center; gap: 9px; padding: 16px 11px; }
+.mm-rowtxt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.mm-ico { flex: none; display: flex; align-items: center; justify-content: center; }
+.mm-name { font: 700 14px var(--sans); }
+.mm-row .mm-name { font-size: 12.5px; line-height: 1.25; }
+.mm-sub2 { font: 500 11.5px var(--sans); color: #8b8794; line-height: 1.25; }
+/* Tile tints + glyph colours, straight from menu.png. */
+.mm-t-daily { background: #fdf5e6; } .mm-t-daily .mm-ico { color: #eda600; }
+.mm-t-special { background: #fce9f1; } .mm-t-special .mm-ico { color: #c2185b; }
+.mm-t-letterhead { background: #faf6f2; } .mm-t-letterhead .mm-ico { color: #6a5a4e; }
+.mm-r-satsang { background: #f2ecfa; } .mm-r-satsang .mm-ico { color: #6b3fa0; }
+.mm-r-anubhuti { background: #eef7f4; } .mm-r-anubhuti .mm-ico { color: #0e8074; }
+.mm-r-diary { background: #fdf1e4; } .mm-r-diary .mm-ico { color: #b4712a; }
+.mm-r-lucky { background: #f2f7e2; } .mm-r-lucky .mm-ico { color: #6f9235; }
+
+.mm-anush {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  padding: 16px 13px; margin-bottom: 26px; border-radius: 16px; overflow: hidden;
+  color: var(--text); text-decoration: none;
+  background: linear-gradient(100deg, #fdf0dd 0%, #fbdfe9 60%, #f6cddf 100%);
+  box-shadow: 0 1px 2px rgba(38, 28, 60, .06);
+}
+.mm-anush-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-right: 44px; }
+.mm-anush-name { font: 700 18px var(--serif); color: #9b1b3f; }
+.mm-anush .mm-sub2 { color: #7d5a63; }
+/* The lotus is a real cut-out photograph, chosen by the operator (2026-08-25)
+   over the drawn SVG that was here before — don't restore that from git.
+   ⚠ INLINED as a base64 data URI, and it has to be: OTA publishes ship only
+   app.js / styles.css / wa-supabase.js / vendor (see mobile/publish_update.py's
+   UI_FILES), so a file in assets/ would 404 on every installed phone until a
+   whole new APK. WebP with alpha, 160x125 for a 80x62 slot (2x), ~8.9KB — the
+   source JPEG had a white background, keyed out by flood-filling inward from
+   the border (a global whiteness threshold also punches holes in the white
+   highlights inside the petals). Regenerate with scratchpad/lotus_prep.py.
+   Taken OUT of the flex row and pinned to the banner's floor so it can overlap
+   the View pill and be cropped by the banner's own overflow:hidden rather than
+   pushing the layout around. pointer-events:none keeps the banner one tap
+   target. */
+.mm-anush-lotus {
+  position: absolute; right: 81px; bottom: -3px; z-index: 0;
+  width: 80px; height: 62px; pointer-events: none;
+  background: no-repeat center/contain
+    url("data:image/webp;base64,UklGRsAiAABXRUJQVlA4WAoAAAAQAAAAnwAAfAAAQUxQSKYIAAAB8EZb2zFJ2rZt+34kqmrY1bZt27ZtlO3LVtu2bbv7KtuVxbZRzmPftx8RcZ6REWecvyNiApChio4bdkALiggyXkSkRQQ7fvrFJxcAUh5RZL4AgLaAhj1nk+QoqJRDgPqeXSTb0KpbNwGkXIoTf6J5dB8JSCoB2h/63BfjN4Zkl0jbp5YsfHhfQMojssd0RpLuPqJO0wjkzBkrSI6BZpfiXJJcfkMnqJRBcfIPdBa6+1HQRAL0fGA1adGbNoRklUibjzx6JKcdDEgq0dbvMLK4ceI2kAQKnD6PNCeNY6BZpbgwOkk3Lru6FbSUFAk4udm8BI2v1CdQtHtgNc1J0tm0MSSz7mNkoZG310OLiAAKKLadSmNptzXHQosIsP/LpLG4cRA0s+4oQTc+sjMUgADtAVVsOp3GpMaXG6RAgNN+pDkTvNBaMkpwbynSuOwgKBSb3DL70X2A1tcxMrH7mqOgkDq0v28ljQmdP24JySTFFsvopRj5+YGoF72H5PcntHkqGlMax24S6oCuT5HOxBaHQjNq11WJaFx2EOQfFi3ypwmR6Y3nAt36Tqc5k0f+EyGrliejcenF17HQWVa3j87uP510pjU+3Voy6q9uTO4kvYBu5ShuxtTOHzaHZpI8yJiCbsYWdTNjGZ3fbZFRuD1dtVocVEwgKtkhaPsGLRsir4dCg6JQJSsUu66iZ4Nz2rpBAAjq9uuCzFTstiI7ft4UdQcfNey9N975ddyF7SFVIKKaTndcnhX05uuPeWY1i/ve0CooFFGVJAHHrfGsKO5uZt5s/6gCwSU3HLYDClVVigg2e5vGzHQ3Z9HIZypPsf9K8vPnn79w/44AoIXS5jU6szjysSqQ0Wx2kowfP3Xxvp1QqHus8qx6vBr+SKPH6CQZP37y4r0O7IJdVzI/4PCV7iTpFlm41j598O3IbK4KQZtxtIJCt8hMr5LGsUkK3S1avvi/p8j0apnMWvJY5QF66mJ67XiqCgT4jFYrjDdXRcPLXiucaw6sAgRcSq8Zcd9qUNlqEa02GMd2h1SaaEDD+FoR+SgUFa4Aet7uzproHq+VSlPUbT5kLmuls3kPVJYo9nnue9JrhXHSOpBKEsHBX5JurBl+IxQVLMDRX7DZWTOd8XBJJ6XLIGi8dRWdNdQ4rTskgYiGICitqQSNd5DGWup2LRTFNQQU7d6jaE9Fug53MDprqfPnbaWIqABo22WHYYOva1q8aNGiRQuXPrqfSLKAixidNdX4UJ0IRAOAnYcOfnfx10x8T10K0XvdWFOdP+8LlQCg7Zk3fcNCi+ZFLdolCIlU9v/FvbYYn9M6BdqeO/g9ktHMnaWNs9aFJKrDCBprq8deAHYZ8B5Jj86UxkFQJBXsO9+9tjiX79X29Bu+IT2aM61xfk9IEsGei+mstdY0w0kzZ3q3FadBkTRgJJtZk81Z1sgnIJJMh3msQW7O8jp/OVAUSaUO/ViLyu628kwokgqw7VO0/GB8CCKJEP78LXOk8dWuKkjc8FfS8oPbT/tBkXyDH9yYHyMHIyBlx/ui54fIl7uKpEHbD2h5wfhyFwjSCnb5lp4PIl/pCkU66dCUE4yzekBRBuz+XT4wvrk7BGUMGMXIHGhcvg8C8ovztwskIL84p+4LQY4xjm2FoOUanQdIHz8akDINywlcef32UCkD2r1HywM08puTgCCppPHxnECP/PGC1oCmCbhkbU4gnXz/7NZQSSZY/2t6TqCTfGIrQBNBGq73mBdII7+6oBGaDB2nM3peII3+3m4ISSA4cDJpuYHuHHc0JAmADv/9ldHc8wEZ+cvJCIkEOHgpSY/m7jmAkT/tD00CEewxZuwS5kfjZ7tDkwAKtFv30tFjlzQtsjzAyGdUJBFUAaBD9+7drqPlAI/LT0UKQEQDAFyQC+hc0AOSolBU2nySD2i8t74cEPm7u+cC91UHQ9MJOs2iMR8aX+gi6RTHraTnBBqvQUgl6DqHlhv88XpNJ3IdPS+4rzgYmkYD2o51ywk0PtdB0gCKS0nPCTT2Qspw2THQtvd4boj+p2Qi4bnHUIfWk2g5wTmpWyIA7dYXoMPHOWLp+mkA1A+dtZx50blovRQSsOVbxvzoXLBuMgFOmkS3/GD8T0gkqBvmNOZH96+3RlLBxq8bjTnS+D9oApEN7qU7c6T7V9skCriWzc48afwvFKUF9a+6MU+6f7UNJNG2XzFfGP8nioQB19KYJ43fbwtJdrXnCncbJIKEglavMk8YbTAEiTX8x/ODR8YhkBQBlzM3mHP8URBBcsF239DygdFe2gKK1IKBzdHzgHFJP4GiDFL/NptrnzdzwtaAoJwiW01irHFuzgmbIwjKq9hyEmMGmFWJmxlp/9gAirIHbDmZzV5lbqRZ5bkZSa6eOhhQtGDAlpNp5tXkZNM80ryy3EiunvbSFce3hShaNGCrd5yMZl4dHrnmzxusO3oBGc0rxo1cNOnvR7WtAyBoaUHj6e+w0KrBybW9AGCjp9aSjOaV4JH84sUtWgFAUEHLC9DqjCv/OWst6RXnjK+dAFFRhCP/MnklSSu70604ufovmwZAVASVKQoAHU592xnNK8q4tlcdBAAEQNsj/zJlCcvuxpJL/nEcABFUsmgQoGHAVySjWTQzr4TItb2AgOKqANpuck2/a55aOHvOnPnjh/Xu26ew79V3N82eTy6ZPWd208u9+mwJqKIKRYHt+73B0mbeUsbmXlBBQlFFYV3nTp06dW6HpJ07dr+436btO3fq3AhAFVUqArQ6c+jAQf3/NXf+FyTNSS+dyp1jT4EIUoqEEFBcQ2kkDkFQxRJQvGunrfu94mSMLB3NE1qM9Dc2gKK8UhxJRUSDFEW1i4YQggBAw8lvOLl80ZLCRSuZ9ps+jVDUbhEJQP2pY0Yf2rlnjx49enY5esTjyxYuKly4aP5/hg3bDhDUeFGkbFh/vZLrAIAIshpWUDgg9BkAADBdAJ0BKqAAfQA+ORaJQyIhIRhq31wgA4S2AGcbEGvPKL7t+VX5VfKpXP7n+HP7L+2Hy07COqvL06C/7vo//1Xss/S/sCfp3+w/t+/5/rZ/cL1GftB+1XvB+kT+yeoJ/Xv8R1nP7i+wl+xHpt/tZ8Gn7cft38Bn82/tf/v6wD0AOxE/m/4Me2nvs+5/jL+5fq342/ePuH6+OSvro1Pvl34i/fedHg38f9RH8p/oP+l9Kf6P/d9+Vab0GvcX6n/r/uH9Sr/A9I/st/wPcA/UL/gf2rzrP9h5MnmXsCfy7+sf8j+5f479dfpq/tf/L/sPyY90P6D/kf+5/l/gG/kn9E/1P93/xn/o/z3////H3p+zf9xPZE/Vd4uoUwQ8YN721w2ClkF3P+4WObcdmHqUd6qOA/DHZDcGnbjyWQviSkDHn4YRy7lUYt57NS7dj06jry7cRS/kYm2wdZ3nGJPQ1JsTK4Yf0RT5IwLRclsYv/kqeIlQrDrY/mj6vnT5krE4MMXlRf4FDlZAY4r+uoj6cjyJGv8MAK5okvNk+e20M+CSte99qz6Ze+0sbbWvqO+zosJ0An1SC3ixui9vH1NjQUhPChaH4ZxygNNDN3hKZ58vZgDhfzi9ng1RXz1H0ITVGTgY2yPeXqnOjUyLALYeYriZJf8FkhNGoGzC/c++NjF2jrgXlmT52l+xVBPwbzbyR0WlJh6xYG36h1m+My2y5GSD6wcnYXOvuKMYonF3Lfl0qjoi+2xrXUGw+NTKlFwjLQzDoYizIwh5YIv6YZHfV14wQ+AHfEWTn9EX5z8k3as/JR5K1PoO5tJJ1TVXItYI4FxyywaNMB5yRvWT73ZNyr9BMom0luiRdFFj5hn/+uNuAGyQcCrYCC8peB8TAUOrgr5Uq0DpV2GqsE4W68XEFmTiSW+PPHc6vPOKUnzqqJxGZaFwpXQCqd/yptX02cH6hEsQWP4MoHbZ9PurzTSA/1ZDC33H3AiY648O7DZgf5FYKwAA/v9gGMJbxUywYGESl6Jd8rbGz0w5/nWP77/C3HnZob5vMoA49VrHR7P0RdK+Z0Oh0fMMz3F+HkmPxe0CBvTIxE47XUHf40NCkr6H2RaPJAqwMcurzfhfCMUf9o9+OZVAxltTVpJhn8IuWj3SIhMtSZoymv21mRLU4dCZj/TasjUBxZV0KRCaa8oD6iE4jovW32lgmWvMglU8xgteEbzcBiQrKticbT8C5p8WsR5fI7XqLtBoMCSI+RR8vDiNEO5OtbX2us8HsCOvYHDAarancUALEkpKItW8/M8ctg0IFWssCVYW6WoaG/Zq85FdOFdMH+HQmqo+fDXT2bguqixELlbtXuDkNUEfO3GrdIBS0rVbOmX36loCHOX/Uo/PiwEpvHBZCjOobPZeVA0pjOM3NGsIZRDVST3RCEEnTAXeKUWUkVy/1Z0x7LXizP+WaHW/o1gYZqbFTTI8mtTwiuee9266tyStGtiIz5q+KicOw62P8j+X+YLk5LoGX36vY3t6CT5eSHzXDJoIF8ePjE3ym4WxZ4SvqtE+EOvS5O/O8f4JODTCkr5waHR8mj+CMxAaZ9cap5rG1luwm17SBYaUeERz3VrV8OIibOIVo9Ld+VPA4m/85IfedriHqRS7M7gfYZEA0vqDyx+lyKdOAyQQnMtY2JXrnAPKMZ9kojsdFB2ne3+QooGI7pWI9ohwziHhvf2x+NYE03+0bpMIshb+2HDsEQRK/ZoFgYgwrej7sO9fuzYJ5kcX6xLu21HN5Yi13SmNI8StCl7VAOn+jaMflA76zbqyi59qX1j2Gd7HuX4Q7/D0KkI63WLFvhEXupS8MH1LzwB1oWQ8l/mm3CiXH8QKn0QuGwnjqizWXOUTuThjx2/zRPoh5fgohHPdgPVL/jludNV54CXMXa+aKZGJeqzjwvFoCu6XVqO0HiJ9jBO1QIzG1L5BhaihDW7eUUwFA5oJ6+f6zpDoad2Jv34/9khjYNrERkxbNk6tGbeni8IXLDDkHqcwLXQc7OS7TS8/I9MQEGvhF9rpBvFhhjWyc3/Hru1bILh2m/jNYiWOvE+4NPtBKcrVEwGrzfYfIiMGtbVJT8y3VdaZ2EbX//YfCxs61rJ46CAWPqlAElRVUqc4AhqjPe6NdXX1r9CmvFVUbgmxN8F7nFOyAUaWHmkkoUUPAf4joDmerFeJ9e2YfuKfXk72aSihcbxgnqCwP0OMYBVddvMyWONXA8yYS7Y8KENBsMAi4LSg7XarcLl7W+h2QDsSukxXvWLaZRDy1TZEYJWZgKzYr44bWlFkPD3NfIhRJotj+AXXVrX1n+6Tc/AmlX5pOD2acMEKTCDQIPaGg52MDGy6r5dbNd2hWAwqPDfxKzz0x2eNRQIghF3XDLqBCPmYSyPJqOPLpVaLwbwRjoY4sxVD6eCcR9/GPkfSIkoJWkOP9D+EtqomQLapiGOFwXApTn9YtIRHSALHQjewA21Cqr+RK0CL4tqhn3YowpkUrL7RZmG4Q+DrQ4cgcWYENs2FlsKZ/bt4veLuIYcPPAp91/p/E9h5pcYAIhFuuxy6Rc9tvryOLWPLt5vmlPhrlUvu/0xNXVha4u33SOfi3oLfnoh27er2fKIxftYfnNUaKtbN5xljfCs3v9PhomMGokYwAC4tIYNmWnLZbPjtD3IX9cyD8Ex1Dif0238S9mYAAunpafEu9IXLcGNkZ5o3iP+u42Y/615E4nQx46cq+lBE5bHLwOtsQb56sNkOWZz4QJ2tKTfbXTL8ihnVljOB3cZ+66fgfUO38riA4Lc1+w6koU/KEuXlEzVOOL3fGSeVt6pW0J1IUa3SlMP8DWHrzdml28j3ok0QO8YVHQ9M+jB7gtC5qvUjLUCY07WIjKmx+8W5fBVdWnQC7sWyccpBCVXfyOesY3thwuH2lZfIrwZfBk8YluzM2/FBFjGON6CEL906BSrZCzlC4+/Kpm5kcoYGw1+AdDHEEGgGuJ1uJmYX6CaNpzWcUP7swyg0DO++OdJ5H6hyR00wstLpmPbz3E79Qq6s8ZRsf540EBNiC0xYV5QdWveL8pjAla1Cv9y3zT+tTo8OTD7tJxdAMq8bdwuJvGiZJRkaY6su5vbboISzj05jGtbQXYv4fZxK5WUiMncATDgLbJ7slieZpdvs0iONYfSkofChfrQzpiqB5gL2Dq+IBCqSEsR2T+iTd5Ubc3ZvRJvx52GL7L5cE3LGhyIvEEip6xhW2MIonqh5MSPvZ1Jw+I8svhGnj0d8WuPMarzOVs9YawwY6yDgK3jhTWQfKGP8IsXKWVRqAKMlXMaRXQcngtVxIv2qWY7L28K6d0QdhAh8mNi6BGg8LV//+aL6pkjoGYLKBzPja+bKpqXsX8YWnV71bDjysMs+iprRH2RPWmZb37eCgmh7PEJOcflg3XmDef1h1dovJVIiDML3Y/ZQvZFg+fdMX8sptLK7W/YYKiq9acwN35ZR0D8gXRWM19czUOUtaYKeXQSCK482AsoIvQwxzM21tl+PZXaC7j6LUEtig+R/mkhdGtOg8hQ/wy/lBueJX7nu683Q/aydvcL2W+Tu31hK48o3Apv2ZTGC7j60pzBa/lrlIuwQm7KrJk1QHjL5ttSRT83Ycr3/F5CTdoONSjVVEws60351/XrbLKDxNdE2t5DHn/1vmar3qf9uhKByt0EKiTpM4dzDMYp+5u7UoG4JfBGOxMGXm/FerGaFO7pQMRbvNBnNPQkbQNwim80fK4ioGm3phRJ8imJc5Ao9d1+L8+Z6N5WseI+p8K3nuuZBwVoO01zVF/q5HooyYD3onlBt/lvlPB45YYtH9tnOD/uahKZBVnz+CuazjHjOzsSoIb3Mr4uk4aVyXKGuyiIDzcEV9wcYTH07Z43qWGGlT9xP1m3pnPE9rQ6v+P4Vw1VGo8Yob/kNzhP4mhn++493kC8kot8w6XctB5Kz74Gf31XdSmAhwLtXlhvHEsnkNnAEPzJKOXxtujCI3Mdvrysv0L5ZzagjY1OsO2OPK05UkSV//y4+F6jTw/HGJfhjgxa9sPK19gL2/Jz7TjUbttx6Lx5hfWUHZF7A21Hd14ovsI7l3kWfAjcr/TzhsRN6q7SRjoUdaq9UZm+dlDXYFv7Ul07DGwXGaAsa8iJvXxSPb081JEi3TXiNtBMQJujGuv8duuuKJPYe5uUIIu6Zw6PXSri+2PYNbuYqZjuvQ/Xy6UgXYb18psDrTNFsBWCKw9BJULTh6fKx0nXraGd8dvAtp1/FvtanyGwJ/GN9lATORQPPRMKx3OgI0slqWsZq11/wIhwMywXB8DUVSVbk2ymUMs+f8BnE7ploVtYVsd8mIRk/Y+6L3Pz53lzElyFeXahCKqHhjMNJf7dU+6p2JHGnU+y9iXEj25Z9ckRCsdhnHvT72e2CH4vuZs+uIR9Sct1XopuiCv6zTYitx68eyfOCowvz3Xo469iAH+GtCSo8ZULF3ih8beNf/VGpPuQ+FSQ02j0Gh8Hiru4VCVOwrl6ojGxcQoFeL6EMJu6soevphd7Uy2l0lEZCleTrODfORenR5n+g3B4NtMet2yO26xqoU7qKOAcI9RXov0VpfozNyTjY2tgzn9ik2eLx6IwFINS6Bj6gecN+lvByhhjIL+QTE1OEoTKYGmsmPlI0fU4va/ryzuVQzq1Ju27tjG2j+OnhwpTUy8ZRH2ud8K3EmAKqcl0gqxuLeAzD9g8jb6CoCLo/YmitPKQPetbk71A1dfkDIXX23M7yfdcc5KYRsgud2nV3zurZRmluODxezLuvGmee0IbPkznFHn/P5ZAXNN4DMyg7zqq6eQjYmnYA2VxoLNRTuHXJdlJ2yVaFDVXe9ebUjKFutc4HH8ZnvPQGX/bw2EVGTs2Gt774YEmF7fTOZFidK0gnGRt+5cnse7yRZt9XvkcNEPbzoiI21Z5cZhKBFI0Zsu+nmeZLnieJKJFVQhgEVPaZS62UwbObhHHh58d1BjUc+EhUK8W4fFXFOu5u5fKv0UEf3HOhqUCLH1D+/0WqdtZFk5zZmmW+Q9ThweMIREng4bGk/g47aWt88oC53Ypl9eJsW85xyM5HT9VkBgOtXL3JXxX5Ia++H5ikGElf650YrEEa/g8e0jZBlfWyffBa2D5V0YIyGAcKz6kcfUcRcQ7Ew30VmI7rVPP+jh3e4aChb8xPu63uD573CVyP+ESGc0pLU1BvihVJGepXVntX4VU3pgoIEsE3acJrquWywhEP6b/YEukD2S76J6V/cs7L85GhCmjb64o5LiP22eMY9twjhfAN6pjpBr9LEb2U4kqbc+0s5oaezf34LTQwSfJSyKMT2gaOAt5jOWKUtjJRrXiAO/qytFBwRan7fH4FLjuQgXuscch8cAGZWCGZAUbTiu/qMqOJ+bHuYPzZ/KX3egbbXZ60+Zt2LpDQ1i1bIvTrem5w49ukXNoVAJI6+GYuNcmRQljyX+3qN12eWjNZ0LIBQsiyHRlNW+cSGKiUFhVeoXxNxjZpDhBIbF+UqGhdf4GKACkoPcuCEkz/uekc+UATAan+KEZ8NJP4HnvauQ8tOZjt3kkHsFjbBteyW4nyWibhWcQeinUwmXACwdAD6CuTVQKnmCLNBflmR+nkL8Cy6eBXfGj8qqgKV/LP+YNZgES+cf+HhBT3Vca0YFDAMyjtGVrQ9dGft5Vy5/PHh2aFRCZnC0rouN6/nfA6J8kq41ecEb9U5RMTwwaBj2LOuLDKLARPYGoqXXT2+9U0YcLecdyXYDOZ/xIjumwHJJZO0GK0Zz6TcnH8qSzr6G1O7mYYOn2yEzqDnZorstdOPEcXbU5C7Nzflzoor9cQ2RhmRVphyfIYOyzU+MoVb/RQuojnEJf1OLWHxBScWVZeVLs5WMLmausrC6mTIo1JOo32e6wy4DHMlt/NnnYsXOARdOdT05FrWJggIXLgOTl603L4+jZmARbRN1skYQO4zjnSgod3hkSYP5DP5xN9Msf+O0AbBTZ6SBvsFRlz4fHLJpRHwuJ77ygIKLCx9a1ixsWX9ywsUnQ8xlL39KQcgBODLfH+BlHsEoF6tTjvOd156Iq3ERXv18XXdXVAJZYvjOBouKHKc6eCeTk505bTTic/5naodzzQDvYOpgKzRmyYqGOC6Rn/X5UkQwcInC6VHuZSOpHqN+qCjweE6GZ4vouh43xCXpBTCWIK7QTwTlgXx9AyaEoaXP5wbP7zJX7/P3dvVgyJlIBeGOyrII8k67xq1cYQLKLD3U1hivlqJ+ZDRlNYxb+o4Uqde2mfcUAhrZ+aHTBeL+XERuLwxVBnjsN7XlYC58Ze/Ejyqg9Or56656vSFRiLlTmAF0YqVo4UzxZwAG0U+FaMK6GoaY1KHVJeS/e6q92YaAhe///anbpXhNZSJN+QO1iXKWPEKttJO3eWKOHF6/uP3U68JNSGTGDGWCeBSd+mUAyMjYRVFFqThzXVUrPCndrq9AbcWjXkqQdCpoBPliakwocGbFj1hC1YkiyxFvtwcXdl3rWM6rG25vt+uLoNG2IZGunc+ORb+lUQ0l9Tp+Q/oNr1JwvtjTml16CyMTJ66o/CdQNKVUKdeaXnc+1mglzkweH19bSS2W4xFBOUCuPO0XxxReLxqA+ZHkL4e5E10o/QJJXeHEtG8p75bTg3M7P/n/CtfrzAW/KTcibhyIn9Ag7vUpv+3MCQ2haJ1mKeFcjgL0qHBOts3C4lhhqm+V2BjDdpi0lKrYKtKs7d596nEjtV+tp+NKbjh88Q92JC43VauyMddy4jmtnMvJex70O6n2fFNQWMfB0BrsGuB40eduprS1GE64qTL1zWm+D2O45RV00v2g+swNK6sH6fTHh5mjyPRP9+nzAUm4KeXqK7nXJ5QpxBpV7mM6DC8LLIPK0zWMg4ZtPYq7yewTPLTa1VqZhXUFSFUFEARas5B1lJ67n0YxyC4hiKqO40E1oM0wo4FIULuZOYdI8Sc5ghHFM4YY6bI5DhUAPC5GCr1p1BiIheP3wCKp9N2UtZqVPGZH/wb6hFus4BmkquP9zMoLaGK8iqH/YU/5Sx/k01IPbT1qAK7VG5PIIrbUBTAN25ainSIa7YfTcoXiykCpf5T98rgJAcvi5LVd7RMUG3eFOABorNeFfYVR081ZvJKo89jt2XyYbeJDb2mxWbHLxBd2lDc8vpVOMb/9ID9YUUx1ikh9eCotjhaoD1VF9YCPsU29VL2vip4cStfiOJF0B7cxmmDMBlm6Ul/xd7IDXP8LQlzNwF0y0WppCfa4LM4sXanx/nfP4tjauxuoHd/AtVbj+wgVONygCwJIYDE+WZwilI7W7QrhVpXfkHMJXw7JCTLUH767nLAcWdXJvg9BePArJJ3EXgLT2l44v+3h5AAIRQoNTaK0YMmfTOZHf4WMc80cp4KNEWsGK6WfNh3h+KzE0fjuhvbOO36lnLOfzv2fjSor0h/+F6wNnoJW7fSXzO1rqK4OzECx6JHW7ZPtuR2sPgMHUTbjs8KZMLVNZQWge03le4N0yEAOd5KukEbX3B1dQM5e1mMd73MWX9ATY6DyMZ10XxHqDRQc/S7h2rjsGXZc1PwvD0DAPQSMuVs9zJPG2o1VOPyUA8zHcnriIu9cRmGixBYhAZQP3aeKEMT2qr9dp6LJAJcOUysSu/w+BRaOtUOEcRE3gxHZQBYc9kLcWX/nR9iA7yGJ3IU5EYvP8iyg6fLiGE/vQ/B/UYDFTUvSSy08MH4U2clRfZ/VHOm5TkUgrBJ3pDurF6oaR9oAWbmRYwh3flbxRJjiSP/t+Jf7vHLTpnE2ZNTv7BuZKKfwrSTjWKtHc6v8EuTQwdbrX4NaHPAGa+vAh1QMT65XYrHUF1qtpRUrk0usAnabC5FxRsdr0Q/+JsXSgmDyt8QYKbREMuR4tSlat8jwaofqyu7uqVTH/VZepIKBHFsNIGSFansKCsCRvZRX2t0fReJC39NbG3sso2r4xIIa990E6MbYXR7Rw/8LZpCSjLMr4B/3ZS2ADQXVpI+ZwNQyiz4ckNwO9HuD4YjahpVw0mSR37vLR5cK8tBfnsnngeXefcukgwHSlADpFK+aTRWjOliaxtVRGO8ldZS3ThSNKITciq2WChU+pSLNaKw9P06Jiv+CJX9MO+KiJNSXtygwFbJTjZzStV743zPBfMYI61yu+HZ3MyYTjbbDVOfZaQSpfWjwwUVLwsEpkJmlK3a4vZKRujPSqoInooH3Mu1PJJn1Wck/6WhPyrKmh1tyCYaoJs6d0wD1aBPKlbKTe0NloGDK7NVMpf8PWAgN51Qhxhf7rlbfkJyO407JE80iePli7pgrM04rGw50GN9b6oONJXcGv24qAstjPsb+GR8mv56jX7Oyw0DsNso9fVPwd/X6gymLyTHBKGPG95vrek8wW1fdoRapNz6ecvAiTBT7kEiCyrHJGxA8vtbcf5gYd3+ZNYiHc40FYX4XwVXGMCH5wSeYn04WpepRmkKf3S+qDl7hrTZ8/Q4AXMN5KXRaLe4P4yfRa17V228ykziSNqU/wlP9ByiyqG7Jvdftfc24QG5Kt0/ZlwyyEmvfkgBWAARLLhpiV3gSmGg2dNevkv4EQJ1wQ3wis5/jMgMbRdmP5eJS5Y/sTHv+G240FGvB9fKNRd5FitG5etj2xHe4HBocus03nb/zqkwuhOT3LKQ6GjEYHV3md5kqxTsRVorUBR1B3DeYimF0W/7TZCw/uM336xsJ9qMsMPZr5Z48qNW2njZ1ZDcpenCidmRmY5NvklptH0GBIYSRorryewOLY9GJm3UoAr1wRjk/zIv5T1HECq68u+EUcaeUUzG09cjYywNYIvHGmzOgAVDvWSPDoAAAAA");
+  filter: drop-shadow(0 2px 5px rgba(155, 27, 63, .16));
+}
+.mm-anush-btn {
+  position: relative; z-index: 1;
+  flex: none; padding: 9px 15px; border-radius: 12px; background: rgba(255, 255, 255, .9);
+  color: #9b1b3f; font: 700 14px var(--sans); box-shadow: 0 1px 3px rgba(155, 27, 63, .18);
+}
+
+/* Unread marker. ⚠ A DOT, not a count (operator, 2026-08-25) — but the count IS
+   written into it by each module's refreshBadges(), which is why font-size is 0.
+   Show the number by giving this a font-size, a min-width and some padding. */
+.mm-dot {
+  position: absolute; top: 8px; right: 8px; width: 10px; height: 10px;
+  border-radius: 50%; background: #e0483e; font-size: 0; overflow: hidden;
+}
+.mm-dot[hidden] { display: none; }
+
+/* Same press physics as the landing panels: raised, sinks under the finger. */
+.mm-tile, .mm-row, .mm-anush, .mm-search, .mm-filter {
+  transition: transform .12s var(--ease), box-shadow .12s var(--ease);
+}
+.mm-tile:active, .mm-row:active, .mm-anush:active {
+  transform: translateY(2px) scale(.975); box-shadow: inset 0 2px 7px rgba(40, 30, 60, .13);
+}
+.mm-search:active, .mm-filter:active {
+  transform: translateY(1px) scale(.98); box-shadow: inset 0 2px 6px rgba(40, 30, 60, .13);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mm-tile, .mm-row, .mm-anush, .mm-search, .mm-filter, .m-tab { transition: none; }
+}
+
+/* ---- the account circle, left of the title -----------------------------
+   Just the initial. The name and Sign out live in the popover it opens.
+   ⚠ .mm-headpad is the RIGHT-hand spacer and must equal the width of the
+   back chevron + this circle + the gap between them, or the centred title
+   and the two mantra lines sit off-centre. */
+.mm-acc {
+  width: 32px; height: 32px; flex: none; margin-top: 2px;
+  border: none; border-radius: 50%; background: var(--accent); color: #fff;
+  font: 700 15px var(--sans); cursor: pointer;
+  box-shadow: 0 2px 0 #c4571f, 0 3px 8px rgba(217, 102, 42, .3);
+  transition: transform .12s var(--ease), box-shadow .12s var(--ease);
+}
+.mm-acc:active { transform: translateY(2px) scale(.94); box-shadow: inset 0 2px 6px rgba(120, 55, 10, .35); }
+.mm-accpop {
+  position: absolute; top: 42px; left: 34px; z-index: 20; width: min(232px, 74vw);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 15px;
+  padding: 13px 14px 11px; box-shadow: var(--shadow-lg);
+  animation: mm-accpop-in .14s var(--ease);
+}
+@keyframes mm-accpop-in { from { opacity: 0; transform: translateY(-5px); } }
+.mm-accname { font: 700 15px var(--sans); color: var(--text); word-break: break-word; }
+.mm-accrole { font: 500 11.5px var(--sans); color: var(--muted); margin-top: 1px; }
+.mm-accbtn {
+  display: block; width: 100%; margin-top: 10px; padding: 9px 10px;
+  border: 1px solid var(--border); border-radius: 11px; background: var(--surface);
+  color: var(--accent); font: 600 13px var(--sans); cursor: pointer;
+}
+.mm-accbtn:active { background: var(--accent-soft); }
+.mm-accout { color: #c2185b; border-color: #f2d3e0; }
+.mm-accout:active { background: #fce9f1; }
+
+/* ==== More — the role-aware bottom sheet (handoff §6 / §7) ================
+   An OVERLAY, not a route: the Library stays on screen and dimmed behind it,
+   which a route could not do. z-index sits above the tab bar (600) and below
+   the drawer/scrim band (700+) it replaces. */
+.ms-wrap { position: fixed; inset: 0; z-index: 900; display: flex; align-items: flex-end; }
+/* ⚠ The entrance is a CSS ANIMATION, not a class toggled from rAF. It was
+   written the other way first and the sheet stayed off-screen: rAF never fires
+   in a hidden window, so a sheet opened while the app is backgrounded would
+   never be revealed at all — the same hazard index.html's preloader documents
+   and guards with a timeout. An animation needs no JS timing and cannot be
+   stranded. It also deliberately has NO fill-mode: once it ends the card falls
+   back to its base style (no transform), which is what lets the swipe-down drag
+   set an inline transform — an animation with `forwards` would outrank it. */
+.ms-scrim {
+  position: absolute; inset: 0; background: rgba(26, 18, 36, .45);
+  animation: ms-fade .2s ease;
+}
+.ms-card {
+  position: relative; z-index: 1; width: 100%; max-width: 640px; margin: 0 auto;
+  background: var(--surface); border-radius: 26px 26px 0 0;
+  padding: 12px 16px calc(28px + env(safe-area-inset-bottom));
+  box-shadow: 0 -12px 40px rgba(30, 20, 45, .22);
+  /* Content-sized within a ceiling. The role half roughly doubles the content,
+     which lands the divider near the 60/40 the handoff draws. Neither version
+     should need to scroll. */
+  max-height: 62vh; overflow-y: auto; scrollbar-width: none;
+  animation: ms-up .22s var(--ease);
+}
+.ms-card::-webkit-scrollbar { display: none; }
+.ms-wrap.ms-mod .ms-card { max-height: 88vh; }
+.ms-wrap.ms-out .ms-scrim { animation: ms-fade .2s ease reverse forwards; }
+.ms-wrap.ms-out .ms-card { animation: ms-up .2s var(--ease) reverse forwards; }
+@keyframes ms-fade { from { opacity: 0; } }
+@keyframes ms-up { from { transform: translateY(100%); } }
+.ms-grip { display: block; width: 44px; height: 4px; border-radius: 3px; background: #ded8e6; margin: 0 auto 12px; }
+.ms-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 22px; }
+.ms-title { font: 700 25px var(--serif); color: #3f1259; line-height: 1.15; }
+.ms-sub2 { font: 500 12px var(--sans); color: #8b7fa0; margin-top: 2px; }
+.ms-x {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; border: none;
+  background: #f3eef8; color: #6b3fa0; font-size: 14px; cursor: pointer;
+  transition: transform .12s var(--ease);
+}
+.ms-x:active { transform: scale(.9); }
+.ms-sechead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.ms-sectitle { font: 700 13.5px var(--sans); color: var(--text); }
+.ms-note { font: 600 11px var(--sans); color: #c2568c; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.ms-role { color: #6b3fa0; }
+.ms-role svg { width: 14px; height: 14px; }
+.ms-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.ms-tile {
+  position: relative; display: flex; align-items: center; gap: 10px; text-align: left;
+  padding: 16px 12px; border: none; border-radius: 15px; background: #f7f4fa;
+  color: var(--text); cursor: pointer;
+  transition: transform .12s var(--ease), box-shadow .12s var(--ease);
+}
+.ms-tile:active { transform: translateY(2px) scale(.975); box-shadow: inset 0 2px 7px rgba(40, 30, 60, .13); }
+.ms-ico {
+  flex: none; width: 36px; height: 36px; border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  background: #ece4f7; color: #6b3fa0;
+}
+.ms-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ms-name { font: 700 13px var(--sans); }
+.ms-sub { font: 500 11px var(--sans); color: #8b8794; }
+.ms-div { height: 1px; background: var(--border); margin: 26px 0 18px; }
+@media (prefers-reduced-motion: reduce) {
+  .ms-card, .ms-scrim, .ms-wrap.ms-out .ms-card, .ms-wrap.ms-out .ms-scrim { animation: none; }
+  .ms-tile, .ms-x, .mm-acc { transition: none; }
+  .mm-accpop { animation: none; }
 }
 
 /* ---- drawer ---- */
@@ -1710,10 +2104,10 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
    fling+snap dropped fast swipes (needed two tries). Extras still scroll
    natively inside the current slide (see buildFeed's innerCanScroll). */
 .m-feed {
-  /* .m-vpanel (see above) takes the top inset instead of .m-top; 64px is the
-     bottom bar's exact height — the image sits FLUSH against it, no gap.
+  /* .m-vpanel (see above) takes the top inset instead of .m-top; --m-bot-h is
+     the bottom bar's exact height — the image sits FLUSH against it, no gap.
      Exposed as a var so each slide can be sized to exactly one screen. */
-  --m-feedh: calc(100vh - (52px + env(safe-area-inset-top)) - 64px - env(safe-area-inset-bottom));
+  --m-feedh: calc(100vh - (52px + env(safe-area-inset-top)) - var(--m-bot-h) - env(safe-area-inset-bottom));
   height: var(--m-feedh);
   overflow: hidden; position: relative;
   touch-action: pan-y;   /* allow native extras-scroll; JS owns navigation via preventDefault */
@@ -1799,7 +2193,7 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
 /* Standalone single-message view (Lucky Msg / a typed-in number) — same
    sizing as one feed slide, just without the vertical scroll/siblings. */
 .m-singlewrap {
-  height: calc(100vh - (52px + env(safe-area-inset-top)) - 64px - env(safe-area-inset-bottom));
+  height: calc(100vh - (52px + env(safe-area-inset-top)) - var(--m-bot-h) - env(safe-area-inset-bottom));
   overflow-y: auto; display: flex;
 }
 
@@ -1819,13 +2213,13 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
 .m-dp-scrim {
   position: fixed; inset: 0; z-index: 6000;
   /* Start BELOW the 52px top panel; max-height (below) keeps the bottom clear of
-     the 64px bottom bar. So the picker sits fully between the two bars. */
+     the bottom bar (--m-bot-h). So the picker sits fully between the two bars. */
   padding: calc(env(safe-area-inset-top) + 52px + 8px) 14px 0;
   background: rgba(30,20,10,.45); display: flex; align-items: flex-start; justify-content: center;
 }
 .m-dp {
   width: min(342px, 94vw);
-  max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 128px);
+  max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--m-bot-h) - 64px);
   overflow-y: auto; overflow-x: hidden;   /* never a horizontal scrollbar */
   background: var(--surface); border-radius: 20px; box-shadow: var(--shadow-lg);
   font-family: var(--sans); color: var(--text);
@@ -1914,7 +2308,7 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
 .m-dp-btn { flex: 1; background: transparent; border: none; color: var(--muted); font: 500 16px var(--sans); padding: 10px 6px; border-radius: 10px; cursor: pointer; }
 .m-dp-set { color: var(--dp-dark); }
 .m-vact-disabled { opacity: .3; pointer-events: none; }
-.m-msgwrap { height: calc(100vh - (52px + env(safe-area-inset-top)) - 64px - env(safe-area-inset-bottom)); display: flex; align-items: center; justify-content: center; padding: 0 26px; }
+.m-msgwrap { height: calc(100vh - (52px + env(safe-area-inset-top)) - var(--m-bot-h) - env(safe-area-inset-bottom)); display: flex; align-items: center; justify-content: center; padding: 0 26px; }
 .m-msg { text-align: center; }
 .m-msg-ico { font-size: 44px; color: var(--accent); }
 .m-msg-date { margin-top: 10px; font-weight: 500; color: var(--accent); }
@@ -2461,17 +2855,20 @@ body.m-mode .page-head { padding-top: 4px; }
 /* ---- mobile shell v2: home FAB, 3-button bottom bar, accordion menu,
        WhatsApp-style community chat ---- */
 
-/* Bottom bar holds Menu · Community · language (4 text labels total) — sized
-   to fit even narrow/dense phones (a real device clipped "English" off the
-   right edge at the previous sizing). flex-shrink + min-width:0 let the
-   pills compress before anything overflows past the viewport. */
-.m-bottom { gap: 6px; padding-left: 8px; padding-right: 8px; }
-.m-menu-btn {
-  padding: 9px 10px; font-size: 12.5px; gap: 5px;
-  flex-shrink: 1; min-width: 0; white-space: nowrap;
-}
-.m-langseg { flex-shrink: 0; }
+/* Bottom bar: Join Satsang on top, language + Menu beneath (see the two-tier
+   block above — that is where the sizing lives now). Narrow/dense phones were
+   clipping "English" off the right edge at the old one-row sizing; the
+   language track flexes and the Menu tile is the only fixed width, so the
+   text compresses before anything can overflow the viewport. */
+.m-bottom { padding-left: 8px; padding-right: 8px; }
+.m-menu-btn { padding: 0 6px; font-size: 12.5px; white-space: nowrap; }
 .m-langseg button { padding: 9px 11px; font-size: 12.5px; white-space: nowrap; }
+/* Very narrow phones (≤340px): give the Menu tile back some width so the
+   language labels keep their own. */
+@media (max-width: 340px) {
+  .m-bottom .m-menu-btn { flex-basis: 88px; }
+  .m-bottom .m-langseg button { font-size: 13px; }
+}
 /* accordion groups in the drawer */
 .m-menu-group {
   display: flex; align-items: center; gap: 14px; padding: 13px 20px;
@@ -3100,11 +3497,11 @@ body.m-mode.m-readermode .content {
 .m-reader {
   position: fixed; left: 0; right: 0;
   top: calc(52px + env(safe-area-inset-top));
-  bottom: calc(64px + env(safe-area-inset-bottom));
+  bottom: calc(var(--m-bot-h) + env(safe-area-inset-bottom));
   overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch; overflow-anchor: none;
   /* the band's own height, reusable by children as an absolute length */
-  --mr-band: calc(100vh - (52px + env(safe-area-inset-top)) - (64px + env(safe-area-inset-bottom)));
+  --mr-band: calc(100vh - (52px + env(safe-area-inset-top)) - (var(--m-bot-h) + env(safe-area-inset-bottom)));
 }
 /* ONE message per screen: every block is exactly one band tall, so nothing from
    the next message is ever visible alongside the current one. Text messages
