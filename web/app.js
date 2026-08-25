@@ -15523,6 +15523,172 @@ const MOBILE_UI = (() => {
     }
     return { shown: () => shown };
   }
+  // ---- Daily Msg (#/m/daily) ------------------------------------------------
+  // The Library's Daily tile. A pinned strip of date chips over a list of days
+  // built exactly like the Special / Letterhead lists — same rows, same markup,
+  // same CSS (`.mx-row`), because DAILY_SEC below is a section ADAPTER rather
+  // than a second implementation. It is deliberately NOT in MSG_SECTIONS: that
+  // registry means "a client-cached section with unread state and a reader at
+  // #/m/<key>/<id>", and the daily archive is none of those — it is the
+  // on-device SQLite read through /api/latest, and its reader is #/entry/<id>.
+  //
+  // ⚠ LOADED PROGRESSIVELY, and that is not a micro-optimisation: on the phone
+  // wa-native resolves an IMAGE PER CARD inside its cards loop, so asking for
+  // all ~1,030 at once means ~1,030 awaits before the first paint. 120 at a
+  // time puts the screen up immediately; those resolves are cached, so
+  // re-asking for a superset costs almost nothing.
+  const DAILY_STEP = 120;
+  const DAILY_SEC = {
+    key: "daily",
+    icon: "\u2600\ufe0f",
+    hideDate: false,
+    isNew: () => false,                       // the daily archive has no unread state
+    hrefOf: (v) => "#/entry/" + encodeURIComponent(v.id),
+    norm: (r, lang) => {
+      const en = lang === "en";
+      return {
+        id: r.id,
+        date: r.date || "",
+        title: (en ? (r.topic_en || r.topic_hi) : (r.topic_hi || r.topic_en)) || "",
+        text: (en ? (r.preview_en || r.preview_hi) : (r.preview_hi || r.preview_en)) || "",
+        pages: r.thumb_url ? [r.thumb_url] : [],
+      };
+    },
+  };
+
+  function dailyIndexPage() {
+    const node = el(`<div class="m-daily">
+      <div class="dl-strip" id="dl-strip"><div class="dl-track" id="dl-track"></div></div>
+      <div class="mx-rows" id="dl-rows"><div class="loading">Loading…</div></div>
+      <div class="sp-more" id="dl-more" hidden>…</div>
+    </div>`);
+    // The top bar carries the title and NOTHING else — no date pill, no action
+    // (operator: "top panel should only show Daily Msg"). setChrome() cleared
+    // both on the way in, so not setting them IS the removal.
+    pageFrame("Daily Msg", node, "m-page-daily");
+
+    const strip = node.querySelector("#dl-strip");
+    const track = node.querySelector("#dl-track");
+    const rowsBox = node.querySelector("#dl-rows");
+    const more = node.querySelector("#dl-more");
+    const sc = document.scrollingElement || document.documentElement;
+    const smooth = !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    let rows = [], limit = DAILY_STEP, loading = false, done = false, sel = "";
+
+    const chipHtml = (r) => {
+      const t = r.date.split("-");
+      const d = new Date(+t[0], +t[1] - 1, +t[2]);
+      return `<button class="dl-chip" type="button" data-d="${r.date}">` +
+        `<span class="dl-d">${+t[2]}</span>` +
+        `<span class="dl-w">${DP_WD.en[d.getDay()]}</span>` +
+        `<span class="dl-m">${DP_MON.en[+t[1] - 1]}</span></button>`;
+    };
+
+    function render() {
+      // The strip reads left to right, oldest → newest, the way a calendar does,
+      // while the list reads newest first like every other section. ⚠ Older
+      // chips are therefore PREPENDED on every extension, so the offset is
+      // nudged by the width they added — without that the strip jumps backwards
+      // in time under the user's finger each time more loads.
+      const before = track.scrollWidth;
+      track.innerHTML = rows.slice().reverse().map(chipHtml).join("");
+      const grew = track.scrollWidth - before;
+      if (before && grew > 0) strip.scrollLeft += grew;
+
+      rowsBox.innerHTML = rows.map((r) => msgIndexRowHtml(DAILY_SEC, r, null, null, "")).join("");
+      // Tag each row with its date so a chip can find it without picking the id
+      // back out of an href.
+      [...rowsBox.children].forEach((n, i) => { if (rows[i]) n.dataset.d = rows[i].date; });
+      more.hidden = done;
+      if (!sel && rows.length) select(rows[0].date, false);
+    }
+
+    function select(iso, centre) {
+      sel = iso;
+      let chip = null;
+      track.querySelectorAll(".dl-chip").forEach((c) => {
+        const on = c.dataset.d === iso;
+        c.classList.toggle("on", on);
+        if (on) chip = c;
+      });
+      if (chip && centre) chip.scrollIntoView({ inline: "center", block: "nearest" });
+    }
+
+    async function loadMore() {
+      if (loading || done) return;
+      loading = true;
+      try {
+        const got = (await api("/api/latest?limit=" + limit)).results || [];
+        done = got.length < limit;      // fewer than asked for = that is all there is
+        rows = got.filter((r) => r && r.date);
+        limit += DAILY_STEP;
+        if (!node.isConnected) return;
+        if (!rows.length) {
+          rowsBox.innerHTML = `<div class="empty">No Guru's msg yet.</div>`;
+          more.hidden = true;
+          return;
+        }
+        render();
+      } catch {
+        if (!node.isConnected) return;
+        done = true;
+        more.hidden = true;
+        if (!rows.length) rowsBox.innerHTML = `<div class="empty">Couldn't load the Guru's msgs.</div>`;
+      } finally { loading = false; }
+    }
+
+    // Tap a chip → bring that day's row up. `scroll-margin-top` on .mx-row is
+    // what keeps the row clear of the top bar and the pinned strip.
+    track.addEventListener("click", (e) => {
+      const c = e.target.closest(".dl-chip");
+      if (!c) return;
+      hapticTick();
+      select(c.dataset.d, true);
+      const row = rowsBox.querySelector('[data-d="' + c.dataset.d + '"]');
+      if (row) row.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+    });
+    rowsBox.addEventListener("click", (e) => {
+      const a = e.target.closest("a.mx-row");
+      if (!a || !a.getAttribute("href") || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      e.preventDefault();
+      go(a.getAttribute("href"));     // a push, so back comes back to this list
+    });
+
+    // Scrolling the list moves the selection AND loads the next page. One
+    // rAF-throttled handler for both, which removes itself when the page goes.
+    let tick = 0;
+    const onScroll = () => {
+      if (!node.isConnected) { window.removeEventListener("scroll", onScroll); return; }
+      if (tick) return;
+      tick = requestAnimationFrame(() => {
+        tick = 0;
+        const top = strip.getBoundingClientRect().bottom;
+        for (const n of rowsBox.children) {
+          if (n.getBoundingClientRect().bottom > top) {
+            if (n.dataset.d && n.dataset.d !== sel) select(n.dataset.d, true);
+            break;
+          }
+        }
+        _dailyScroll = sc.scrollTop;
+        if (!done && !loading && more.getBoundingClientRect().top < innerHeight + 400) loadMore();
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+
+    _pageLangHook = () => { if (rows.length) render(); };
+    loadMore().then(() => {
+      if (!node.isConnected) return;
+      strip.scrollLeft = strip.scrollWidth;   // open on the newest, at the right end
+      // ⚠ Restored AFTER the rows exist, not on mount. The browser's own restore
+      // fires while this page is still showing "Loading…", so there is nothing
+      // to scroll and the offset is thrown away — backing out of a message
+      // would drop the reader at the top of the list every time. Re-asserted
+      // once more next frame for the reason restoreScroll() documents.
+      sc.scrollTop = _dailyScroll;
+      requestAnimationFrame(() => { if (node.isConnected) sc.scrollTop = _dailyScroll; });
+    });
+  }
+
   function msgIndexPage(key, params) {
     const sec = MSG_SECTIONS[key] || (key === "anushthan" ? ANUSHTHAN_INDEX_SEC : null);
     if (!sec) return placeholderPage("Message", "");
@@ -17295,6 +17461,7 @@ const MOBILE_UI = (() => {
   let _homeFromMenu = false;
   let _moreAgain = false;
   let _libScroll = 0;      // the Library's scroll offset, held across visits
+  let _dailyScroll = 0;    // …and the Daily Msg list's, for the same reason
   function openMoreSheet() {
     if (_moreClose) return;
     const mod = isModerator();
@@ -17472,7 +17639,7 @@ const MOBILE_UI = (() => {
 
       <h3 class="mm-h">Guru's msgs</h3>
       <div class="mm-grid3">
-        ${tile("#/?latest=1", IC.sun, "Daily", "today's message", "")}
+        ${tile("#/m/daily", IC.sun, "Daily", "today's message", "")}
         ${tile("#/m/special", IC.star, "Special", "telegram messages", "special")}
         ${tile("#/m/letterpad", IC.pen, "Letterhead", "letters from Guru", "letterpad")}
       </div>
@@ -17533,8 +17700,12 @@ const MOBILE_UI = (() => {
         en ? "( Lead me from death to immortality )"
            : "( मृत्योर्मा अमृतं गमय )";
     });
-    // The Daily tile goes home; arm the same flag the Daily tab does.
-    node.querySelector(".mm-t-daily").addEventListener("click", () => { _homeFromMenu = true; });
+    // ⚠ No _homeFromMenu here any more: since 9.80 the Daily TILE opens the
+    // Daily Msg list (#/m/daily), not home. Only the Daily TAB still goes home,
+    // and the tab bar's own delegated handler arms the flag for it.
+    // Opening the list FROM here starts it at the top; every other way in is a
+    // back out of a message, which must keep the reader's place.
+    node.querySelector(".mm-t-daily").addEventListener("click", () => { _dailyScroll = 0; });
     node.querySelector("#mm-search").addEventListener("click", () => go("#/m/search"));
     // The sliders mean "search by date", which is a tab on the same page — the
     // Date tab opens its calendar on entry, so this lands the user straight in
@@ -17602,6 +17773,7 @@ const MOBILE_UI = (() => {
       if (seg[0] === "dhyan") return dhyanPage();                // desktop-style link → same page
       const p = seg[1];
       if (p === "menu") return menuPage();
+      if (p === "daily") return dailyIndexPage();
       if (p === "search") return searchPage(params);
       if (p === "nomsg") return renderDateMessage(params.get("d"));
       if (p === "community") return communityPage(params);

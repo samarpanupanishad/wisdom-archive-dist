@@ -2103,6 +2103,49 @@ body.m-mode.m-libpage .content {
   .mm-accpop { animation: none; }
 }
 
+/* ==== Daily Msg (#/m/daily) \u2014 the date strip over the list ================
+   The rows themselves are the ordinary `.mx-row` markup every message section
+   uses; only the strip is new. */
+.m-page-daily { max-width: 640px; margin: 0 auto; }
+/* \u26a0 PINNED under the top bar. It has to be: the strip is how you move around
+   this screen, and a strip that scrolls away with the list is decoration. It
+   works because nothing between here and the document sets `overflow` or a
+   `transform` \u2014 `.content` and `.m-page` are both plain blocks. Don't wrap the
+   page in a scroller. */
+.dl-strip {
+  position: sticky; z-index: 5;
+  top: calc(52px + env(safe-area-inset-top));
+  margin: 0 -12px; padding: 8px 12px 9px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;   /* dragging the strip must not swipe the page */
+}
+.dl-strip::-webkit-scrollbar { display: none; }
+.dl-track { display: flex; gap: 8px; width: max-content; }
+.dl-chip {
+  flex: none; width: 58px; padding: 8px 0 7px;
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  border: 1px solid transparent; border-radius: 14px; background: #f6f3f8;
+  color: var(--text); cursor: pointer;
+  transition: transform .12s var(--ease), background .12s var(--ease);
+}
+.dl-chip:active { transform: scale(.93); }
+.dl-d { font: 700 16px var(--sans); line-height: 1.1; }
+.dl-w { font: 600 10.5px var(--sans); color: var(--muted); line-height: 1.15; }
+.dl-m { font: 600 10.5px var(--sans); color: var(--muted); line-height: 1.15; }
+/* The selected day, in the Library's own purple. */
+.dl-chip.on {
+  background: #f3ecfa; border-color: #cbb2e8;
+  box-shadow: 0 1px 3px rgba(107, 63, 160, .18);
+}
+.dl-chip.on .dl-d, .dl-chip.on .dl-w, .dl-chip.on .dl-m { color: #5b2d91; }
+/* Tapping a chip scrolls its row up \u2014 clear of the fixed top bar AND the
+   pinned strip, which is what this margin buys. */
+.m-daily .mx-row { scroll-margin-top: calc(52px + env(safe-area-inset-top) + 80px); }
+.m-daily .sp-more { text-align: center; color: var(--muted); padding: 14px 0 22px; }
+@media (prefers-reduced-motion: reduce) { .dl-chip { transition: none; } }
+
 /* ---- drawer ---- */
 .m-scrim {
   position: fixed; inset: 0; z-index: 700; background: rgba(20, 14, 30, .45);
