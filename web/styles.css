@@ -1916,17 +1916,20 @@ body.m-mode.m-libpage .content {
 .mm-sub2 { font: 500 11.5px var(--sans); color: #8b8794; line-height: 1.25; }
 /* Tile tints + glyph colours, straight from menu.png. */
 .mm-t-daily { background: #fdf5e6; } .mm-t-daily .mm-ico { color: #eda600; }
-/* ⚠ LIGHT PINK since 2026-08-26, on the operator's instruction — it was gold
-   (#fdf0c4) for one day. Don't restore the gold from git history.
-   The 2026-08-25 rule it was built on still holds and still matters: Special
-   and Daily sit side by side, and they are told apart by WHERE the colour is
-   — Daily's yellow is on the GLYPH over a near-white tile, Special's is the
-   TILE under a magenta star. Pink keeps that (and reads further from Daily's
-   cream than the gold did); making Special's star pale or Daily's tile
-   coloured would collapse it, which was the operator's own concern.
-   #fce4ec is the pink the viewer panel's date key already wears, so this is a
-   colour the app owns rather than a fourth one. */
-.mm-t-special { background: #fce4ec; } .mm-t-special .mm-ico { color: #c2185b; }
+/* ⚠ VERY light pink, and the LIGHTNESS is the point — don't deepen it.
+   This tile went gold → #fce4ec → here in two days. #fce4ec (Material Pink 50)
+   was the obvious pink and it was wrong beside its neighbours: measured
+   against the white page, Daily's cream is 1.084:1 and Letterhead's stone
+   1.075:1, while #fce4ec was 1.204:1 — about two and a half times the colour
+   of the tiles either side of it. That is what the operator saw as "pink seems
+   dark in compare" (2026-08-26). #fef2f6 is 1.091:1, level with Daily.
+   Same 340° hue as the #c2185b star sitting on it, so it stays one family.
+   ⚠ A consequence to know before touching any of these three: at this weight
+   a tile's tint is a whisper, and what really tells the three apart is the
+   GLYPH — yellow sun, magenta star, brown pen. Deepening one tile to make it
+   "stand out" only puts it out of step with the other two again. If they need
+   to be more distinct, move the glyphs, not the tiles. */
+.mm-t-special { background: #fef2f6; } .mm-t-special .mm-ico { color: #c2185b; }
 .mm-t-letterhead { background: #faf6f2; } .mm-t-letterhead .mm-ico { color: #6a5a4e; }
 .mm-r-satsang { background: #f2ecfa; } .mm-r-satsang .mm-ico { color: #6b3fa0; }
 .mm-r-anubhuti { background: #eef7f4; } .mm-r-anubhuti .mm-ico { color: #0e8074; }
