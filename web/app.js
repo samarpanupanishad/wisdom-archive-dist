@@ -8773,6 +8773,9 @@ const OM_FIX_HTML = `
     <div class="dd-omfix-path">Settings › Battery › Background power control ›
       Samarpan Upanishad › <b>Allow background power usage</b></div>
     <p class="dd-omfix-alt">Some phones call this <b>Unrestricted</b>, or <b>Don't optimise</b>.</p>
+    <div class="dd-omfix-act" hidden>
+      <button class="btn primary" data-om-exempt>Allow in Android settings</button>
+    </div>
     <p>Until it is set, the Om will sound when you next pick up the phone.</p>
   </div>`;
 
@@ -10996,6 +10999,33 @@ async function mountDhyanDiary(node) {
 
     const slot = node.querySelector(".dd-rem-slot");
     if (slot) slot.replaceChildren(ddRemindersEl(render));
+
+    // ⚠ Android's HALF of the fix, and only where it can be offered. The button
+    // is revealed solely on a shell carrying WaBatteryPlugin (added 2026-08-26);
+    // on every APK built before that the plugin is absent, so this is inert and
+    // the written instructions are all anyone sees. Hidden again once Android
+    // already exempts us, so it never asks a second time.
+    //
+    // ⚠ It does NOT replace the words above it. On an OEM with its own power
+    // manager — vivo/OriginOS was measured, status §3d — that separate switch
+    // still decides, and no API can reach it. Tapping this can therefore succeed
+    // and the Om still fail, which is exactly why the sentence about
+    // "Background power control" stays put whatever this button does.
+    const omBtn = node.querySelector("[data-om-exempt]");
+    if (omBtn) {
+      const wb = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.WaBattery;
+      if (wb && wb.status) {
+        wb.status().then((s) => {
+          if (!omBtn.isConnected || (s && s.exempt)) return;
+          omBtn.parentElement.hidden = false;
+          omBtn.addEventListener("click", async () => {
+            omBtn.disabled = true;
+            try { await wb.requestExemption(); } catch (_) {}
+            omBtn.disabled = false;
+          });
+        }).catch(() => {});
+      }
+    }
 
     const rp = node.querySelector("[data-report]");
     if (rp) rp.addEventListener("click", () => openDhyanReport());
@@ -16355,18 +16385,19 @@ const MOBILE_UI = (() => {
   // stopping the every-ten-minutes cron from re-picking and re-sending an hour it
   // has already served. "Only the last three" is a rule about what is SHOWN.
   //
-  // ⚠ THE ORDER FLIPPED ON 2026-08-22. The member's own box used to sit UNDER
-  // the thoughts; it is now ABOVE them, the shape Msg to Admin has always had —
-  // write first, read under it. So, top to bottom:
-  //   1. four lines of room for the operator's instructions — see
-  //      GANGA_INSTRUCTIONS. The reserved height is deliberate and predates
-  //      their being written;
-  //   2. a box in which a member writes one short line, capped at a length the
+  // ⚠ THE ORDER FLIPPED ON 2026-08-22, THEN FLIPPED AGAIN ON 2026-08-26. The
+  // member's own box sat under the thoughts, then above the instructions
+  // (Msg to Admin's shape — write first, read under it); since 2026-08-26 the
+  // BOX comes before the instructions too. So, top to bottom, today:
+  //   1. a box in which a member writes one short line, capped at a length the
   //      admins set from the review screen;
-  //   3. Send to Admin — and NO Clear button (operator, 2026-08-20). It was in
-  //      the first spec and taken out of it; a button that destroys what somebody
-  //      just typed, sitting next to Send, is a trap. Don't add it back.
-  //   4. then, scrolling under all of that, the thoughts themselves.
+  //   2. Send to Admin for Quote Approval — and NO Clear button (operator,
+  //      2026-08-20). It was in the first spec and taken out of it; a button
+  //      that destroys what somebody just typed, sitting next to Send, is a
+  //      trap. Don't add it back.
+  //   3. the operator's instructions — see GANGA_INSTRUCTIONS;
+  //   4. then, scrolling under all of that, the thoughts themselves, headed
+  //      "Latest Notification" (2026-08-26).
   //
   // ⚠ THE COMPOSE BOX IS NOT INSIDE THE REPAINTED REGION. The list refreshes on
   // a timer while the screen is open, and rewriting innerHTML over a textarea
@@ -16410,25 +16441,29 @@ const MOBILE_UI = (() => {
   //
   // To change it: edit here and publish. One entry per paragraph, not per visual
   // line — the wrapping is the phone's business.
+  // ⚠ REWRITTEN AGAIN 2026-08-26, operator's own words this time (not from the
+  // docx) — the 2026-08-22 two-paragraph text above is GONE, don't restore it.
+  // "Wow" opens the first paragraph and is deliberately styled — see the `wow`
+  // segment flag and `.m-ganga-wow` in styles.css. `note` is a THIRD, visually
+  // separate block: small and grey, one blank line below the paragraphs — see
+  // `.m-ganga-note`. It is escaped and painted the same way a plain-string line
+  // is, just never bold/italic/underlined.
   const GANGA_INSTRUCTIONS = {
     title: "नम्र विनंती",
     lines: [
       [
-        { t: "गुरु के चैतन्यपूर्ण शब्द, जो गंगा के समान मोक्षदायी हैं, उन शब्दों को " },
-        { t: "Upanishad Ganga", b: true, u: true },
-        { t: " का नाम दिया है।" },
+        { t: "Wow", wow: true },
+        { t: " quotes or statements जो गुरु के शिविर में आपकी आत्मा में stamped हुए हैं, उन्हें सभी साधकों के साथ share करें।" },
       ],
       [
-        { t: "गुरु के शब्द जो आपके दिल के बेहद करीब हैं और जो आपकी आत्मा में " },
-        { t: "“imprint”", i: true, u: true },
-        { t: " हो चुके हैं, उन पवित्र गंगा के समान शब्दों को सभी खोजी आत्माओं के साथ शेयर करें।" },
+        { t: "ये quotes every hour आपको notification के माध्यम से मिलेंगे। गुरु को hourly याद करने का एक छोटा सा प्रयास है।" },
       ],
     ],
+    note: "(Note: If you don't want the notification on hourly basis, go to Settings and switch it off.)",
   };
-  // The compose box's placeholder, from the same document (it labels it
-  // "Placeholder:"). "शब्दो"→"शब्दों" and "imprint हुए" for the missing participle,
-  // under the same permission as the lines above.
-  const GANGA_PLACEHOLDER = "आत्मा में imprint हुए शब्दों को share करें।";
+  // The compose box's placeholder — rewritten with GANGA_INSTRUCTIONS above,
+  // 2026-08-26.
+  const GANGA_PLACEHOLDER = "आत्मा में stamped शब्दों को शेयर करें।";
 
   function gyanCached() {
     try { return JSON.parse(localStorage.getItem(GYAN_CACHE) || "[]"); } catch (_) { return []; }
@@ -16485,14 +16520,23 @@ const MOBILE_UI = (() => {
     //     shrank the नम्र विनंती to claw back room were removed rather than
     //     kept — they would only shift the textarea under the user's finger.
     pageFrame("Upanishad Ganga", node, "m-page-ganga");
+    // ⚠ Diya icon before the title, this page only (operator, 2026-08-26).
+    // Safe to set directly: setChrome() (called by EVERY pageFrame(), on every
+    // route) does `$("m-title").textContent = title`, which wipes this markup
+    // the moment the user leaves — no class to clean up afterwards.
+    $("m-title").innerHTML = `<span class="m-title-ico">${IC.diya}</span> Upanishad Ganga`;
 
+    // ⚠ COMPOSE BOX ABOVE THE INSTRUCTIONS, since 2026-08-26 (operator). Was
+    // the reverse — instructions, then box — from 2026-08-22 until this. The
+    // DOM order below IS the visual order; `.m-page-ganga .m-ganga-instr` /
+    // `.m-ganga-box` margins in styles.css assume THIS order.
     node.innerHTML =
       // The pinned pane. Both children were once siblings of the list and
       // scrolled away with it; they are wrapped so ONE flex child stays out of
       // the scroller.
       `<div class="m-ganga-head">` +
-        `<div class="m-ganga-instr" id="m-ganga-instr"></div>` +
         `<div id="m-ganga-compose"></div>` +
+        `<div class="m-ganga-instr" id="m-ganga-instr"></div>` +
       `</div>` +
       `<div id="m-gyan-list" class="m-gyan-list"></div>`;
     const listEl = node.querySelector("#m-gyan-list");
@@ -16548,6 +16592,11 @@ const MOBILE_UI = (() => {
       }
 
       listEl.innerHTML =
+        // "Latest Notification" (2026-08-26, operator) — a heading over the
+        // list, not per-card; only the FIRST card also gets `.m-ganga-latest-txt`
+        // (pink text). The count shown is still GYAN_KEEP-many — this did not
+        // change the "keep the last three" rule, only how the newest reads.
+        `<div class="m-ganga-latest-h">Latest Notification</div>` +
         (note ? `<div class="m-hint" style="margin-bottom:10px">${escapeHtml(note)}</div>` : "") +
         // ⚠ .m-gyan-hit goes on the NEWEST only. It used to mark the one thought
         // a notification tap arrived for, back when the screen showed one; put it
@@ -16570,7 +16619,7 @@ const MOBILE_UI = (() => {
         //     screen that the words everybody is reading this hour are theirs.
         shown.map((t, i) =>
           `<div class="m-msgitem${i === 0 ? " m-gyan-hit" : ""}">` +
-            `<div class="m-msgtext" style="font-family:var(--serif);font-size:17px;line-height:1.6">` +
+            `<div class="m-msgtext${i === 0 ? " m-ganga-latest-txt" : ""}" style="font-family:var(--serif);font-size:17px;line-height:1.6">` +
               escapeHtml(wordsOf(t)) +
             `</div>` +
             `<div class="m-msgts">${escapeHtml(gyanWhen(t))}</div>` +
@@ -16620,12 +16669,16 @@ const MOBILE_UI = (() => {
     // itself still goes through escapeHtml — there is no path by which a
     // character of GANGA_INSTRUCTIONS is interpreted as markup. Don't "simplify"
     // this into an HTML string in the constant.
+    // ⚠ `wow` (2026-08-26) is the same idea as b/i/u — a wrapper around the
+    // already-escaped text, never a way for the constant's text to carry HTML.
+    // Styling for `.m-ganga-wow` lives in styles.css.
     const instrSeg = (s) => {
       if (typeof s === "string") s = { t: s };
       let h = escapeHtml(s.t || "");
       if (s.b) h = `<b>${h}</b>`;
       if (s.i) h = `<i>${h}</i>`;
       if (s.u) h = `<u>${h}</u>`;
+      if (s.wow) h = `<span class="m-ganga-wow">${h}</span>`;
       return h;
     };
     instrEl.innerHTML =
@@ -16633,7 +16686,12 @@ const MOBILE_UI = (() => {
         ? `<div class="m-ganga-instr-h">${escapeHtml(GANGA_INSTRUCTIONS.title)}</div>`
         : "") +
       (GANGA_INSTRUCTIONS.lines || []).map((l) =>
-        `<div>${(typeof l === "string" ? [l] : l).map(instrSeg).join("")}</div>`).join("");
+        `<div>${(typeof l === "string" ? [l] : l).map(instrSeg).join("")}</div>`).join("") +
+      // The note is its own block, one blank line below the paragraphs —
+      // `.m-ganga-note`'s margin-top is that gap, not a literal empty `<div>`.
+      (GANGA_INSTRUCTIONS.note
+        ? `<div class="m-ganga-note">${escapeHtml(GANGA_INSTRUCTIONS.note)}</div>`
+        : "");
 
     // ---- 3. the member's box ----------------------------------------------
     // Painted once and never repainted while the screen is open — see the trap at
@@ -16654,11 +16712,11 @@ const MOBILE_UI = (() => {
       }
       composeEl.innerHTML =
         `<div class="m-ganga-box">` +
-          `<textarea id="m-ganga-ta" rows="3" maxlength="${limit}" ` +
+          `<textarea id="m-ganga-ta" rows="5" maxlength="${limit}" ` +
             `placeholder="${escapeHtml(GANGA_PLACEHOLDER)}"></textarea>` +
           `<div class="m-ganga-row">` +
             `<span class="m-ganga-count" id="m-ganga-count">0 / ${limit}</span>` +
-            `<button class="btn primary" id="m-ganga-send" disabled>Send to Admin</button>` +
+            `<button class="btn primary m-ganga-sendbtn" id="m-ganga-send" disabled>Send to Admin for Quote Approval</button>` +
           `</div>` +
         `</div>`;
 

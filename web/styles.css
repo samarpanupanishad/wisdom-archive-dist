@@ -1594,6 +1594,13 @@ body.m-mode.m-notop .m-top { display: none; }
   -webkit-text-fill-color: transparent; color: transparent;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* Diya before "Upanishad Ganga" (2026-08-26, U. Ganga only — see gyanPage in
+   app.js). Left as a plain inline element, NOT flex: .m-title's gradient text
+   relies on background-clip:text painting its OWN text run, which a flex
+   layout on this element would break. Baked SVG colours (see IC.diya) are
+   untouched by the title's transparent text-fill-color either way. */
+.m-title-ico { display: inline-flex; vertical-align: -4px; margin-right: 2px; }
+.m-title-ico svg { display: block; width: 18px; height: 18px; }
 /* Left-hand date pill (the message sections — see setTopDate in app.js). The
    bar is only 52px of phone width and already carries a back chevron and the
    action slot, so a bar WITH a date shrinks its title to a small bold label —
@@ -2839,8 +2846,23 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
   font: 400 14.5px/1.55 var(--sans); color: #523f86; white-space: pre-wrap;
 }
 .m-ganga-instr:empty { border-left: 0; padding-left: 0; }
+/* Underlined since 2026-08-26 (operator) — same treatment as .m-ganga-latest-h
+   below, so the two headings on this screen read as one family. */
 .m-ganga-instr-h {
   font: 700 15px var(--sans); color: var(--accent); margin-bottom: 5px;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+/* "Wow" (2026-08-26, operator) — red and a touch larger than the सans body
+   text around it, inside the same paragraph. See the `wow` segment flag in
+   app.js's instrSeg(). #c62828 matches the app's one other standing red
+   (.m-ganga's सister error text, styles.css:1865) rather than inventing a
+   second red. */
+.m-ganga-wow { color: #c62828; font-weight: 700; font-size: 1.15em; }
+/* The note under the paragraphs (2026-08-26) — deliberately its own block,
+   NOT another instrSeg segment: small and grey, one blank line below the
+   body, never bold/italic/underlined like a segment could be. */
+.m-ganga-note {
+  margin-top: 1.55em; font: 400 11px/1.5 var(--sans); color: var(--muted);
 }
 .m-ganga-box { margin-bottom: 18px; }
 .m-ganga-box textarea {
@@ -2848,13 +2870,14 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
   border: 1px solid var(--border); border-radius: 12px;
   background: var(--surface); color: var(--text);
 }
-/* Placeholder only ("आत्मा में imprint हुए शब्दों को share करें।") — the text a
+/* Placeholder only ("आत्मा में stamped शब्दों को शेयर करें।") — the text a
    member actually types stays var(--text) above; this rule cannot touch it,
    ::placeholder only ever matches empty-field ghost text. Light pink, at the
-   operator's request (2026-08-22): readable, not a watermark — they explicitly
-   didn't want it so faint it can't be read. Both prefixed forms are needed:
-   a bare `::placeholder` rule is ignored by engines that don't support it
-   (no error, no fallback), which is why WebKit ships its own vendor prefix. */
+   operator's request (2026-08-22, reconfirmed 2026-08-26): readable, not a
+   watermark — they explicitly didn't want it so faint it can't be read. Both
+   prefixed forms are needed: a bare `::placeholder` rule is ignored by
+   engines that don't support it (no error, no fallback), which is why
+   WebKit ships its own vendor prefix. */
 .m-ganga-box textarea::placeholder { color: #e8a0b4; opacity: 1; }
 .m-ganga-box textarea::-webkit-input-placeholder { color: #e8a0b4; }
 .m-ganga-row {
@@ -2865,6 +2888,15 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
 /* The counter turns at the cap, because maxlength swallows the keystroke in
    silence and a phone keyboard gives no other sign that it did. */
 .m-ganga-count.full { color: var(--accent); font-weight: 700; }
+/* "Send to Admin for Quote Approval" (2026-08-26, was "Send to Admin") —
+   longer label, smaller font so it still fits one comfortable button, widened
+   so it isn't cramped. Wraps to two lines on a narrow phone rather than
+   truncating — a Send button silently cut off would be worse than one that's
+   two lines tall. */
+.m-ganga-sendbtn {
+  font-size: 11.5px; line-height: 1.25; padding: 9px 14px;
+  max-width: 190px; white-space: normal; text-align: center;
+}
 /* "Your Suggestion" — the FINAL line of a card whose words this member sent in
    (operator, 2026-08-21). Their own row, and their own device only: mineSlots is
    built from my_ganga_suggestions, so no other phone can compute it.
@@ -2876,6 +2908,15 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
 .m-ganga-yours {
   margin-top: 6px; font: 700 12px var(--sans); color: var(--accent);
 }
+/* "Latest Notification" (2026-08-26, operator) — a heading over the scrolling
+   list, not per-card. GYAN_KEEP is UNCHANGED (still the last three) — only the
+   newest card's own text also gets .m-ganga-latest-txt below. */
+.m-ganga-latest-h {
+  font: 700 14.5px var(--sans); color: var(--accent);
+  text-decoration: underline; text-underline-offset: 3px;
+  margin: 4px 2px 10px;
+}
+.m-ganga-latest-txt { color: #c23b6b; }
 
 /* Upanishad Ganga Review (#/m/gyanreview) — the admins' queue. */
 .m-gr { min-height: 40vh; }
@@ -4331,6 +4372,10 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 }
 .dd-omfix-path b { color: var(--accent); }
 .dd-omfix-alt b { color: var(--text); font-weight: 650; }
+/* Hidden unless the shell carries WaBatteryPlugin AND Android is not already
+   exempting us — see the wiring in app.js. Never the only route offered. */
+.dd-omfix-act { margin: 2px 0 9px; }
+.dd-omfix-act .btn { width: 100%; justify-content: center; }
 /* Folded away by default — <details> needs no script, so it cannot break. */
 .dd-omdet { margin-top: 12px; }
 .dd-omdet summary {
