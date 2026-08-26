@@ -8745,6 +8745,37 @@ const SIT_AUDIO = (() => {
            heartbeat, recordOutcome, omLog };
 })();
 
+// ---- what to tell the member when the Om did not sound ----------------------
+// ⚠ MEASURED, not guessed. Over adb on 2026-08-24 (status §3d) the renderer process
+// was seen being demoted from `cpuset:/top-app` to `/background` the instant the
+// screen slept, which stops it feeding an audio stream that is otherwise open,
+// focused and marked `started`. The operator then established by controlled test
+// (2026-08-26) that vivo's **"Background power smart control"** is decisive on its
+// own: switch it to "Allow background power usage" and the Om sounds; switch it
+// back and it does not.
+//
+// ⚠ SO THERE IS NOTHING TO FIX IN CODE. Android exposes no API for an OEM's own
+// power controls — that toggle can only be changed by the person holding the
+// phone. An APK cannot do it, a permission cannot do it, and a foreground service
+// would not reach it either. Telling the member plainly IS the fix, which is why
+// this is a string and not a feature.
+//
+// ⚠ Shown ONLY to someone whose Om actually failed (omDiagHtml() returns "" when
+// every recorded sitting reached its Om), so a phone where this works never sees
+// it. Keep it that way: this is reassurance for the affected, not a warning for
+// everyone.
+const OM_FIX_HTML = `
+  <div class="dd-omfix">
+    <div class="dd-omfix-h">The closing Om did not sound</div>
+    <p>Your sitting was recorded correctly — only the closing Om was affected. Your phone's
+      battery saver paused the app while the screen was off.</p>
+    <p>To stop it happening again, set this once:</p>
+    <div class="dd-omfix-path">Settings › Battery › Background power control ›
+      Samarpan Upanishad › <b>Allow background power usage</b></div>
+    <p class="dd-omfix-alt">Some phones call this <b>Unrestricted</b>, or <b>Don't optimise</b>.</p>
+    <p>Until it is set, the Om will sound when you next pick up the phone.</p>
+  </div>`;
+
 // ---- reading the stall recorder --------------------------------------------
 // ⚠ The two file positions sit side by side on purpose, and they are the whole
 // point of the line. `file stopped at` is where the media clock died. `page last
@@ -8987,9 +9018,12 @@ function openSitScreen(armed) {
     // make anyone anxious about.
     noteEl.textContent = rec ? "Recorded in your diary." : "";
     if (audio && !audio.reached) {
+      // ⚠ The member gets a sentence and where to go, NOT the raw figures. This is
+      // the screen someone sees at the end of a sitting; `file stopped at 0:27 ·
+      // DARK 0:26→12:49` belongs in Reports → Backup, which is where it still is.
       noteEl.textContent = (rec ? "Recorded in your diary. " : "")
-        + "⚠ The closing sound did not come from the sitting — it played just now instead. "
-        + ddOmLine(audio);
+        + "⚠ The closing Om did not sound while the screen was off — your phone's battery saver "
+        + "paused the app. Reports › Backup shows the one setting that fixes it.";
       noteEl.classList.add("dd-sit-warn");
     }
     ov.querySelector(".dd-sit-end").textContent = "Done";
@@ -10709,16 +10743,19 @@ async function mountDhyanDiary(node) {
     try { log = SIT_AUDIO.omLog(); } catch (_) { return ""; }
     if (!log.length || !log.some((r) => !r.reached)) return "";
     return `
-      <div class="dd-sect-label">Closing sound — recent sittings</div>
-      <div class="dd-omlog">${log.map((r) => `
-        <div class="dd-omrow${r.reached ? "" : " bad"}">
-          <b>${r.reached ? "✓" : "✕"} ${escapeHtml(String(r.at || "?"))} · ${
-            escapeHtml(ddOmClock(r.targetSec))} sitting</b>
-          <span>${escapeHtml(ddOmLine(r))}</span>
-        </div>`).join("")}</div>
-      <div class="dd-backup-note">✕ means the Om did not come from the sitting itself — it played
-        late, when the screen came back. The two file positions in each line are what identify the
-        cause, so read them out as they are when reporting this.</div>`;
+      ${OM_FIX_HTML}
+      <details class="dd-omdet">
+        <summary>Technical detail</summary>
+        <div class="dd-omlog">${log.map((r) => `
+          <div class="dd-omrow${r.reached ? "" : " bad"}">
+            <b>${r.reached ? "✓" : "✕"} ${escapeHtml(String(r.at || "?"))} · ${
+              escapeHtml(ddOmClock(r.targetSec))} sitting</b>
+            <span>${escapeHtml(ddOmLine(r))}</span>
+          </div>`).join("")}</div>
+        <div class="dd-backup-note">✕ means the Om did not come from the sitting itself — it played
+          late, when the screen came back. The two file positions in each line identify the cause,
+          so read them out as they are if you report this.</div>
+      </details>`;
   }
 
   function render() {

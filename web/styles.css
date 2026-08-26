@@ -4315,6 +4315,28 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
    Shown only on a device that has actually failed to deliver the Om from the
    sitting itself. Delete this block together with SIT_AUDIO's recorder once the
    locked-phone stall is understood. */
+/* The plain-language fix, shown above the figures. Calm, not alarming: the
+   sitting was recorded, only the sound was lost, and one setting fixes it. */
+.dd-omfix {
+  margin-top: 14px; padding: 13px 14px; border-radius: 13px;
+  background: var(--accent-soft); border: 1px solid var(--border);
+}
+.dd-omfix-h { font-size: 13.5px; font-weight: 700; color: var(--text); margin-bottom: 7px; }
+.dd-omfix p { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 0 0 7px; }
+.dd-omfix p:last-child { margin-bottom: 0; }
+.dd-omfix-path {
+  font-size: 12px; line-height: 1.6; color: var(--text); font-weight: 600;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 9px; padding: 8px 10px; margin: 0 0 7px;
+}
+.dd-omfix-path b { color: var(--accent); }
+.dd-omfix-alt b { color: var(--text); font-weight: 650; }
+/* Folded away by default — <details> needs no script, so it cannot break. */
+.dd-omdet { margin-top: 12px; }
+.dd-omdet summary {
+  cursor: pointer; font-size: 11px; font-weight: 650; color: var(--muted);
+  letter-spacing: .06em; text-transform: uppercase; padding: 5px 2px;
+}
 .dd-omlog { margin-top: 4px; }
 .dd-omrow { border-top: 1px solid var(--border); padding: 7px 2px; font-size: 11px; line-height: 1.55; }
 .dd-omrow b { display: block; font-size: 11.5px; color: var(--text); }
