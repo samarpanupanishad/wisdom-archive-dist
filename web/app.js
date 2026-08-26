@@ -12432,11 +12432,33 @@ const MOBILE_UI = (() => {
     }
   }
 
+  // Same trick as goFresh, for a Special/Letterpad notification tap. Without
+  // it msgReaderPage mounts on whatever that section's cache already holds
+  // (usually the PREVIOUS message — a push arrives seconds after publish, so
+  // the new row is rarely cached yet), then silently jumps once its own
+  // background refresh catches up. That jump is correct but the flash before
+  // it reads as "the tap didn't work". Syncing here first, before the reader
+  // ever mounts, means the common case never flashes anything — msgReaderPage's
+  // own `wanted`-chasing stays as the fallback for a sync that is slow or fails.
+  async function goFreshMsg(hash, key) {
+    const sec = MSG_SECTIONS[key];
+    document.body.insertAdjacentHTML("beforeend", `<div class="m-freshsync" id="m-freshsync-msg">
+      <div class="m-fs-card"><div class="m-fs-spin"></div>
+        <div class="m-fs-text">संदेश लाया जा रहा है…</div></div></div>`);
+    try { if (sec && sec.refresh) await sec.refresh(); }
+    catch (_) {}
+    finally { const s = $("m-freshsync-msg"); if (s) s.remove(); }
+    go(hash);
+  }
+
   // Resuming a backgrounded app never re-checked for new content at all — the
   // second half of the same bug. Re-sync on wake (throttled) and repaint when
   // the reader is sitting on the daily feed, where "latest" is what's on screen.
   const SYNC_ON_WAKE_MS = 10 * 60 * 1000;
   const AT_HOME_RE = /^#\/?(\?.*)?$/;
+  // A Special/Letterpad reader route WITH an id — "#/m/special" (index only,
+  // nothing to chase) must not go through goFreshMsg.
+  const MSG_READER_RE = /^#\/m\/(?:special|letterpad)\/[^/?]+/;
   if (_capApp && _capApp.addListener) {
     _capApp.addListener("appStateChange", (st) => {
       if (!st || !st.isActive) return;
@@ -12821,6 +12843,12 @@ const MOBILE_UI = (() => {
         }
         try {
           if (data.kind === "daily" || AT_HOME_RE.test(route)) goFresh(route, data.cv || "");
+          // Special/Letterpad, landing on a specific message: sync first so the
+          // reader never flashes the previous cached message before jumping to
+          // the one this tap is about (see goFreshMsg above).
+          else if ((data.kind === "special" || data.kind === "letterpad") && MSG_READER_RE.test(route)) {
+            goFreshMsg(route, data.kind);
+          }
           else go(route);
         } catch (_) {}
       });
