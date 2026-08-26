@@ -16659,7 +16659,16 @@ const MOBILE_UI = (() => {
       }
       paint();
     };
-    await refresh();
+    // ⚠ NOT awaited (2026-08-26, operator). pageFrame() above already put this
+    // page's DOM on screen, so awaiting the network fetch here just left the
+    // नम्र विनंती + compose box + Send button sitting blank for as long as
+    // WA.recentThoughts() took — the cached thoughts would show, then 2-3s
+    // later the rest of the screen would pop in. Nothing below this line reads
+    // `items`/`note`/`mineSlots`'s post-fetch values, so there is nothing to
+    // wait for: the instructions and box paint immediately, refresh() updates
+    // the list in place (exactly as the timer's own un-awaited call already
+    // does) whenever it resolves.
+    refresh();
 
     // ---- 2. the instructions ----------------------------------------------
     // Painted once, outside every repaint path, like the box below it.
