@@ -611,6 +611,16 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    here and .m-ganga-instr. Change one, change the other. */
 .prose.wa-goal { background: none; border: none; box-shadow: none; border-radius: 0; padding: 0; color: #523f86; }
 
+/* Our Goal: the sun beside the opening line, and the phone/people/book beside
+   each of the three pillar headings (Digital Library / Samuhik Satsang /
+   Personal Spiritual Diary). The pillar headings use #c2185b — the same pink
+   already used for the Daily/Special/Letterhead tile names (.mm-t-daily
+   .mm-name etc below) — per the operator's instruction to reuse that exact
+   colour rather than the docx's own magenta. */
+.wa-goal-sun { display: inline-flex; vertical-align: -6px; margin-right: 6px; }
+.wa-goal-pillar { display: inline-flex; align-items: center; gap: 6px; color: #c2185b; }
+.wa-goal-ico { display: inline-flex; color: #c2185b; }
+
 /* ---- Our Goal: the closing "Jai Baba Swami" line ------------------------
    Rose bookends, bold orange text, sparkle stars floating above (not around)
    the words -- the same twinkle as "Your Lucky Msg for Today"

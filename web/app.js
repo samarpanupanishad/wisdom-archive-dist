@@ -3701,11 +3701,34 @@ async function renderStats() {
 // would announce as blank lines.
 const JAI_BABA_SWAMI_LINE = `<div class="wa-jai"><span class="wa-jai-spark s1">✨</span><span class="wa-jai-spark s2">⭐</span><span class="wa-jai-spark s3">✨</span><span class="wa-jai-text">🌹 Jai Baba Swami 🌹</span></div>`;
 
+// ⚠ REPLACED 2026-08-26 from the operator's own "Our Goal new.docx" (three
+// pillars: Digital Library / Samuhik Satsang / Personal Spiritual Diary).
+// Structure (bold+underline heading, a hard line break, then the description)
+// is transcribed exactly as the document has it — including the em dashes,
+// the straight quotes around "seven layers deep", and "poorna" as
+// bold+italic+underline. The ONE deliberate deviation from the document: its
+// heading colour (a bright magenta) is swapped for #c2185b, the same pink
+// already used for the Daily/Special/Letterhead tile names elsewhere in the
+// app (`.mm-t-daily .mm-name` etc in styles.css) — the operator's own
+// instruction, not a transcription error. Icons beside each pillar are new
+// (operator asked for them): sun beside the opening line, a phone for Digital
+// Library, the same people glyph used for Samuhik Satsang elsewhere in the
+// app, and the same book glyph used for Personal Diary elsewhere. `WA_GOAL_IC`
+// is declared at module scope (not inside MOBILE_UI's IC) because this page
+// renders on desktop too.
+const WA_GOAL_IC = {
+  sun: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#eda600" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4" fill="#fde28a" stroke="#eda600"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/></svg>`,
+  phone: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M10.5 18.5h3"/></svg>`,
+  people: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="7.1" r="1.85"/><path d="M2.1 12.9c0-1.8 1.3-2.9 2.9-2.9s2.9 1.1 2.9 2.9"/><circle cx="19" cy="7.1" r="1.85"/><path d="M16.1 12.9c0-1.8 1.3-2.9 2.9-2.9s2.9 1.1 2.9 2.9"/><circle cx="12" cy="6.1" r="2"/><path d="M8.7 12.4c0-2 1.5-3.2 3.3-3.2s3.3 1.2 3.3 3.2"/><circle cx="8.3" cy="14.3" r="2.1"/><path d="M4.5 21c0-2.2 1.7-3.6 3.8-3.6s3.8 1.4 3.8 3.6"/><circle cx="15.7" cy="14.3" r="2.1"/><path d="M11.9 21c0-2.2 1.7-3.6 3.8-3.6s3.8 1.4 3.8 3.6"/></svg>`,
+  book: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.6C10.4 5.1 8.2 4.5 4 4.8v13c4.2-.3 6.4.3 8 1.8 1.6-1.5 3.8-2.1 8-1.8v-13c-4.2-.3-6.4.3-8 1.8z"/><path d="M12 6.6v13"/></svg>`,
+};
+
 const OUR_GOAL = [
-  `<strong>Samarpan Upanishad</strong> is an initiative dedicated in exploring the deeper meaning behind our Guru's daily quotes, Special Telegram Sandesh, and Anusthan messages —and to unearth its true meaning, which is hidden “<em><u>seven layers deep”</u></em>.`,
-  `In simple terms, we are trying to decode our Guru's teaching, <em><u>"Samaj Sako Toh Samjo"</u></em> in its original and complete form.`,
-  `We follow the spirit of <strong>Vasudhaiva Kutumbakam</strong> — the world is one family — and believe everyone has the right to share their opinion with an open and unbiased mind. Our only request is that members refrain from spamming the forum, as we consider the act of sharing to be “<em><u>sacred”.</u></em>`,
-  `Our ultimate goal is to understand <em><u>Vedic</u></em> texts through the lens of our Guru's discourses, and to download cosmic knowledge while sitting silently under “<em><u>Gurus Divine Grace”</u></em>.`,
+  `<span class="wa-goal-sun">${WA_GOAL_IC.sun}</span>To know the Self in its <strong><em><u>poorna</u></em></strong> form — under the grace and guidance of our beloved <strong>Guru</strong>.`,
+  `<strong>Samarpan Upanishad</strong> walks this path on three pillars:`,
+  `<strong class="wa-goal-pillar"><span class="wa-goal-ico">${WA_GOAL_IC.phone}</span><u>Digital Library</u></strong><br>Every word of Guru is preserved and easily searchable. Just type the keyword you remember, and even the oldest message will appear at your fingertips. You will never miss a single word.`,
+  `<strong class="wa-goal-pillar"><span class="wa-goal-ico">${WA_GOAL_IC.people}</span><u>Samuhik Satsang</u></strong><br>Here, we explore the deeper meaning behind our Guru's messages — discussing with other sadhaks and trying to unearth the truth which is hidden "seven layers deep."`,
+  `<strong class="wa-goal-pillar"><span class="wa-goal-ico">${WA_GOAL_IC.book}</span><u>Personal Spiritual Diary</u></strong><br>Your daily dhyan, your daily granth-pathan, your spiritual progress — digitally recorded, only for you, safe in your own phone. Data not stored anywhere.`,
 ];
 
 // The version band pins directly under whichever top bar is on screen, and
