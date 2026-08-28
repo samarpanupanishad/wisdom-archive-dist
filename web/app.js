@@ -8768,6 +8768,192 @@ const SIT_AUDIO = (() => {
            heartbeat, recordOutcome, omLog };
 })();
 
+// ---- the aarti's audio -------------------------------------------------------
+// ⚠ A MEDIA ELEMENT, AND NOTHING ELSE. There is no AudioContext in this module
+// and none may be added — not even an AnalyserNode to make the flame dance to
+// the singing. Putting a media element through the Web Audio graph is exactly
+// what stopped Android treating the dhyan Om as media playback, and undoing it
+// cost three publishes (§3). The flame flickers on a CSS keyframe instead, which
+// also reads better: a real diya breathes, it does not pulse on the beat.
+//
+// The other half of that lesson is why the screen is held awake here. On at
+// least one phone the renderer is demoted out of `cpuset:/top-app` the moment
+// the screen sleeps and simply stops being fed (§3d). The aarti is 4:50 long and
+// is meant to be watched, so holding the display on for it sidesteps that whole
+// class of failure rather than betting against an OEM's power manager. The lock
+// is released the instant playback stops, and its absence is never fatal.
+const AARTI_AUDIO = (() => {
+  const FILE = "aarti-baba-swami.mp3";
+  const ART_FILE = "guru-charan.png";
+  // ⚠ The words as the operator gave them, 2026-08-28. Not to be "corrected" —
+  // this is how the singer is named.
+  const TITLE = "ॐ जय बाबा स्वामी";
+  const CREDIT = "Aarti by the Pratham Shishya GuruMaa";
+  // What counts as having sung it through. Deliberately not 1.0: the recording
+  // ends on two seconds of silence, and people set the phone down before it
+  // runs out. Also not the start — a lamp lit and abandoned is not an aarti.
+  const DONE_FRAC = 0.9;
+
+  let a = null;        // the one element, reused for the life of the page
+  let lock = null;     // screen wake lock, held only while playing
+  let startedAt = 0;   // when THIS playthrough began, ms
+  let recorded = false;// this playthrough has already been written to the diary
+
+  // ⚠ Assets arrive over the air, so on a phone they are wherever the frozen
+  // shell put them. SIT_AUDIO already knows how to ask; do not re-derive it.
+  const src = (f) => SIT_AUDIO.assetUrl(f);
+
+  async function acquire() {
+    try {
+      if (lock || !navigator.wakeLock) return;
+      lock = await navigator.wakeLock.request("screen");
+      // Android drops the lock itself whenever the page is hidden; forget it
+      // here so a later re-acquire is not skipped as already held.
+      lock.addEventListener("release", () => { lock = null; });
+    } catch (_) { lock = null; }
+  }
+  function release() {
+    try { if (lock) lock.release(); } catch (_) {}
+    lock = null;
+  }
+
+  function element() {
+    if (a) return a;
+    a = new Audio();
+    a.preload = "metadata";
+    a.src = src(FILE);
+    a.addEventListener("play", () => {
+      if (!startedAt) startedAt = Date.now();
+      acquire(); session("playing");
+    });
+    a.addEventListener("playing", () => { acquire(); position(); });
+    a.addEventListener("pause", () => { release(); session("paused"); });
+    a.addEventListener("ended", () => { release(); session("none"); reset(); });
+    a.addEventListener("loadedmetadata", position);
+    // ⚠ The diary entry is written HERE, from the media clock, and not by the
+    // aarti screen. Someone who taps back to the main page — or closes the
+    // diary altogether — while it plays has still sung the aarti, and the
+    // record must not depend on a particular view being on screen to see it.
+    a.addEventListener("timeupdate", () => {
+      if (recorded || !state().through) return;
+      recorded = true;
+      record();
+    });
+    // A wake lock does not survive the page being hidden, so take it again when
+    // we come back if the aarti is still running.
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && a && !a.paused) acquire();
+    });
+    return a;
+  }
+
+  // The lock-screen player. Four lines of standard API, and it is also the
+  // honest signal to Android that this IS media playback.
+  function session(state) {
+    const ms = navigator.mediaSession;
+    if (!ms) return;
+    try {
+      if (!ms.metadata && typeof MediaMetadata === "function") {
+        ms.metadata = new MediaMetadata({
+          title: TITLE,
+          artist: CREDIT,
+          album: "Samarpan Upanishad",
+          artwork: [{ src: src(ART_FILE), sizes: "512x512", type: "image/png" }],
+        });
+      }
+      ms.playbackState = state;
+      ms.setActionHandler("play", () => { play(); });
+      ms.setActionHandler("pause", () => { pause(); });
+      ms.setActionHandler("stop", () => { stop(); });
+      // ⚠ Deliberately NO seek/next/previous handlers. An aarti is not a track
+      // to scrub through, and leaving them unset keeps those buttons off the
+      // lock screen entirely.
+    } catch (_) {}
+  }
+  function position() {
+    const ms = navigator.mediaSession;
+    if (!ms || !ms.setPositionState || !a) return;
+    // Throws outright on a NaN duration, which is the state before metadata
+    // has loaded — so it is guarded rather than trusted.
+    try {
+      if (!isFinite(a.duration) || a.duration <= 0) return;
+      ms.setPositionState({ duration: a.duration,
+                            position: Math.min(a.currentTime, a.duration),
+                            playbackRate: 1 });
+    } catch (_) {}
+  }
+
+  // A playthrough is over: the next one is a new record, not a continuation.
+  function reset() { startedAt = 0; recorded = false; }
+
+  // ⚠ The length stored is the AARTI'S length, not the seconds anyone happened
+  // to be listening for. It has one length; pausing halfway and coming back
+  // does not make it a shorter aarti.
+  function record() {
+    try {
+      const dur = state().dur;
+      SADHANA.add({
+        kind: "aarti",
+        startedAt: new Date(startedAt || Date.now()).toISOString(),
+        actualSec: Math.round(dur || 0),
+        source: "timer",
+      });
+      if (typeof _ddRefresh === "function") _ddRefresh();
+    } catch (_) {}
+  }
+
+  // Resolves with the length in seconds, 0 if the file will not load. Used to
+  // show the duration before anyone commits to starting it.
+  function ready() {
+    const el2 = element();
+    if (isFinite(el2.duration) && el2.duration > 0) return Promise.resolve(el2.duration);
+    return new Promise((res) => {
+      let done = false;
+      const ok = () => { if (!done) { done = true; res(isFinite(el2.duration) ? el2.duration : 0); } };
+      el2.addEventListener("loadedmetadata", ok, { once: true });
+      el2.addEventListener("error", () => { if (!done) { done = true; res(0); } }, { once: true });
+      setTimeout(ok, 6000);
+      try { el2.load(); } catch (_) {}
+    });
+  }
+
+  // ⚠ MUST be called from inside a tap. Android grants audio only on a gesture;
+  // an aarti started by anything else is silence with no error anywhere.
+  function play() { const el2 = element(); return el2.play().catch(() => {}); }
+  function pause() { if (a) a.pause(); }
+  function stop() {
+    if (!a) return;
+    a.pause();
+    try { a.currentTime = 0; } catch (_) {}
+    reset();
+  }
+  function restart() {
+    const el2 = element();
+    reset();
+    try { el2.currentTime = 0; } catch (_) {}
+    return play();
+  }
+
+  function state() {
+    const el2 = a;
+    const dur = el2 && isFinite(el2.duration) ? el2.duration : 0;
+    const cur = el2 ? el2.currentTime || 0 : 0;
+    return {
+      playing: !!(el2 && !el2.paused && !el2.ended),
+      started: !!(el2 && cur > 0),
+      cur, dur,
+      frac: dur ? Math.min(1, cur / dur) : 0,
+      through: !!(dur && cur >= dur * DONE_FRAC),
+    };
+  }
+
+  // ⚠ No seek() and no setPosition() is exposed. Nothing in the app may move the
+  // playhead except restart() — the completion record is only honest while the
+  // media clock can be trusted to mean "this much of it was actually sung".
+  return { play, pause, stop, restart, ready, state, element, release,
+           TITLE, CREDIT, FILE, DONE_FRAC };
+})();
+
 // ---- what to tell the member when the Om did not sound ----------------------
 // ⚠ MEASURED, not guessed. Over adb on 2026-08-24 (status §3d) the renderer process
 // was seen being demoted from `cpuset:/top-app` to `/background` the instant the
@@ -9745,7 +9931,12 @@ function openDhyanManual(onSaved, preset) {
   const todayKey = SADHANA.today();
   const baseMs = Date.parse(todayKey + "T00:00:00Z");
 
-  let kind = (preset && preset.kind === "japa") ? "japa" : "dhyan";
+  let kind = (preset && (preset.kind === "japa" || preset.kind === "aarti"))
+    ? preset.kind : "dhyan";
+  // The aarti's length is the FILE's, never typed in — same rule as the live
+  // one. Asked for as soon as the sheet opens so it is known by Save.
+  let aartiSec = 0;
+  AARTI_AUDIO.ready().then((d) => { aartiSec = Math.round(d) || 0; });
   let mode = (preset && (preset.mode === "maun" || preset.mode === "guru"))
     ? preset.mode
     : (SADHANA.settings().defaultMode === "maun" ? "maun" : "guru");
@@ -9787,6 +9978,7 @@ function openDhyanManual(onSaved, preset) {
         <div class="dd-modes" role="group" aria-label="What">
           <button class="dd-mode" data-k="dhyan">Dhyan</button>
           <button class="dd-mode" data-k="japa">Naam Jaap</button>
+          <button class="dd-mode" data-k="aarti">Aarti</button>
         </div>
         <div class="dd-man-body"></div>
         <div class="dd-man-when" data-when></div>
@@ -9820,7 +10012,11 @@ function openDhyanManual(onSaved, preset) {
 
   function paint() {
     ov.querySelectorAll("[data-k]").forEach((b) => b.classList.toggle("on", b.dataset.k === kind));
-    body.innerHTML = kind === "dhyan"
+    body.innerHTML = kind === "aarti"
+      ? `<div class="dd-man-row">${wheelBox("Day", "w-day")}${wheelBox("Started", "w-time")}</div>
+         <div class="dd-man-hint">The aarti has one length — its own. Only when you sang it is
+           asked for here.</div>`
+      : kind === "dhyan"
       ? `<div class="dd-man-row">${wheelBox("Day", "w-day")}</div>
          <div class="dd-man-row">${wheelBox("Started", "w-time")}${wheelBox("Minutes", "w-dur")}</div>
          <div class="dd-modes dd-man-modes" role="group" aria-label="Mode">
@@ -9836,7 +10032,9 @@ function openDhyanManual(onSaved, preset) {
     makeWheel(body.querySelector(".w-time"), { values: QUARTERS, value: quarter, format: timeLabel,
       onChange: (v) => { quarter = v; refreshWhen(); } });
 
-    if (kind === "dhyan") {
+    if (kind === "aarti") {
+      // Day and time only — both wheels are already made above.
+    } else if (kind === "dhyan") {
       makeWheel(body.querySelector(".w-dur"), { values: DUR, value: DUR.includes(mins) ? mins : 30,
         format: (v) => String(v), onChange: (v) => { mins = v; } });
       body.querySelectorAll("[data-m]").forEach((b) => b.addEventListener("click", () => {
@@ -9874,7 +10072,10 @@ function openDhyanManual(onSaved, preset) {
     if (at > new Date()) { toast("That time hasn't happened yet."); return; }
 
     let rec;
-    if (kind === "dhyan") {
+    if (kind === "aarti") {
+      rec = SADHANA.add({ kind: "aarti", startedAt: at.toISOString(),
+                          actualSec: aartiSec, source: "manual" });
+    } else if (kind === "dhyan") {
       rec = SADHANA.add({ kind: "dhyan", startedAt: at.toISOString(), actualSec: mins * 60,
                           mode, targetMin: mins, source: "manual" });
     } else {
@@ -10012,6 +10213,162 @@ function ddRemindersEl(onChanged) {
   return wrap;
 }
 
+// The editor for one aarti reminder. Wheels for the clock, like everything else
+// in this diary — plus the one thing the sitting reminder has no need of: which
+// days it applies to.
+function openAartiReminderEditor(existing, onSave) {
+  let hour = existing ? existing.hour : 19;      // 7 PM — the usual evening aarti
+  let minute = existing ? existing.minute : 0;
+  // The editor thinks in "which days are ticked", all seven meaning every day.
+  // Storage thinks in "[] means every day". That conversion happens once, on
+  // save, and nowhere else.
+  const stored = AARTI_REMIND.cleanDays(existing && existing.days);
+  const sel = new Set(stored.length ? stored : [0, 1, 2, 3, 4, 5, 6]);
+
+  const HOURS = Array.from({ length: 24 }, (_, i) => i);
+  const MINS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+  const hLabel = (h) => `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`;
+  const two = (n) => (n < 10 ? "0" + n : "" + n);
+  // ⚠ One initial per chip, in week order. Two of them are "T" and two are "S";
+  // the summary line underneath spells the days out, which is what makes the
+  // ambiguity harmless.
+  const INITIAL = ["S", "M", "T", "W", "T", "F", "S"];
+
+  const ov = el(`
+    <div class="dd-sheet-ov">
+      <div class="dd-sheet dd-man" role="dialog" aria-label="Aarti reminder">
+        <div class="dd-sheet-h">${existing ? "Edit aarti reminder" : "Remind me for aarti"}</div>
+        <div class="dd-man-row">
+          <div class="dd-man-w"><div class="dd-man-lab">Hour</div>
+            <div class="dd-spin"><div class="m-dp-selrow"></div><div class="m-dp-wheel w-h"></div></div></div>
+          <div class="dd-man-w"><div class="dd-man-lab">Minute</div>
+            <div class="dd-spin"><div class="m-dp-selrow"></div><div class="m-dp-wheel w-m"></div></div></div>
+        </div>
+        <div class="dd-man-lab dd-days-lab">On these days</div>
+        <div class="dd-days-row" role="group" aria-label="Days">
+          ${INITIAL.map((t, i) => `
+            <button class="dd-dchip" data-day="${i}" aria-pressed="false"
+              aria-label="${AARTI_REMIND.DAY_NAMES[i]}">${t}</button>`).join("")}
+        </div>
+        <div class="dd-man-when" data-when></div>
+        <div class="dd-sheet-btns">
+          <button class="btn" data-cancel>Cancel</button>
+          <button class="btn primary" data-ok>Save</button>
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(ov);
+
+  const when = ov.querySelector("[data-when]");
+  const okBtn = ov.querySelector("[data-ok]");
+  const refresh = () => {
+    ov.querySelectorAll("[data-day]").forEach((b) => {
+      const on = sel.has(+b.dataset.day);
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    const clock = hLabel(hour).replace(" ", ":" + two(minute) + " ");
+    if (!sel.size) {
+      // ⚠ Said plainly and the button disabled — NOT silently "corrected" to
+      // every day. Nothing ticked is someone mid-thought, not a mistake whose
+      // meaning we should guess on their behalf.
+      when.textContent = "Pick at least one day.";
+      when.classList.add("bad");
+      okBtn.disabled = true;
+      return;
+    }
+    when.classList.remove("bad");
+    okBtn.disabled = false;
+    when.textContent = `Aarti at ${clock}, ${AARTI_REMIND.daysLabel({
+      days: sel.size >= 7 ? [] : Array.from(sel) })}.`;
+  };
+
+  makeWheel(ov.querySelector(".w-h"), { values: HOURS, value: hour, format: hLabel,
+    onChange: (v) => { hour = v; refresh(); } });
+  makeWheel(ov.querySelector(".w-m"), { values: MINS, value: MINS.includes(minute) ? minute : 0,
+    format: two, onChange: (v) => { minute = v; refresh(); } });
+  ov.querySelectorAll("[data-day]").forEach((b) => b.addEventListener("click", () => {
+    const d = +b.dataset.day;
+    if (sel.has(d)) sel.delete(d); else sel.add(d);
+    hapticTickHook();
+    refresh();
+  }));
+  refresh();
+
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  ddOverlay(ov, close);   // Android back here means exactly this popup's Cancel
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector("[data-cancel]").addEventListener("click", close);
+  ov.querySelector("[data-ok]").addEventListener("click", () => {
+    if (!sel.size) return;
+    close();
+    onSave({ hour, minute, days: sel.size >= 7 ? [] : Array.from(sel).sort(), on: true });
+  });
+}
+
+// The aarti half of the Reminders page. Same shape as the sitting reminders
+// above it, so the page reads as one thing — the only visible difference is the
+// line of days under each time.
+function aartiRemindersEl(onChanged) {
+  const two = (n) => (n < 10 ? "0" + n : "" + n);
+  const clock = (h, m) => `${h % 12 || 12}:${two(m)} ${h < 12 ? "AM" : "PM"}`;
+  const rs = AARTI_REMIND.list();
+  const wrap = el(`
+    <div class="dd-backup dd-rem">
+      <div class="dd-backup-h">Aarti reminder</div>
+      <div class="dd-rem-list"></div>
+      ${rs.length < AARTI_REMIND.MAX ? `<button class="btn dd-rem-add" data-add>+ Remind me for aarti</button>` : ""}
+      <div class="dd-backup-note" data-remnote></div>
+    </div>`);
+  const list = wrap.querySelector(".dd-rem-list");
+
+  if (!rs.length) {
+    list.replaceChildren(el(`<div class="dd-rem-none">No aarti reminder is set. Add one for the time
+      you sing it — every day, or only on the days you choose.</div>`));
+  } else {
+    list.replaceChildren(...rs.map((r, i) => el(`
+      <div class="dd-rem-row${r.on ? "" : " off"}">
+        <button class="dd-rem-main" data-edit="${i}">
+          <div class="dd-rem-t">${clock(r.hour, r.minute)}</div>
+          <div class="dd-rem-s">🪔 ${escapeHtml(AARTI_REMIND.daysLabel(r))}</div>
+        </button>
+        <button class="dd-rem-tog" data-tog="${i}" aria-label="${r.on ? "Turn off" : "Turn on"}">${r.on ? "on" : "off"}</button>
+        <button class="dd-del" data-rem="${i}" aria-label="Remove">✕</button>
+      </div>`)));
+  }
+
+  const note = wrap.querySelector("[data-remnote]");
+  if (!AARTI_REMIND.available()) {
+    note.textContent = "Reminders work in the phone app. On a computer this is only a setting.";
+  } else {
+    AARTI_REMIND.permission().then((p) => {
+      note.textContent = p === "granted"
+        ? "You'll be called to the aarti at this time."
+        : "Notifications are switched off for this app, so no reminder can arrive. Turn them on in Android's app settings.";
+    });
+  }
+
+  const commit = async (rs2) => { await AARTI_REMIND.save(rs2); onChanged(); };
+  wrap.querySelectorAll("[data-add]").forEach((b) => b.addEventListener("click", () =>
+    openAartiReminderEditor(null, (r) => commit(rs.concat([r])))));
+  wrap.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => {
+    const i = +b.dataset.edit;
+    openAartiReminderEditor(rs[i], (r) => { const c = rs.slice(); c[i] = Object.assign({}, r, { on: rs[i].on }); commit(c); });
+  }));
+  wrap.querySelectorAll("[data-tog]").forEach((b) => b.addEventListener("click", () => {
+    const i = +b.dataset.tog, c = rs.slice();
+    c[i] = Object.assign({}, c[i], { on: !c[i].on });
+    hapticTickHook(); commit(c);
+  }));
+  wrap.querySelectorAll("[data-rem]").forEach((b) => b.addEventListener("click", () => {
+    const i = +b.dataset.rem;
+    commit(rs.filter((_, k) => k !== i));
+  }));
+  return wrap;
+}
+
 // ---- the sitting reminder ---------------------------------------------------
 // Plan §7. The ONE notification this feature has, and the deliberate opposite
 // of §6: BEFORE a sitting the user has asked to be interrupted; during and at
@@ -10113,6 +10470,163 @@ const DHYAN_REMIND = (() => {
   }
 
   return { available, list, save, sync, bindTap, permission, notifyAt, MAX };
+})();
+
+// ---- the aarti reminder ------------------------------------------------------
+// ⚠ A SEPARATE list and a separate id range from the sitting reminder above,
+// not a flag on it. The two are different promises: a sitting reminder fires
+// BEFORE the sitting and carries a lead time so you can wind down and arrive;
+// the aarti reminder IS the call to aarti, at the moment it is due. And this one
+// can be limited to chosen weekdays, which the sitting reminder cannot. Folding
+// them into one shape would mean one of them lying about itself.
+//
+// ⚠ This does not breach the rule that nothing may be scheduled around a
+// sitting (plan §6). That rule protects the sit itself — phone dark, nothing
+// arriving. An aarti is sung aloud in front of the lamp; being called to it is
+// the whole point.
+const AARTI_REMIND = (() => {
+  // 8 ids per reminder: slot 0 is the every-day one, slots 1..7 are the
+  // weekday ones (1 = Sunday, as Android counts them). Ids are worked out, never
+  // handed round, so nothing here can collide with DHYAN_REMIND's 41001..41003.
+  const BASE_ID = 41101, MAX = 3, STRIDE = 8;
+  const idFor = (i, slot) => BASE_ID + i * STRIDE + slot;
+  const ALL_IDS = () => {
+    const out = [];
+    for (let i = 0; i < MAX; i++) for (let sl = 0; sl < STRIDE; sl++) out.push({ id: idFor(i, sl) });
+    return out;
+  };
+
+  const LN = () => {
+    const P = window.Capacitor && window.Capacitor.Plugins;
+    return (P && P.LocalNotifications) || null;
+  };
+  const available = () => !!LN();
+
+  // 0 = Sunday … 6 = Saturday, matching Date#getDay so nothing has to be
+  // translated when the UI shows them. Android's Weekday enum is 1-based, and
+  // that +1 happens once, at the point of scheduling, and nowhere else.
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  function cleanDays(days) {
+    if (!Array.isArray(days)) return [];
+    // ⚠ Filter the NON-NUMBERS OUT FIRST. Number(null), Number(""), Number(false)
+    // and Number([]) are all 0, which is Sunday — so a junk value in a restored
+    // backup would quietly arm a reminder nobody set, on a day nobody chose.
+    const set = new Set(days
+      .filter((d) => typeof d === "number" || (typeof d === "string" && d.trim() !== ""))
+      .map(Number)
+      .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6));
+    // Every day is stored as [] and only as [] — otherwise "all seven ticked"
+    // and "every day" would be two spellings of one thing, and a later check
+    // would have to remember both.
+    return set.size >= 7 ? [] : Array.from(set).sort();
+  }
+  const everyDay = (r) => !cleanDays(r && r.days).length;
+  function daysLabel(r) {
+    const d = cleanDays(r && r.days);
+    if (!d.length) return "every day";
+    if (d.length === 5 && [1, 2, 3, 4, 5].every((x) => d.includes(x))) return "weekdays";
+    if (d.length === 2 && d.includes(0) && d.includes(6)) return "weekends";
+    return d.map((x) => DAY_NAMES[x]).join(", ");
+  }
+
+  // ⚠ Fixed when SCHEDULED, not when shown — same reason as the sitting
+  // reminder: someone who switches the app to English would otherwise keep
+  // being called in Hindi until the reminder happened to be re-armed.
+  function words() {
+    let en = false;
+    try { en = HindiType.mode() === "en"; } catch (_) {}
+    return en
+      ? { title: "Aarti", body: "It is time for the aarti." }
+      : { title: "आरती", body: "आरती का समय हो गया है।" };
+  }
+
+  const list = () => (SADHANA.settings().aartiReminders || []).slice(0, MAX);
+
+  async function permission() {
+    const ln = LN();
+    if (!ln) return "unavailable";
+    try {
+      let p = await ln.checkPermissions();
+      if (p && p.display === "prompt") p = await ln.requestPermissions();
+      return (p && p.display) || "unknown";
+    } catch (_) { return "unknown"; }
+  }
+
+  // One reminder becomes ONE notification when it is every-day, and one per
+  // chosen weekday otherwise — Android has no "these days" repeat, only a
+  // weekly one. Hence the id slots.
+  function notificationsFor(r, i, w) {
+    if (!r || !r.on) return [];
+    const base = {
+      title: w.title,
+      body: w.body,
+      // allowWhileIdle so Doze cannot swallow it outright. Exactness is not
+      // asked for: an aarti call a few minutes adrift is still the call.
+      extra: { route: "#/m/dhyan", aarti: 1 },
+    };
+    const days = cleanDays(r.days);
+    if (!days.length) {
+      return [Object.assign({}, base, {
+        id: idFor(i, 0),
+        schedule: { on: { hour: r.hour, minute: r.minute }, repeats: true, allowWhileIdle: true },
+      })];
+    }
+    return days.map((d) => Object.assign({}, base, {
+      id: idFor(i, d + 1),                       // +1: Android counts Sunday as 1
+      schedule: { on: { weekday: d + 1, hour: r.hour, minute: r.minute },
+                  repeats: true, allowWhileIdle: true },
+    }));
+  }
+
+  // ⚠ Re-armed on EVERY launch, like the sitting reminder, and for the same
+  // reasons: a reboot, a timezone change, a language switch, or a shell whose
+  // pending notifications were cleared out from under it.
+  async function sync() {
+    const ln = LN();
+    if (!ln) return false;
+    const rs = list();
+    // ⚠ Cancel the WHOLE id range, not just what we are about to schedule.
+    // Dropping Wednesday from a reminder leaves Wednesday's notification armed
+    // on the phone otherwise, and it would keep arriving for ever.
+    try { await ln.cancel({ notifications: ALL_IDS() }); } catch (_) {}
+    if (!rs.some((r) => r && r.on)) return true;
+    if ((await permission()) !== "granted") return false;
+    const w = words();
+    const notifications = rs.flatMap((r, i) => notificationsFor(r, i, w));
+    if (!notifications.length) return true;
+    try {
+      await ln.schedule({ notifications });
+      return true;
+    } catch (_) { return false; }
+  }
+
+  // Tapping it should land on the diary, ready to light the lamp.
+  function bindTap() {
+    const ln = LN();
+    if (!ln || !ln.addListener) return;
+    try {
+      ln.addListener("localNotificationActionPerformed", (a) => {
+        const id = a && a.notification && a.notification.id;
+        if (typeof id !== "number" || id < BASE_ID || id >= BASE_ID + MAX * STRIDE) return;
+        location.hash = MOBILE_UI.active ? "#/m/dhyan" : "#/dhyan";
+      });
+    } catch (_) {}
+  }
+
+  async function save(rs) {
+    SADHANA.setSettings({
+      aartiReminders: rs.slice(0, MAX).map((r) => ({
+        hour: Math.max(0, Math.min(23, Math.round(Number(r.hour) || 0))),
+        minute: Math.max(0, Math.min(59, Math.round(Number(r.minute) || 0))),
+        days: cleanDays(r.days),
+        on: r.on !== false,
+      })),
+    });
+    return sync();
+  }
+
+  return { available, list, save, sync, bindTap, permission,
+           cleanDays, daysLabel, everyDay, DAY_NAMES, MAX };
 })();
 
 // ---- the shareable report ---------------------------------------------------
@@ -10587,7 +11101,8 @@ let _ddBack = null;
 async function mountDhyanDiary(node) {
   let pendingJapaId = null;    // a japa just stopped, awaiting its mala count
   let ticker = null;
-  let view = "home";           // "home" | "japa" | "entries" | "reports" | "remind"
+  let aartiTimer = null;       // paints the lamp, and the aarti line on the tile
+  let view = "home";           // "home" | "japa" | "aarti" | "entries" | "reports" | "remind"
   let rtab = "d7";             // reports: "d7" | "d15" | "d30" | "progress" | "backup"
 
   const two = (n) => (n < 10 ? "0" + n : "" + n);
@@ -10618,6 +11133,7 @@ async function mountDhyanDiary(node) {
 
   const whatOf = (s) => s.kind === "japa" ? "Naam Jaap"
     : s.kind === "granth" ? "Granth Pathan"
+    : s.kind === "aarti" ? "Aarti"
     : (isMaun(s) ? "Dhyan (in Maun State)" : "Dhyan (with Guru Mantra)");
   const detailOf = (s) => {
     if (s.kind === "granth") {
@@ -10647,6 +11163,64 @@ async function mountDhyanDiary(node) {
     const pg = SADHANA.lastPage(b.id);
     if (!pg) return b.name;
     return `${b.name} · p. ${pg}${b.pages ? ` of ${b.pages}` : ""}`;
+  }
+
+  const aartisOn = (day) => SADHANA.byDay(day).filter((x) => x.kind === "aarti").length;
+
+  // The one line under the aarti tile. It answers the only question the tile is
+  // ever asked: has it been sung today, and is it running right now.
+  function aartiLine() {
+    const a = AARTI_AUDIO.state();
+    if (a.playing) return `playing · ${fmtClock(Math.round(a.cur))}`;
+    const today = aartisOn(SADHANA.today());
+    if (today) return today > 1 ? `sung ${today} times today` : "sung today";
+    if (a.started) return `paused · ${fmtClock(Math.round(a.cur))}`;
+    // ⚠ Never a hardcoded "4:50". The length is the file's, and the file is
+    // replaceable over the air — a number typed here would go stale silently.
+    return a.dur ? fmtClock(Math.round(a.dur)) : "tap to begin";
+  }
+
+  // ⚠ Painted IN PLACE, never by re-rendering. A render() mid-aarti would
+  // rebuild the lamp, restart its flicker and drop the ring back to zero for a
+  // frame — and it would do it four times a second.
+  function paintAarti() {
+    const ring = node.querySelector("[data-aring]");
+    if (!ring) return false;              // this screen is no longer up
+    const a = AARTI_AUDIO.state();
+    ring.style.setProperty("--p", (a.frac * 360).toFixed(1) + "deg");
+    const flame = node.querySelector("[data-aflame]");
+    if (flame) flame.classList.toggle("lit", a.playing);
+    const lamp = node.querySelector("[data-alamp]");
+    if (lamp) lamp.classList.toggle("on", a.playing);
+    const clock = node.querySelector("[data-aclock]");
+    if (clock) clock.textContent = a.started
+      ? `${fmtClock(Math.round(a.cur))} / ${fmtClock(Math.round(a.dur))}`
+      : (a.dur ? fmtClock(Math.round(a.dur)) : "");
+    const btn = node.querySelector("[data-aplay]");
+    if (btn) btn.textContent = a.playing ? "Pause" : a.started ? "Continue" : "Light the lamp";
+    const again = node.querySelector("[data-aagain]");
+    if (again) again.hidden = !a.started;
+    const cnt = node.querySelector("[data-acount]");
+    if (cnt) {
+      const t = aartisOn(SADHANA.today());
+      cnt.textContent = t ? (t > 1 ? `Sung ${t} times today` : "Sung today") : "";
+    }
+    return true;
+  }
+
+  // ONE interval for everything the aarti drives on screen — the lamp on its
+  // own page, or the single line on the home tile. It stops itself the moment
+  // there is nothing left to paint, so it can never outlive the screen.
+  function startAartiTicker() {
+    if (aartiTimer) { clearInterval(aartiTimer); aartiTimer = null; }
+    const stop = () => { clearInterval(aartiTimer); aartiTimer = null; };
+    aartiTimer = setInterval(() => {
+      if (!node.isConnected) return stop();
+      const painted = paintAarti();
+      const tile = node.querySelector("[data-atile]");
+      if (tile) tile.textContent = aartiLine();
+      if (!painted && !(tile && AARTI_AUDIO.state().playing)) stop();
+    }, 250);
   }
 
   // One row shape everywhere a sitting is listed, so Today and Add/Remove can
@@ -10702,6 +11276,7 @@ async function mountDhyanDiary(node) {
         japas: mine.filter((s) => s.kind === "japa").length,
         pages: mine.filter((s) => s.kind === "granth").reduce((a, s) => a + SADHANA.granthDelta(s), 0),
         granths: mine.filter((s) => s.kind === "granth").length,
+        aartis: mine.filter((s) => s.kind === "aarti").length,
       });
     }
     return out;
@@ -10724,6 +11299,7 @@ async function mountDhyanDiary(node) {
           ${pill("🤍", fmtMins(r.maun), r.maun > 0)}
           ${pill("📿", r.beads ? String(malasOf(r.beads) || "<1") : "?", r.japas > 0)}
           ${pill("📖", `${r.pages}p`, r.granths > 0)}
+          ${pill("🪔", r.aartis > 1 ? `${r.aartis}×` : "✓", r.aartis > 0)}
         </div>
       </div>`;
     }).join("")}</div>`;
@@ -10816,6 +11392,42 @@ async function mountDhyanDiary(node) {
       wire(); return;
     }
 
+    // ⚠ Its own screen, and deliberately its own world: warm-dark, one lamp,
+    // one button. It is the only thing in the diary you LOOK at while it
+    // happens — a sitting wants the phone face down, this wants it face up.
+    // No scrub bar: an aarti has one length and is sung from its beginning.
+    if (view === "aarti") {
+      node.replaceChildren(el(`
+        <div class="dd-wrap">
+          ${backHtml("Aarti")}
+          <div class="dd-aa">
+            <div class="dd-aa-title">${escapeHtml(AARTI_AUDIO.TITLE)}</div>
+            <div class="dd-aa-cred">${escapeHtml(AARTI_AUDIO.CREDIT)}</div>
+            <div class="dd-aa-lamp" data-alamp>
+              <div class="dd-aa-ring" data-aring style="--p:0deg"></div>
+              <div class="dd-aa-halo"></div>
+              <div class="dd-aa-wick">
+                <div class="dd-aa-flame" data-aflame></div>
+                <div class="dd-aa-cup"></div>
+              </div>
+            </div>
+            <div class="dd-aa-clock" data-aclock></div>
+            <div class="dd-aa-count" data-acount></div>
+            <button class="dd-aa-btn" data-aplay>Light the lamp</button>
+            <button class="dd-aa-again" data-aagain hidden>Start again</button>
+            <div class="dd-aa-note">Plays from this phone — no internet needed. The screen is kept
+              awake while it plays.</div>
+          </div>
+        </div>`));
+      wire();
+      paintAarti();
+      // The length is not known until the file's metadata is in. Repaint when
+      // it arrives rather than showing a guess in the meantime.
+      AARTI_AUDIO.ready().then(paintAarti);
+      startAartiTicker();
+      return;
+    }
+
     if (view === "entries") {
       const rows = SADHANA.all().slice(0, 60);
       node.replaceChildren(el(`
@@ -10827,6 +11439,7 @@ async function mountDhyanDiary(node) {
             <button class="dd-tile dd-tile-flat" data-add="maun"><span class="dd-tile-t">Dhyan</span><span class="dd-tile-q">(in Maun State)</span></button>
             <button class="dd-tile dd-tile-flat" data-add="japa"><span class="dd-tile-t">Naam Jaap</span></button>
             <button class="dd-tile dd-tile-flat" data-add="granth"><span class="dd-tile-t">Granth Pathan</span></button>
+            <button class="dd-tile dd-tile-flat" data-add="aarti"><span class="dd-tile-t">Aarti</span></button>
           </div>
           <div class="dd-sect-label">Recent entries</div>
           <div class="dd-list">${rows.length
@@ -10841,6 +11454,7 @@ async function mountDhyanDiary(node) {
         <div class="dd-wrap">
           ${backHtml("Reminders")}
           <div class="dd-rem-slot"></div>
+          <div class="dd-arem-slot"></div>
         </div>`));
       wire(); return;
     }
@@ -10878,7 +11492,10 @@ async function mountDhyanDiary(node) {
     node.replaceChildren(el(`
       <div class="dd-wrap">
         <div class="dd-today">
-          <div class="dd-today-day">${escapeHtml(dayLabel(today))}</div>
+          <div class="dd-today-day">${escapeHtml(dayLabel(today))}<span
+            class="dd-diya${aartisOn(today) ? " on" : ""}" role="img"
+            aria-label="${aartisOn(today) ? "Aarti sung today" : "Aarti not sung yet today"}"
+            >🪔</span></div>
           <div class="dd-figs">
             <div class="dd-fig"><b>${dhyanSec ? fmtMins(dhyanSec) : "—"}</b><span>Dhyan</span></div>
             <div class="dd-fig"><b>${beads ? malasOf(beads) : "—"}</b><span>Malas</span></div>
@@ -10926,6 +11543,12 @@ async function mountDhyanDiary(node) {
             <span class="dd-tile-t">Granth Pathan</span>
             <span class="dd-tile-s">${escapeHtml(granthLine())}</span>
           </button>
+          <button class="dd-tile dd-tile-wide dd-tile-aarti" data-go="aarti">
+            <span class="dd-tile-ico">🪔</span>
+            <span class="dd-tile-t">Aarti</span>
+            <span class="dd-tile-q">${escapeHtml(AARTI_AUDIO.TITLE)}</span>
+            <span class="dd-tile-s" data-atile>${escapeHtml(aartiLine())}</span>
+          </button>
         </div>`}
 
         ${pendingJapaId ? `
@@ -10964,6 +11587,10 @@ async function mountDhyanDiary(node) {
 
     wire();
     startTicker();
+    // The aarti keeps playing when you step back to this page — an accidental
+    // back press must not cut it off mid-verse — so the tile has to keep saying
+    // so rather than going quiet about it.
+    if (AARTI_AUDIO.state().playing) startAartiTicker();
   }
 
   // ⚠ The clock is recomputed from the stored timestamp on every tick, never
@@ -11014,14 +11641,39 @@ async function mountDhyanDiary(node) {
       const k = b.dataset.add;
       // Granth has its own screen — it records a page, not a duration.
       if (k === "granth") { openGranthEntry(() => render(), { past: true }); return; }
-      openDhyanManual(() => render(), k === "japa" ? { kind: "japa" } : { kind: "dhyan", mode: k });
+      openDhyanManual(() => render(),
+        k === "japa" ? { kind: "japa" }
+        : k === "aarti" ? { kind: "aarti" }
+        : { kind: "dhyan", mode: k });
     }));
 
     const gr = node.querySelector("[data-granth]");
     if (gr) gr.addEventListener("click", () => openGranthEntry(() => render()));
 
+    // ⚠ play() is called STRAIGHT out of the tap, before anything is awaited or
+    // repainted. Android grants audio only from a user gesture, and a gesture
+    // spent on an await is gone: the aarti would then start in silence with
+    // nothing failing anywhere — the same trap that hid inside the dhyan mantra
+    // for a whole release. Paint afterwards, never before.
+    const ap = node.querySelector("[data-aplay]");
+    if (ap) ap.addEventListener("click", () => {
+      if (AARTI_AUDIO.state().playing) AARTI_AUDIO.pause(); else AARTI_AUDIO.play();
+      hapticTickHook();
+      paintAarti();
+      startAartiTicker();
+    });
+    const ag = node.querySelector("[data-aagain]");
+    if (ag) ag.addEventListener("click", () => {
+      AARTI_AUDIO.restart();
+      hapticTickHook();
+      paintAarti();
+      startAartiTicker();
+    });
+
     const slot = node.querySelector(".dd-rem-slot");
     if (slot) slot.replaceChildren(ddRemindersEl(render));
+    const aslot = node.querySelector(".dd-arem-slot");
+    if (aslot) aslot.replaceChildren(aartiRemindersEl(render));
 
     // ⚠ Android's HALF of the fix, and only where it can be offered. The button
     // is revealed solely on a shell carrying WaBatteryPlugin (added 2026-08-26);
@@ -11234,6 +11886,12 @@ const SADHANA = (() => {
       dhunOn: true,
       soundOnMala: false,     // haptic-only by default: japa happens in public
       reminders: [],          // [{id, hour, minute, leadMin, on}]  (plan §7)
+      // ⚠ A SEPARATE list, not a flag on the one above. A sitting reminder
+      // nudges you BEFORE a sitting (it carries a lead time); an aarti reminder
+      // is the call to aarti itself, and it can be limited to chosen weekdays.
+      // Folding them together would mean one shape lying about the other.
+      // days: [] or absent = every day; otherwise 0=Sunday … 6=Saturday.
+      aartiReminders: [],     // [{hour, minute, days, on}]
       lastExportAt: 0,        // ms; 0 = never. Shown on the Reports > Backup tab.
       // ⚠ Books are CONFIGURATION, not records — they belong in settings, not
       // in sessions. [{id, name, pages}] where pages 0 = length unknown.
@@ -11258,7 +11916,8 @@ const SADHANA = (() => {
   // as trusted is how one hand-edited file corrupts a decade of history.
   function cleanSession(s) {
     if (!s || typeof s !== "object") return null;
-    const kind = (s.kind === "japa" || s.kind === "dhyan" || s.kind === "granth") ? s.kind : null;
+    const kind = (s.kind === "japa" || s.kind === "dhyan" || s.kind === "granth"
+                  || s.kind === "aarti") ? s.kind : null;
     if (!kind) return null;
 
     const t = Date.parse(s.startedAt);
@@ -11293,6 +11952,10 @@ const SADHANA = (() => {
       out.book = (typeof s.book === "string" && s.book) ? s.book.slice(0, 40) : "";
       out.toPage = num(s.toPage, 0, MAX_PAGE, 0);
       if (!out.book) return null;      // a page with no book is not a record
+    } else if (kind === "aarti") {
+      // Nothing of its own to store. The aarti has one length — its file's —
+      // so `actualSec` (already set above) is the whole record, and there is
+      // no count, no mode and no target to disagree with it later.
     } else {
       // ⚠ `count` is TOTAL BEADS and is the truth; malas are derived at 108 for
       // display. Storing malas instead would make every past record depend on a
@@ -11639,7 +12302,7 @@ const SADHANA = (() => {
     if (!payload.sessions.length) return { ok: false, error: "That backup has no sittings in it." };
 
     const mine = new Map(state.sessions.map((s) => [s.id, s]));
-    let fresh = 0, updated = 0, dhyanSec = 0, beads = 0, granths = 0;
+    let fresh = 0, updated = 0, dhyanSec = 0, beads = 0, granths = 0, aartis = 0;
     let from = "9999-99-99", to = "";
     for (const s of payload.sessions) {
       const cur = mine.get(s.id);
@@ -11649,6 +12312,7 @@ const SADHANA = (() => {
       if (s.day > to) to = s.day;
       if (s.kind === "dhyan") dhyanSec += s.actualSec || 0;
       else if (s.kind === "granth") granths++;
+      else if (s.kind === "aarti") aartis++;
       else beads += s.count || 0;
     }
     return {
@@ -11661,6 +12325,7 @@ const SADHANA = (() => {
         // the record's neighbours turn out to be after the merge, so a number
         // computed from the file alone would be a guess shown as a fact.
         granths,
+        aartis,
         books: ((payload.settings && payload.settings.books) || []).length,
       },
     };
@@ -18774,4 +19439,6 @@ AUTH_GATE.boot(function startApp() {
   // when it is shown). Idempotent, and a no-op off-device. See DHYAN_REMIND.
   DHYAN_REMIND.bindTap();
   DHYAN_REMIND.sync().catch(() => {});
+  AARTI_REMIND.bindTap();
+  AARTI_REMIND.sync().catch(() => {});
 });
