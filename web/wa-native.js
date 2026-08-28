@@ -533,6 +533,13 @@
       if (code.updated) result.ui_updated = code.updated;
       if (code.blocked) result.ui_blocked = code.blocked;
 
+      // The shell only reports `blocked` when it actually reached the code half.
+      // Re-derive it from min_shell as well, so an APK-too-old device is noticed
+      // even on the paths where downloadCode returns early for another reason.
+      const tooOld = (remote.min_shell && !B.versionAtLeast(B.shellVersion(), remote.min_shell))
+        ? remote.min_shell : "";
+      noteAppUpdate(remote, checked.signed, code.blocked || tooOld);
+
       result.ok = true;
     } catch (e) {
       const msg = (e && e.message) ? e.message : String(e);
@@ -547,6 +554,218 @@
   // on purpose: app.js updates over-the-air, so back-button behaviour can be
   // fixed without shipping a new APK.
 
+  // ---------------------------------------------------------------- app (APK) updates
+  /*
+   * Everything else in this file ships over the air. This block exists for the
+   * one class of change that CANNOT: something Android itself must grant — a new
+   * permission, a new Capacitor plugin, a native service, a targetSdk bump. When
+   * that happens the host raises `min_shell` and/or advertises a new APK, and the
+   * phone has to be TOLD, because nothing else is going to tell it.
+   *
+   * Two states, and they are not the same thing:
+   *   available — a newer APK exists; UI updates are still flowing. Informational.
+   *   required  — the host's payload declares a min_shell above this APK, so the
+   *               frozen shell is REFUSING to apply UI updates (wa-boot.js
+   *               downloadCode -> out.blocked). Content still syncs; the app is
+   *               pinned to its last good UI. Not cosmetic.
+   *
+   * Until this existed, `blocked` was computed by the frozen shell, handed back
+   * as result.ui_blocked, and read by NOBODY — a phone could sit on a stale UI
+   * indefinitely while its owner had every reason to believe it was current.
+   *
+   * WHY A LINK-OUT AND NOT AN IN-APP INSTALLER. The APK is ~600 MB (source_data
+   * alone is 402 MB). Pulling that through fetch() would OOM the WebView, and
+   * staging a copy in app storage would need the space twice over. Handing the
+   * URL to the system browser gets Chrome's download manager instead —
+   * resumable, survives the app being killed, and Chrome (not us) is the
+   * installer, so no REQUEST_INSTALL_PACKAGES permission is involved anywhere.
+   * It is the same route the PDF attachments already take (openExternalLink in
+   * app.js), which is the evidence that it works on these devices.
+   */
+  const AU_KEY = "wa:mobile:appUpdate";       // what the host last told us
+  const AU_SEEN = "wa:mobile:appUpdateSeen";  // what the user has already been shown
+  const AU_DAY = 24 * 3600 * 1000;
+
+  function auRead(key) {
+    try { const v = ls.get(key, ""); return v ? JSON.parse(v) : null; } catch (_) { return null; }
+  }
+  // Local, not app.js's escapeHtml: this file must keep working on a device
+  // whose app.js is older than this feature.
+  function auEsc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+    ));
+  }
+
+  // Recorded during sync. `signed` is load-bearing: apk_url is a URL we send a
+  // human to install SOFTWARE from, so it is honoured only out of a manifest
+  // whose ECDSA signature the frozen shell already verified — and only over
+  // https. A hostile or misconfigured host can still serve content; it can
+  // never aim the update button. (apk_* deliberately live in the signed
+  // manifest.json, never in the unsigned nightly content.json.)
+  function noteAppUpdate(remote, signed, blocked) {
+    const rec = { shell: B.shellVersion(), at: Date.now(), blocked: blocked || "" };
+    const url = String((remote && remote.apk_url) || "");
+    if (signed && /^https:\/\/[^\s]+$/i.test(url)) {
+      rec.url = url;
+      rec.version = String(remote.apk_version || "");
+      rec.size = Number(remote.apk_size) || 0;
+      rec.notes = String(remote.apk_notes || "").slice(0, 300);
+    }
+    ls.set(AU_KEY, JSON.stringify(rec));
+    return rec;
+  }
+
+  // Derived fresh against the CURRENT shell every time, never trusted as stored.
+  // That is what makes the notice evaporate by itself the moment the user
+  // actually installs the new APK, instead of nagging forever off a stale row.
+  function appUpdateState() {
+    const rec = auRead(AU_KEY);
+    const shell = B.shellVersion();
+    const out = { status: "none", shell: shell, version: "", need: "", url: "", size: 0, notes: "" };
+    if (!rec) return out;
+    const required = !!(rec.blocked && !B.versionAtLeast(shell, rec.blocked));
+    const newer = !!(rec.version && !B.versionAtLeast(shell, rec.version));
+    if (!required && !newer) return out;
+    out.status = required ? "required" : "available";
+    out.need = required ? rec.blocked : "";
+    out.version = rec.version || "";
+    out.url = rec.url || "";
+    out.size = rec.size || 0;
+    out.notes = rec.notes || "";
+    return out;
+  }
+
+  function auSize(bytes) {
+    if (!bytes) return "";
+    const mb = bytes / (1024 * 1024);
+    return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : Math.round(mb) + " MB";
+  }
+
+  function openAppUpdate(url) {
+    if (!/^https:\/\//i.test(url || "")) return;
+    if (typeof window.openExternalLink === "function") { window.openExternalLink(url); return; }
+    const Br = Plugins.Browser;
+    if (Br && Br.open) { Br.open({ url: url }).catch(() => window.open(url, "_blank", "noopener")); return; }
+    window.open(url, "_blank", "noopener");
+  }
+
+  // One wording for both surfaces, so the Settings card and the launch dialog
+  // can never drift apart.
+  function auCopy(st) {
+    const ver = st.version ? " " + st.version : "";
+    if (st.status === "required") {
+      return {
+        title: "App update required",
+        body: "This app can no longer receive updates" +
+              (st.need ? " — it needs app version " + st.need + " or newer" : "") +
+              ". Guru's messages still arrive as usual, but new features and fixes " +
+              "will not, until you install the latest app" +
+              (st.version ? " (version " + st.version + ")" : "") + ".",
+      };
+    }
+    return {
+      title: "New app version available",
+      body: "Version" + ver + " of Samarpan Upanishad is ready to install." +
+            (st.notes ? " " + st.notes : ""),
+    };
+  }
+
+  // The size line is not a nicety. At ~600 MB, a member on mobile data needs to
+  // be told before they tap, and needs to know the install happens in the
+  // browser's downloads — otherwise a finished download looks like a failure.
+  function auHint(st) {
+    const size = auSize(st.size);
+    if (!st.url) return "";
+    return "Opens in your browser" + (size ? " — about " + size + ", please use Wi-Fi" : "") +
+           ". When it finishes, tap the download to install.";
+  }
+
+  function auButton(label, primary) {
+    return '<button type="button" class="wa-au-' + (primary ? "go" : "later") + '" style="' +
+      "padding:9px 16px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;" +
+      (primary
+        ? "border:0;background:var(--accent,#d9662a);color:#fff"
+        : "border:1px solid var(--border,#e8e4db);background:transparent;color:var(--muted,#8b8794)") +
+      '">' + auEsc(label) + "</button>";
+  }
+
+  function buildAppUpdateCard(st) {
+    const c = auCopy(st), req = st.status === "required", hint = auHint(st);
+    const box = document.createElement("div");
+    box.className = "wa-appupdate";
+    box.style.cssText =
+      "margin:0 0 20px;padding:14px 16px;border-radius:var(--radius,16px);" +
+      "border:1px solid " + (req ? "var(--accent,#d9662a)" : "var(--border,#e8e4db)") + ";" +
+      "background:" + (req ? "var(--accent-soft,#fdeee0)" : "var(--surface,#fff)") + ";" +
+      "font-family:var(--sans,system-ui);color:var(--text,#2a2730)";
+    box.innerHTML =
+      '<div style="font-size:15px;font-weight:700;margin-bottom:5px">' + auEsc(c.title) + "</div>" +
+      '<div style="font-size:13px;line-height:1.55">' + auEsc(c.body) + "</div>" +
+      (st.url ? '<div style="margin-top:11px">' + auButton("Download update", true) + "</div>" : "") +
+      (hint ? '<div style="margin-top:8px;font-size:12px;line-height:1.45;color:var(--muted,#8b8794)">' +
+              auEsc(hint) + "</div>" : "") +
+      '<div style="margin-top:10px;font-size:11px;color:var(--muted,#8b8794)">Installed app version ' +
+      auEsc(st.shell) + "</div>";
+    const go = box.querySelector(".wa-au-go");
+    if (go) go.addEventListener("click", () => openAppUpdate(st.url));
+    return box;
+  }
+
+  // A modal rather than a top/bottom banner on purpose: the phone UI already
+  // fights for both edges (fixed top panel, bottom nav, safe-area insets), and a
+  // banner that collides with either is a layout bug on somebody's device that
+  // nobody here can reproduce. A centred sheet owns no edge.
+  //
+  // "Not now" is offered even when the update is REQUIRED. A modal with no exit
+  // is a trap, and the persistent reminder is the Settings card — not a door the
+  // user cannot close.
+  function showAppUpdateDialog(st) {
+    if (!st || st.status === "none") return;
+    if (document.getElementById("wa-au-modal")) return;
+    const c = auCopy(st), hint = auHint(st);
+    const ov = document.createElement("div");
+    ov.id = "wa-au-modal";
+    ov.style.cssText =
+      "position:fixed;inset:0;z-index:900;background:rgba(20,16,28,.55);display:flex;" +
+      "align-items:center;justify-content:center;padding:24px;font-family:var(--sans,system-ui)";
+    ov.innerHTML =
+      '<div role="dialog" aria-modal="true" style="max-width:340px;width:100%;padding:20px;' +
+      "border-radius:var(--radius,16px);background:var(--surface,#fff);color:var(--text,#2a2730);" +
+      'box-shadow:var(--shadow-lg,0 22px 48px rgba(38,28,60,.28))">' +
+      '<div style="font-size:17px;font-weight:700;margin-bottom:7px">' + auEsc(c.title) + "</div>" +
+      '<div style="font-size:13.5px;line-height:1.55">' + auEsc(c.body) + "</div>" +
+      (hint ? '<div style="margin-top:9px;font-size:12px;line-height:1.45;color:var(--muted,#8b8794)">' +
+              auEsc(hint) + "</div>" : "") +
+      '<div style="margin-top:16px;display:flex;gap:9px;justify-content:flex-end">' +
+      auButton("Not now", false) + (st.url ? auButton("Download", true) : "") + "</div></div>";
+    const close = () => { try { ov.remove(); } catch (_) {} };
+    const later = ov.querySelector(".wa-au-later");
+    if (later) later.addEventListener("click", close);
+    const go = ov.querySelector(".wa-au-go");
+    if (go) go.addEventListener("click", () => { openAppUpdate(st.url); close(); });
+    // Tapping the scrim closes too, but only the scrim itself — not a click that
+    // bubbled up from inside the sheet.
+    ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+    document.body.appendChild(ov);
+  }
+
+  // Shown at most once per (status, version) pair — except a REQUIRED notice,
+  // which returns daily, because in that state the app has genuinely stopped
+  // updating and one dismissed dialog should not bury that forever.
+  function maybeShowAppUpdateDialog() {
+    const st = appUpdateState();
+    if (st.status === "none") return;
+    const seen = auRead(AU_SEEN) || {};
+    const key = st.status + ":" + (st.version || st.need || "");
+    if (seen.key === key) {
+      if (st.status !== "required") return;
+      if (Date.now() - (seen.at || 0) < AU_DAY) return;
+    }
+    ls.set(AU_SEEN, JSON.stringify({ key: key, at: Date.now() }));
+    showAppUpdateDialog(st);
+  }
+
   // ---------------------------------------------------------------- settings page enhancement
   // Called by app.js at the end of renderInfo("settings") — see the guarded
   // one-liner there. Keeps all mobile-only UI in this file.
@@ -559,6 +778,10 @@
     if (firstP) firstP.innerHTML = "Samarpan Upanishad runs fully on this device — the entire archive works offline. Your <strong>favorites</strong> and <strong>notes</strong> are stored privately in this app.";
     const tips = prose.querySelector("ul");
     if (tips) tips.remove();
+    // The persistent half of the APK-update notice. The launch dialog can be
+    // dismissed; this cannot, and stays until the new app is actually installed.
+    const au = appUpdateState();
+    if (au.status !== "none") prose.insertBefore(buildAppUpdateCard(au), prose.firstChild);
     // Note: the old fixed-time "Daily Reminder" local notification has been
     // replaced by a real push notification that only fires when a new entry
     // is actually published (app.js initPush(), channel "daily_wisdom") — no
@@ -598,7 +821,15 @@
           // so the tap kept showing the previous day until a second relaunch.
           if (/^#?\/?(\?.*)?$/.test(location.hash || "")) window.safeRoute && window.safeRoute();
         }
+        // After the sync, so it reflects what the host just said rather than the
+        // previous launch. Delayed because the preloader is still on screen at
+        // this point and a modal behind it would be dismissed unseen.
+        setTimeout(maybeShowAppUpdateDialog, 4000);
       });
+    } else {
+      // No updateBase (or it was cleared): there is nothing to sync, but a
+      // notice recorded on an earlier launch is still true and still shows.
+      setTimeout(maybeShowAppUpdateDialog, 4000);
     }
   })();
 
@@ -630,6 +861,11 @@
     sync: syncOnce,
     syncCoalesced: true,     // app.js capability probe — see syncOnce() above
     cacheMedia,
+    // Exposed so app.js can surface the notice elsewhere later (a Settings row,
+    // an About screen) without this file having to know where.
+    appUpdate: appUpdateState,
+    openAppUpdate,
+    showAppUpdateDialog,
     // A function, not a string: the facade is built before boot() has read
     // wa-mobile.json, so a value snapshotted here would always be "". app.js uses
     // it to rebuild a public image URL when an on-device one fails to load, and
