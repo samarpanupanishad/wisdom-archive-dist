@@ -17939,9 +17939,9 @@ const MOBILE_UI = (() => {
 
       <h3 class="mm-h">Guru's msgs</h3>
       <div class="mm-grid3">
-        ${tile("#/m/daily", IC.sun, "Daily", "today's message", "")}
+        ${tile("#/m/daily", IC.sun, "Daily", "list of<br>messages", "")}
         ${tile("#/m/special", IC.star, "Special", "telegram messages", "special")}
-        ${tile("#/m/letterpad", IC.pen, "Letterhead", "letters from Guru", "letterpad")}
+        ${tile("#/m/letterpad", IC.pen, "Letterhead", "letters from<br>Guru", "letterpad")}
       </div>
 
       <a class="mm-anush" href="#/m/anushthan">

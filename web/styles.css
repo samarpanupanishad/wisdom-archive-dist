@@ -4126,7 +4126,19 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 .pl-charan { background: var(--wa-asset-guru-charan, url("/assets/guru-charan.png")) center / contain no-repeat; }
 .pl-name::before { content: "Samarpan Upanishad"; }
 .pl-tag-a::before { content: "sitting under the grace of "; }
-.pl-tag-b::before { content: "🌹 GURU 🌹"; }
+/* A red hibiscus, drawn as an inline SVG (operator, 2026-08-28) — 🌺 renders
+   pink on Android's emoji font, and the operator wants the red bloom Gurudev
+   posted in a Special Telegram message. SVG so the colour is identical on every
+   device; inlined as a data URI so it ships over the air with styles.css (an
+   assets/ file would 404 on installed APKs, same as the Anushthan lotus). It
+   bookends "GURU" where the two 🌹 / 🌺 used to sit. */
+.pl-tag-b::before {
+  content: "GURU";
+  padding: 0 1.65em;
+  background:
+    url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCc+PGcgZmlsbD0nI2Q4MWYzZCcgc3Ryb2tlPScjYjMxMjJmJyBzdHJva2Utd2lkdGg9Jy41Jz48ZWxsaXBzZSBjeD0nMTInIGN5PSc2LjgnIHJ4PSczLjcnIHJ5PSc1LjEnLz48ZWxsaXBzZSBjeD0nMTInIGN5PSc2LjgnIHJ4PSczLjcnIHJ5PSc1LjEnIHRyYW5zZm9ybT0ncm90YXRlKDcyIDEyIDEyKScvPjxlbGxpcHNlIGN4PScxMicgY3k9JzYuOCcgcng9JzMuNycgcnk9JzUuMScgdHJhbnNmb3JtPSdyb3RhdGUoMTQ0IDEyIDEyKScvPjxlbGxpcHNlIGN4PScxMicgY3k9JzYuOCcgcng9JzMuNycgcnk9JzUuMScgdHJhbnNmb3JtPSdyb3RhdGUoMjE2IDEyIDEyKScvPjxlbGxpcHNlIGN4PScxMicgY3k9JzYuOCcgcng9JzMuNycgcnk9JzUuMScgdHJhbnNmb3JtPSdyb3RhdGUoMjg4IDEyIDEyKScvPjwvZz48Y2lyY2xlIGN4PScxMicgY3k9JzEyJyByPScyLjcnIGZpbGw9JyM4ZjBjMjQnLz48ZyBmaWxsPScjZjRjNTMxJz48Y2lyY2xlIGN4PScxMicgY3k9JzEwLjUnIHI9Jy45NScvPjxjaXJjbGUgY3g9JzEwLjYnIGN5PScxMi43JyByPScuOTUnLz48Y2lyY2xlIGN4PScxMy40JyBjeT0nMTIuNycgcj0nLjk1Jy8+PC9nPjwvc3ZnPg==") left center / 1.05em 1.05em no-repeat,
+    url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCc+PGcgZmlsbD0nI2Q4MWYzZCcgc3Ryb2tlPScjYjMxMjJmJyBzdHJva2Utd2lkdGg9Jy41Jz48ZWxsaXBzZSBjeD0nMTInIGN5PSc2LjgnIHJ4PSczLjcnIHJ5PSc1LjEnLz48ZWxsaXBzZSBjeD0nMTInIGN5PSc2LjgnIHJ4PSczLjcnIHJ5PSc1LjEnIHRyYW5zZm9ybT0ncm90YXRlKDcyIDEyIDEyKScvPjxlbGxpcHNlIGN4PScxMicgY3k9JzYuOCcgcng9JzMuNycgcnk9JzUuMScgdHJhbnNmb3JtPSdyb3RhdGUoMTQ0IDEyIDEyKScvPjxlbGxpcHNlIGN4PScxMicgY3k9JzYuOCcgcng9JzMuNycgcnk9JzUuMScgdHJhbnNmb3JtPSdyb3RhdGUoMjE2IDEyIDEyKScvPjxlbGxpcHNlIGN4PScxMicgY3k9JzYuOCcgcng9JzMuNycgcnk9JzUuMScgdHJhbnNmb3JtPSdyb3RhdGUoMjg4IDEyIDEyKScvPjwvZz48Y2lyY2xlIGN4PScxMicgY3k9JzEyJyByPScyLjcnIGZpbGw9JyM4ZjBjMjQnLz48ZyBmaWxsPScjZjRjNTMxJz48Y2lyY2xlIGN4PScxMicgY3k9JzEwLjUnIHI9Jy45NScvPjxjaXJjbGUgY3g9JzEwLjYnIGN5PScxMi43JyByPScuOTUnLz48Y2lyY2xlIGN4PScxMy40JyBjeT0nMTIuNycgcj0nLjk1Jy8+PC9nPjwvc3ZnPg==") right center / 1.05em 1.05em no-repeat;
+}
 .pl-text[data-step="0"]::before { content: "Awakening Samarpan Upanishad..."; }
 .pl-text[data-step="1"]::before { content: "कृपया अमृत बरसाइए।"; }
 .pl-text[data-step="2"]::before { content: "कृपया अमृत बरसाइए।"; }
