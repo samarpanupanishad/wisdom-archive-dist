@@ -972,11 +972,27 @@ const WA = {
   // this is a splash image, not community content. Returns the public Storage
   // URL, or null if the table's empty/missing (fresh project, migration not
   // run yet) so the caller can silently keep the bundled fallback photo.
+  // ⚠ Prefer dailyReveal() below — it carries the DAY the photo was picked for,
+  // which is what lets app.js tell a remembered photo that is still current
+  // from a stale one. This one is kept because its contract (a bare url) is
+  // what shipped, and it costs two lines.
   async dailyRevealPhoto() {
+    const row = await WA.dailyReveal();
+    return row ? row.url : null;
+  },
+
+  // {url, date} for today's reveal photo, or null if the table's empty/missing
+  // (fresh project, migration not run yet) so the caller can silently keep the
+  // bundled fallback. `date` is reveal-pick's own effective day (IST, rolling
+  // over 3:30 AM) — the client never computes the pick, only compares the day.
+  async dailyReveal() {
     const { data, error } = await _sb.from("daily_reveal")
-      .select("filename").order("reveal_date", { ascending: false }).limit(1).maybeSingle();
+      .select("filename,reveal_date").order("reveal_date", { ascending: false }).limit(1).maybeSingle();
     if (error || !data) return null;
-    return `${WA_SUPABASE_URL}/storage/v1/object/public/reveal-photos/${encodeURIComponent(data.filename)}`;
+    return {
+      url: `${WA_SUPABASE_URL}/storage/v1/object/public/reveal-photos/${encodeURIComponent(data.filename)}`,
+      date: data.reveal_date || "",
+    };
   },
 
   // ----- Conclusions ----------------------------------------------------

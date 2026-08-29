@@ -54,27 +54,105 @@ function thumbImg(e) { return e && e.thumb_url ? `<img class="thumb" src="${e.th
 
 // --------------------------------------------------------------------------
 // Preloader "guru reveal" photo — server-picked once daily so every device
-// shows the SAME photo (WA.dailyRevealPhoto() in wa-supabase.js, backed by
+// shows the SAME photo (WA.dailyReveal() in wa-supabase.js, backed by
 // reveal-pick + daily_reveal, supabase/add_daily_reveal.sql). Runs immediately
-// at load, well before the preloader's guru-reveal fires (2980ms, index.html)
-// and BEFORE the auth gate — this is not gated on being signed in, it's just
-// a splash image everyone gets. Fires fire-and-forget; if it's slow, offline,
-// or the migration hasn't been run yet, the bundled guru-reveal.jpg baked
-// into styles.css just keeps showing — .pl-reveal's background-image is only
-// ever touched here on success.
+// at load and BEFORE the auth gate — this is not gated on being signed in,
+// it's just a splash image everyone gets. Fires fire-and-forget; if it's slow,
+// offline, or the migration hasn't been run yet, the bundled guru-reveal.jpg
+// baked into styles.css just keeps showing.
+//
+// ⚠ NEVER swap the photo once the reveal is ON SCREEN, and never leave that
+// panel blank waiting for one (2026-08-29). The bundled photo is painted by
+// CSS from the very first frame, so a swap that landed late showed the user
+// TWO guru photos in one launch — the bundled one, then a flip to the day's
+// photo while it was being held. The reveal is uncovered at burst+400ms and
+// held only 1800ms (index.html, which does NOT ship over the air), so there
+// is no room in it for a second picture or an empty frame. Three rules follow,
+// and all three matter:
+//   1. Apply only while the preloader has NOT yet added `guru` — before that
+//      the panel is invisible and a swap costs nothing; after it, the photo is
+//      what the user is looking at. Reading the class is exact and needs no
+//      copy of index.html's timings here.
+//   2. Apply only once the bytes have DECODED. Pointing a visible panel at an
+//      image still in flight is the blank window, one step later.
+//   3. Losing the race is a normal outcome, not a failure: this launch keeps
+//      the bundled photo, the day's photo is remembered, and the NEXT launch
+//      paints it before the first frame. Nothing is ever delayed for it.
+// On native the download is deliberately kept OFF the critical path: the photo
+// is shown straight from the host (we only got here by reaching Supabase, so
+// there is a network) while cacheMedia() stores it in the background for the
+// next launch and for offline.
 (function revealPhotoOfTheDay() {
+  const pl = document.getElementById("preloader");
   const target = document.querySelector(".pl-reveal");
-  if (!target || !window.WA || !WA.dailyRevealPhoto) return;
-  WA.dailyRevealPhoto().then(async (url) => {
-    if (!url) return;
+  if (!target || !window.WA) return;
+
+  const KEY = "wa:reveal:day";   // {date, url, local} — last photo we resolved
+
+  // The preloader adds `guru` when the burst uncovers the photo; after that
+  // (or once the whole preloader has been torn out of the page) there is
+  // nothing left that can be changed unseen.
+  const tooLate = () => !pl || !pl.isConnected || pl.classList.contains("guru");
+
+  // Paint only after a successful decode, and only if still unseen. Returns
+  // the url on success so the caller can tell what is already on screen.
+  function show(url) {
+    if (!url || tooLate()) return Promise.resolve("");
+    const img = new Image();
+    img.src = url;
+    const ready = img.decode
+      ? img.decode()
+      : new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+    return ready.then(() => {
+      if (tooLate()) return "";
+      target.style.backgroundImage = `url("${url}")`;
+      return url;
+    }).catch(() => "");
+  }
+
+  // The effective day, exactly as reveal-pick computes it: IST (+5:30) with the
+  // rollover at 3:30 AM, i.e. plain UTC+2. Used ONLY to decide whether what we
+  // remembered is still current — the pick itself stays server-side, so two
+  // devices can never disagree about which photo "today" means, and a wrong
+  // device clock costs at most one launch of the bundled photo.
+  const effectiveDay = () => new Date(Date.now() + 2 * 3600e3).toISOString().slice(0, 10);
+
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(KEY) || "null"); } catch { /* first run */ }
+
+  // Today's photo, already resolved on a previous launch: paint it now, with
+  // no network in the way. This is the path that makes the swap invisible.
+  const head = (cached && cached.url && cached.date === effectiveDay())
+    ? show(cached.local || cached.url)
+    : Promise.resolve("");
+
+  const ask = WA.dailyReveal
+    ? WA.dailyReveal()
+    : (WA.dailyRevealPhoto                                  // older facade
+        ? WA.dailyRevealPhoto().then((u) => (u ? { url: u, date: "" } : null))
+        : Promise.resolve(null));
+
+  ask.then(async (row) => {
+    if (!row || !row.url) return;
     const wn = window.WA_NATIVE;
-    let shown = url;
+    // Off the critical path on purpose — see the note above.
+    const stow = (local) => {
+      try {
+        localStorage.setItem(KEY, JSON.stringify({
+          date: row.date || "", url: row.url, local: local || "",
+        }));
+      } catch { /* storage full / private mode: just re-fetch next launch */ }
+    };
     if (wn && wn.isNative && wn.cacheMedia) {
-      try { const cached = await wn.cacheMedia(url); if (cached) shown = cached; }
-      catch { /* still viewable straight from the host */ }
+      wn.cacheMedia(row.url).then((local) => stow(local || "")).catch(() => stow(""));
+    } else {
+      stow("");
     }
-    target.style.backgroundImage = `url("${shown}")`;
-  }).catch(() => { /* offline / table not set up yet: keep the bundled photo */ });
+    // Already showing this very photo from the cache? Don't repaint it.
+    const on = await head;
+    if (on && cached && cached.url === row.url) return;
+    show(row.url);
+  }).catch(() => { /* offline / table not set up yet: keep what is showing */ });
 })();
 
 // --------------------------------------------------------------------------
