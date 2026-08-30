@@ -17516,7 +17516,10 @@ const MOBILE_UI = (() => {
       share.classList.remove("m-vact-disabled");
       share.onclick = async () => {
         const u = page();
-        if (!u) return shareMsgText(v.shareCaption);   // text message → share the words
+        // Text message → share the words. The title rides along separately
+        // because mail targets use it as the SUBJECT; shareCaption already
+        // opens with it, so chat targets that ignore `title` lose nothing.
+        if (!u) return shareMsgText(v.shareCaption, v.title || sec.title);
         if (isNativeApp && window.Capacitor.Plugins.Share) {
           try { await nativeShareImage(u, fileName(), v.shareCaption); }
           catch (err) { toast("Couldn't share: " + (err && err.message ? err.message : "please try again.")); }
@@ -17673,13 +17676,44 @@ const MOBILE_UI = (() => {
     }
   }
 
-  // Text-only share (Special Messages have no image to attach).
-  async function shareMsgText(text) {
+  // Text-only share — Special Telegram Messages and Important Updates both have
+  // `pages: null`, so the reader's Share button lands here instead of on the
+  // image path.
+  //
+  // ⚠ THE NATIVE BRANCH COMES FIRST, and it is the whole point of this function.
+  // `navigator.share` DOES NOT EXIST in the Android WebView (the same reason
+  // nativeShareImage exists — see the note above it). Until 9.98 this function
+  // knew only the web APIs, so on the phone every text message skipped straight
+  // to the clipboard: the system sheet never opened and the only sign anything
+  // had happened was a "copied" toast. Daily and Letterhead were never affected
+  // because an image sends them down the Capacitor branch instead.
+  // Share.share() with no `files` is the documented text-only form.
+  async function shareMsgText(text, title) {
     if (!text) { toast("Nothing to share."); return; }
-    try { if (navigator.share) { await navigator.share({ text }); return; } }
+    if (isNativeApp && window.Capacitor.Plugins.Share) {
+      try {
+        await window.Capacitor.Plugins.Share.share(
+          Object.assign({ text, dialogTitle: "Share" }, title ? { title } : {}));
+      } catch (err) {
+        // ⚠ Dismissing the sheet REJECTS on Android. That is a finished action,
+        // not a failure — and this branch must never fall through to the
+        // clipboard, or backing out of the share sheet silently copies the
+        // message instead and says so.
+        if (!isShareCancel(err)) toast("Couldn't share: " + ((err && err.message) || "please try again."));
+      }
+      return;
+    }
+    try { if (navigator.share) { await navigator.share(title ? { title, text } : { text }); return; } }
     catch (err) { if (err && err.name === "AbortError") return; }
     try { await navigator.clipboard.writeText(text); toast("Message copied to clipboard."); }
     catch { toast("Couldn't share."); }
+  }
+  // Capacitor's Share plugin rejects with "Share canceled" when the user backs
+  // out of the sheet; Web Share raises AbortError for the same thing.
+  function isShareCancel(err) {
+    if (!err) return false;
+    if (err.name === "AbortError") return true;
+    return /cancel/i.test(String(err.message || err));
   }
 
   // ---- Message to Admin ----------------------------------------------------
