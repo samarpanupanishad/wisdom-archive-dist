@@ -8863,6 +8863,11 @@ const SIT_AUDIO = (() => {
 const AARTI_AUDIO = (() => {
   const FILE = "aarti-baba-swami.mp3";
   const ART_FILE = "guru-charan.png";
+  // The Guru's picture, shown for the length of the aarti and gone when it ends
+  // (operator, 2026-08-30). Their own 8x12 print, the red mat cut back to a thin
+  // line and the printed caption trimmed off with it. 1240px wide, which is a
+  // 412pt phone at 3x - the widest we ever have to serve.
+  const PHOTO_FILE = "aarti-guru.jpg";
   // ⚠ The words as the operator gave them, 2026-08-28. Not to be "corrected" —
   // this is how the singer is named.
   const TITLE = "ॐ जय बाबा स्वामी";
@@ -8876,6 +8881,7 @@ const AARTI_AUDIO = (() => {
   let lock = null;     // screen wake lock, held only while playing
   let startedAt = 0;   // when THIS playthrough began, ms
   let recorded = false;// this playthrough has already been written to the diary
+  let finished = false;// it ran to its end - the darshan is over, the picture goes
 
   // ⚠ Assets arrive over the air, so on a phone they are wherever the frozen
   // shell put them. SIT_AUDIO already knows how to ask; do not re-derive it.
@@ -8902,11 +8908,16 @@ const AARTI_AUDIO = (() => {
     a.src = src(FILE);
     a.addEventListener("play", () => {
       if (!startedAt) startedAt = Date.now();
+      finished = false;
       acquire(); session("playing");
     });
     a.addEventListener("playing", () => { acquire(); position(); });
     a.addEventListener("pause", () => { release(); session("paused"); });
-    a.addEventListener("ended", () => { release(); session("none"); reset(); });
+    // ⚠ `finished` is set AFTER reset(), which does not touch it. It is what
+    // takes the picture off the screen and puts the button back to "Light the
+    // lamp"; the media element's own `ended` cannot be used for that, because it
+    // is indistinguishable from "paused at the very end".
+    a.addEventListener("ended", () => { release(); session("none"); reset(); finished = true; });
     a.addEventListener("loadedmetadata", position);
     // ⚠ The diary entry is written HERE, from the media clock, and not by the
     // aarti screen. Someone who taps back to the main page — or closes the
@@ -8997,28 +9008,77 @@ const AARTI_AUDIO = (() => {
 
   // ⚠ MUST be called from inside a tap. Android grants audio only on a gesture;
   // an aarti started by anything else is silence with no error anywhere.
-  function play() { const el2 = element(); return el2.play().catch(() => {}); }
+  function play() { const el2 = element(); el2.volume = 1; return el2.play().catch(() => {}); }
   function pause() { if (a) a.pause(); }
   function stop() {
     if (!a) return;
     a.pause();
     try { a.currentTime = 0; } catch (_) {}
+    a.volume = 1;
     reset();
+    finished = false;
   }
   function restart() {
     const el2 = element();
     reset();
+    finished = false;
     try { el2.currentTime = 0; } catch (_) {}
     return play();
+  }
+
+  // ⚠⚠ THE FIVE-SECOND COUNTDOWN, AND WHY THE SOUND STARTS BEFORE IT
+  //
+  // The screen counts 5-4-3-2-1 before the aarti begins (operator, 2026-08-30).
+  // That puts five seconds between the tap and the first note - and Android
+  // grants audio ONLY from a live gesture, which does not wait. Started the
+  // obvious way, on a timer, this feature is a SILENT aarti on the phones that
+  // enforce the rule, with nothing failing anywhere: the same fault that shipped
+  // inside the dhyan mantra and cost three publishes to find (§3).
+  //
+  // So the file starts in the tap, at volume 0. To the phone that is ordinary
+  // audible media playing from a gesture, so audio focus, the lock-screen player
+  // and the wake lock are all taken THEN, exactly as before. `open()` five
+  // seconds later only rewinds and raises the volume, and nothing blocks either.
+  //
+  // ⚠ armSilent() returns the play() promise UNCAUGHT, deliberately: a refusal
+  // is knowable at the tap, and the screen says so instead of counting down to
+  // nothing. Do not add a .catch() here.
+  function armSilent() {
+    const el2 = element();
+    reset();
+    finished = false;
+    try { el2.currentTime = 0; } catch (_) {}
+    el2.volume = 0;
+    return el2.play();
+  }
+  // Hand over to the aarti proper. The five silent seconds are not part of it,
+  // so the clock and the record both begin here.
+  function open() {
+    const el2 = element();
+    reset();
+    finished = false;
+    try { el2.currentTime = 0; } catch (_) {}
+    el2.volume = 1;
+    startedAt = Date.now();
+    if (el2.paused) return el2.play().catch(() => {});
+    return Promise.resolve();
   }
 
   function state() {
     const el2 = a;
     const dur = el2 && isFinite(el2.duration) ? el2.duration : 0;
     const cur = el2 ? el2.currentTime || 0 : 0;
+    const silent = !!(el2 && el2.volume === 0);
+    const started = !!(el2 && cur > 0);
     return {
       playing: !!(el2 && !el2.paused && !el2.ended),
-      started: !!(el2 && cur > 0),
+      started,
+      // `silent` is the countdown running underneath; `finished` is the aarti
+      // over. `live` is the only one the screen should ask: the picture is up,
+      // the ring is turning, and the buttons say Pause / Start again.
+      silent,
+      finished,
+      live: started && !silent && !finished,
       cur, dur,
       frac: dur ? Math.min(1, cur / dur) : 0,
       through: !!(dur && cur >= dur * DONE_FRAC),
@@ -9028,8 +9088,9 @@ const AARTI_AUDIO = (() => {
   // ⚠ No seek() and no setPosition() is exposed. Nothing in the app may move the
   // playhead except restart() — the completion record is only honest while the
   // media clock can be trusted to mean "this much of it was actually sung".
-  return { play, pause, stop, restart, ready, state, element, release,
-           TITLE, CREDIT, FILE, DONE_FRAC };
+  return { play, pause, stop, restart, armSilent, open, ready, state, element, release,
+           photoUrl: () => src(PHOTO_FILE),
+           TITLE, CREDIT, FILE, PHOTO_FILE, DONE_FRAC };
 })();
 
 // ---- what to tell the member when the Om did not sound ----------------------
@@ -11249,10 +11310,12 @@ async function mountDhyanDiary(node) {
   // ever asked: has it been sung today, and is it running right now.
   function aartiLine() {
     const a = AARTI_AUDIO.state();
-    if (a.playing) return `playing · ${fmtClock(Math.round(a.cur))}`;
+    // ⚠ `live`, never `playing`/`started` on their own: during the countdown the
+    // file IS playing, silently, and this line must not announce it.
+    if (a.live && a.playing) return `playing · ${fmtClock(Math.round(a.cur))}`;
     const today = aartisOn(SADHANA.today());
     if (today) return today > 1 ? `sung ${today} times today` : "sung today";
-    if (a.started) return `paused · ${fmtClock(Math.round(a.cur))}`;
+    if (a.live) return `paused · ${fmtClock(Math.round(a.cur))}`;
     // ⚠ Never a hardcoded "4:50". The length is the file's, and the file is
     // replaceable over the air — a number typed here would go stale silently.
     return a.dur ? fmtClock(Math.round(a.dur)) : "tap to begin";
@@ -11262,28 +11325,86 @@ async function mountDhyanDiary(node) {
   // rebuild the lamp, restart its flicker and drop the ring back to zero for a
   // frame — and it would do it four times a second.
   function paintAarti() {
-    const ring = node.querySelector("[data-aring]");
-    if (!ring) return false;              // this screen is no longer up
+    const screen = node.querySelector("[data-aascreen]");
+    if (!screen) return false;            // this screen is no longer up
     const a = AARTI_AUDIO.state();
-    ring.style.setProperty("--p", (a.frac * 360).toFixed(1) + "deg");
+    const singing = a.playing && !a.silent;
+    // ⚠ The picture is up from the moment the countdown hands over until the
+    // aarti ends — and then it goes, and the screen is black again exactly as it
+    // started (operator, 2026-08-30). `live` is false both while the countdown
+    // runs (the file is playing, silently) and once it has finished.
+    screen.classList.toggle("revealed", a.live);
+    const ring = node.querySelector("[data-aring]");
+    if (ring) ring.style.setProperty("--p", ((a.live ? a.frac : 0) * 360).toFixed(1) + "deg");
     const flame = node.querySelector("[data-aflame]");
-    if (flame) flame.classList.toggle("lit", a.playing);
+    if (flame) flame.classList.toggle("lit", singing);
     const lamp = node.querySelector("[data-alamp]");
-    if (lamp) lamp.classList.toggle("on", a.playing);
+    if (lamp) lamp.classList.toggle("on", singing);
     const clock = node.querySelector("[data-aclock]");
-    if (clock) clock.textContent = a.started
+    if (clock) clock.textContent = a.live
       ? `${fmtClock(Math.round(a.cur))} / ${fmtClock(Math.round(a.dur))}`
       : (a.dur ? fmtClock(Math.round(a.dur)) : "");
     const btn = node.querySelector("[data-aplay]");
-    if (btn) btn.textContent = a.playing ? "Pause" : a.started ? "Continue" : "Light the lamp";
+    if (btn) btn.textContent = singing ? "Pause" : a.live ? "Continue" : "Light the lamp";
     const again = node.querySelector("[data-aagain]");
-    if (again) again.hidden = !a.started;
-    const cnt = node.querySelector("[data-acount]");
-    if (cnt) {
-      const t = aartisOn(SADHANA.today());
-      cnt.textContent = t ? (t > 1 ? `Sung ${t} times today` : "Sung today") : "";
-    }
+    if (again) again.hidden = !a.live;
     return true;
+  }
+
+  // ---- the five seconds before the lamp ------------------------------------
+  // The sound is ALREADY RUNNING while this counts, at volume 0 — see the long
+  // note over AARTI_AUDIO.armSilent(). Nothing here may start audio.
+  const AARTI_COUNT_SEC = 5;
+  let aartiCountTimer = null, aartiCountEnd = 0, aartiShown = 0;
+
+  function showAartiNum(n) {
+    const num = node.querySelector("[data-anum]");
+    if (!num) return;
+    num.textContent = String(n);
+    num.classList.remove("beat");
+    void num.offsetWidth;                 // restart the entrance animation
+    num.classList.add("beat");
+  }
+  function showAartiErr(msg) {
+    const box = node.querySelector("[data-aerr]");
+    if (!box) return;
+    box.textContent = msg || "";
+    box.hidden = !msg;
+  }
+  function stopAartiCount() {
+    if (aartiCountTimer) { clearInterval(aartiCountTimer); aartiCountTimer = null; }
+    const screen = node.querySelector("[data-aascreen]");
+    if (screen) screen.classList.remove("counting");
+  }
+  // ⚠ Recomputed from a timestamp every tick, never accumulated — an interval in
+  // a backgrounded WebView is throttled and would drift, the same rule the
+  // sitting clock is built on.
+  function startAartiCount() {
+    stopAartiCount();
+    aartiCountEnd = Date.now() + AARTI_COUNT_SEC * 1000;
+    aartiShown = AARTI_COUNT_SEC;
+    const screen = node.querySelector("[data-aascreen]");
+    if (screen) { screen.classList.add("counting"); screen.classList.remove("revealed"); }
+    showAartiNum(AARTI_COUNT_SEC);
+    aartiCountTimer = setInterval(() => {
+      if (!node.isConnected) return stopAartiCount();
+      const left = Math.ceil((aartiCountEnd - Date.now()) / 1000);
+      if (left <= 0) { openAarti(); return; }
+      if (left !== aartiShown) { aartiShown = left; showAartiNum(left); hapticTickHook(); }
+    }, 120);
+  }
+  function openAarti() {
+    stopAartiCount();
+    AARTI_AUDIO.open();
+    paintAarti();
+    startAartiTicker();
+  }
+  // ⚠ Leaving the screen mid-countdown must take the silent playback with it, or
+  // the aarti runs to its end unheard and writes itself into the diary.
+  function cancelAartiCount() {
+    if (!aartiCountTimer) return;
+    stopAartiCount();
+    AARTI_AUDIO.stop();
   }
 
   // ONE interval for everything the aarti drives on screen — the lamp on its
@@ -11470,17 +11591,41 @@ async function mountDhyanDiary(node) {
       wire(); return;
     }
 
-    // ⚠ Its own screen, and deliberately its own world: warm-dark, one lamp,
-    // one button. It is the only thing in the diary you LOOK at while it
-    // happens — a sitting wants the phone face down, this wants it face up.
-    // No scrub bar: an aarti has one length and is sung from its beginning.
+    // ⚠ Its own screen, and deliberately its own world: FULL SCREEN AND BLACK,
+    // over the app's header and tab bar (operator, 2026-08-30 — it used to be a
+    // warm-dark card inside the diary). It is the only thing in the diary you
+    // LOOK at while it happens — a sitting wants the phone face down, this wants
+    // it face up. No scrub bar: an aarti has one length and is sung from its
+    // beginning.
+    //
+    // ⚠ The picture is in the DOM from the moment the screen opens, at zero
+    // opacity. That is not decoration — it is what makes the reveal smooth. A
+    // half-megabyte JPEG asked for at the end of the countdown would decode in
+    // the one frame that must not stutter.
+    //
+    // ⚠ Order in the panel is fixed: lamp, clock, then ONE row of buttons. The
+    // row holds a single full-width button before the lamp is lit and two of the
+    // same height while it sings, so nothing below the painting ever changes
+    // height and the picture cannot move when the aarti starts. There is no
+    // "sung today" line and no note — the operator asked for the space and the
+    // lit diya beside the date on the main page already reports the day.
     if (view === "aarti") {
       node.replaceChildren(el(`
-        <div class="dd-wrap">
-          ${backHtml("Aarti")}
-          <div class="dd-aa">
+        <div class="dd-aa" data-aascreen>
+          <button class="dd-aa-x" data-home aria-label="Close the aarti">✕</button>
+          <div class="dd-aa-head">
             <div class="dd-aa-title">${escapeHtml(AARTI_AUDIO.TITLE)}</div>
             <div class="dd-aa-cred">${escapeHtml(AARTI_AUDIO.CREDIT)}</div>
+          </div>
+          <div class="dd-aa-canvas">
+            <img class="dd-aa-photo" alt="" decoding="async"
+                 src="${escapeHtml(AARTI_AUDIO.photoUrl())}">
+          </div>
+          <div class="dd-aa-cd" aria-live="polite">
+            <div class="dd-aa-num" data-anum>${AARTI_COUNT_SEC}</div>
+            <div class="dd-aa-skip">tap to skip</div>
+          </div>
+          <div class="dd-aa-panel">
             <div class="dd-aa-lamp" data-alamp>
               <div class="dd-aa-ring" data-aring style="--p:0deg"></div>
               <div class="dd-aa-halo"></div>
@@ -11490,11 +11635,11 @@ async function mountDhyanDiary(node) {
               </div>
             </div>
             <div class="dd-aa-clock" data-aclock></div>
-            <div class="dd-aa-count" data-acount></div>
-            <button class="dd-aa-btn" data-aplay>Light the lamp</button>
-            <button class="dd-aa-again" data-aagain hidden>Start again</button>
-            <div class="dd-aa-note">Plays from this phone — no internet needed. The screen is kept
-              awake while it plays.</div>
+            <div class="dd-aa-btns">
+              <button class="dd-aa-btn" data-aplay>Light the lamp</button>
+              <button class="dd-aa-again" data-aagain hidden>Start again</button>
+            </div>
+            <div class="dd-aa-err" data-aerr hidden></div>
           </div>
         </div>`));
       wire();
@@ -11688,7 +11833,7 @@ async function mountDhyanDiary(node) {
     }, 1000);
   }
 
-  const goTo = (v) => { view = v; hapticTickHook(); render(); };
+  const goTo = (v) => { cancelAartiCount(); view = v; hapticTickHook(); render(); };
 
   function wire() {
     const home = node.querySelector("[data-home]");
@@ -11728,24 +11873,55 @@ async function mountDhyanDiary(node) {
     const gr = node.querySelector("[data-granth]");
     if (gr) gr.addEventListener("click", () => openGranthEntry(() => render()));
 
-    // ⚠ play() is called STRAIGHT out of the tap, before anything is awaited or
-    // repainted. Android grants audio only from a user gesture, and a gesture
-    // spent on an await is gone: the aarti would then start in silence with
-    // nothing failing anywhere — the same trap that hid inside the dhyan mantra
-    // for a whole release. Paint afterwards, never before.
+    // ⚠ THE AUDIO IS STARTED STRAIGHT OUT OF THE TAP, before anything is awaited
+    // or repainted — armSilent() is the first statement, and the haptic and the
+    // paint come after it. Android grants audio only from a user gesture and a
+    // gesture spent on an await is gone: the aarti would then start in silence
+    // with nothing failing anywhere, the trap that hid inside the dhyan mantra
+    // for a whole release. The countdown then runs over five SILENT seconds of
+    // the file; openAarti() rewinds and raises the volume, which nothing blocks.
     const ap = node.querySelector("[data-aplay]");
     if (ap) ap.addEventListener("click", () => {
-      if (AARTI_AUDIO.state().playing) AARTI_AUDIO.pause(); else AARTI_AUDIO.play();
+      const a = AARTI_AUDIO.state();
+      if (a.live && a.playing) { AARTI_AUDIO.pause(); hapticTickHook(); paintAarti(); return; }
+      if (a.live) {                                  // paused part-way: continue
+        AARTI_AUDIO.play(); hapticTickHook(); paintAarti(); startAartiTicker(); return;
+      }
+      const p = AARTI_AUDIO.armSilent();
       hapticTickHook();
-      paintAarti();
-      startAartiTicker();
+      showAartiErr("");
+      startAartiCount();
+      // A refusal is knowable HERE, at the tap. Saying so beats counting five
+      // seconds down to nothing.
+      if (p && p.catch) p.catch(() => {
+        stopAartiCount();
+        AARTI_AUDIO.stop();
+        paintAarti();
+        showAartiErr("This phone would not let the aarti start. Tap once more.");
+      });
     });
+    // ⚠ Start again COUNTS DOWN AGAIN (operator, 2026-08-30). Beginning the
+    // aarti over is the ritual over, not a seek back to zero — so the picture
+    // goes, the five seconds run, and it is lit again.
     const ag = node.querySelector("[data-aagain]");
     if (ag) ag.addEventListener("click", () => {
-      AARTI_AUDIO.restart();
+      AARTI_AUDIO.stop();
+      const p = AARTI_AUDIO.armSilent();
       hapticTickHook();
+      showAartiErr("");
       paintAarti();
-      startAartiTicker();
+      startAartiCount();
+      if (p && p.catch) p.catch(() => {
+        stopAartiCount(); AARTI_AUDIO.stop(); paintAarti();
+        showAartiErr("This phone would not let the aarti start. Tap once more.");
+      });
+    });
+    // A tap anywhere skips the countdown. While it runs the panel and the ✕ are
+    // pointer-events:none, so the press lands here and nowhere else.
+    const ascr = node.querySelector("[data-aascreen]");
+    if (ascr) ascr.addEventListener("click", (ev) => {
+      if (!aartiCountTimer || ev.target.closest("button")) return;
+      openAarti();
     });
 
     const slot = node.querySelector(".dd-rem-slot");
