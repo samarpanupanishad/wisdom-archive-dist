@@ -4883,10 +4883,10 @@ body.dd-sitting { overflow: hidden; }
   opacity: 0; pointer-events: none;
 }
 .dd-aa.counting .dd-aa-cd { opacity: 1; }
-.dd-aa.counting .dd-aa-panel,
+.dd-aa.counting .dd-aa-clock,
+.dd-aa.counting .dd-aa-btns,
 .dd-aa.counting .dd-aa-x { opacity: 0; pointer-events: none; }
-.dd-aa.counting .dd-aa-head { opacity: .35; }
-.dd-aa-panel, .dd-aa-x { transition: opacity .45s ease; }
+.dd-aa-clock, .dd-aa-btns, .dd-aa-x { transition: opacity .45s ease; }
 .dd-aa-num {
   font-family: var(--serif);
   font-size: min(38vw, 150px); line-height: 1;
@@ -4909,7 +4909,7 @@ body.dd-sitting { overflow: hidden; }
 
 /* ---- the lamp and the controls, in the black beneath the painting ---- */
 .dd-aa-panel { flex: none; padding: 0 16px 12px; text-align: center; }
-.dd-aa-lamp { position: relative; width: 46px; height: 46px; margin: 2px auto 0; }
+.dd-aa-lamp { position: relative; width: 66px; height: 66px; margin: 2px auto 0; }
 .dd-aa-ring {
   position: absolute; inset: 0; border-radius: 50%;
   background: conic-gradient(#ffcc63 var(--p, 0deg), rgba(255,255,255,.22) 0deg);
@@ -4933,7 +4933,7 @@ body.dd-sitting { overflow: hidden; }
    through the Web Audio graph — the exact thing that stopped Android treating
    the dhyan Om as media playback and cost three publishes to undo. */
 .dd-aa-flame {
-  width: 9px; height: 16px;
+  width: 13px; height: 23px;
   border-radius: 50% 50% 46% 46% / 62% 62% 38% 38%;
   background: radial-gradient(ellipse at 50% 76%,
     rgba(255,210,140,.42) 0%, rgba(230,140,60,.18) 55%, transparent 100%);
@@ -4957,8 +4957,8 @@ body.dd-sitting { overflow: hidden; }
   .dd-aa-photo { transition: opacity .2s linear; transform: none; }
 }
 .dd-aa-cup {
-  width: 22px; height: 8px; margin-top: 1px;
-  border-radius: 0 0 14px 14px / 0 0 11px 11px;
+  width: 32px; height: 11px; margin-top: 1px;
+  border-radius: 0 0 20px 20px / 0 0 15px 15px;
   background: linear-gradient(180deg, #e0a44a 0%, #8a5a1f 62%, #4d3011 100%);
   box-shadow: 0 3px 8px rgba(0,0,0,.5);
 }

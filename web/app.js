@@ -11329,6 +11329,11 @@ async function mountDhyanDiary(node) {
     if (!screen) return false;            // this screen is no longer up
     const a = AARTI_AUDIO.state();
     const singing = a.playing && !a.silent;
+    // ⚠ Lit from the tap, through the countdown and on into the aarti — one
+    // unbroken flame. `singing` is false during those five seconds (the file is
+    // playing, silently), so the countdown has to be asked for separately or the
+    // lamp would go out at zero and light again a frame later.
+    const alight = singing || !!aartiCountTimer;
     // ⚠ The picture is up from the moment the countdown hands over until the
     // aarti ends — and then it goes, and the screen is black again exactly as it
     // started (operator, 2026-08-30). `live` is false both while the countdown
@@ -11337,9 +11342,9 @@ async function mountDhyanDiary(node) {
     const ring = node.querySelector("[data-aring]");
     if (ring) ring.style.setProperty("--p", ((a.live ? a.frac : 0) * 360).toFixed(1) + "deg");
     const flame = node.querySelector("[data-aflame]");
-    if (flame) flame.classList.toggle("lit", singing);
+    if (flame) flame.classList.toggle("lit", alight);
     const lamp = node.querySelector("[data-alamp]");
-    if (lamp) lamp.classList.toggle("on", singing);
+    if (lamp) lamp.classList.toggle("on", alight);
     const clock = node.querySelector("[data-aclock]");
     if (clock) clock.textContent = a.live
       ? `${fmtClock(Math.round(a.cur))} / ${fmtClock(Math.round(a.dur))}`
@@ -11386,6 +11391,7 @@ async function mountDhyanDiary(node) {
     const screen = node.querySelector("[data-aascreen]");
     if (screen) { screen.classList.add("counting"); screen.classList.remove("revealed"); }
     showAartiNum(AARTI_COUNT_SEC);
+    paintAarti();                         // light it on THIS frame, not in 250ms
     aartiCountTimer = setInterval(() => {
       if (!node.isConnected) return stopAartiCount();
       const left = Math.ceil((aartiCountEnd - Date.now()) / 1000);
