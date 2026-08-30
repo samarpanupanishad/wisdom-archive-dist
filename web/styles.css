@@ -1175,7 +1175,13 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    after the burst already shows a full field of petals mid-fall instead of an empty
    sky slowly filling. The fall is `infinite`, so it keeps supplying petals for as
    long as the reveal is held. */
-.pl-petals { position: absolute; inset: 0; z-index: 6; overflow: hidden; pointer-events: none;
+/* ⚠ SHARED, and deliberately so: this same field is the aarti's pushpa varsha
+   (`.dd-aa-petals`, see the AARTI section). One silhouette, one fall, one place
+   to change them — two copies would drift apart the first time either is
+   touched. Only the gate differs: the preloader's is `.preloader.burst`, the
+   aarti's is `.dd-aa.revealed`, which is why those selectors are paired below
+   rather than the whole rule being written twice. */
+.pl-petals, .dd-aa-petals { position: absolute; inset: 0; z-index: 6; overflow: hidden; pointer-events: none;
   opacity: 0; transition: opacity .6s ease;
   /* Two silhouettes, so a field of twenty doesn't read as one shape repeated: a
      face-on petal (rounded fan, tapered base) and a curled one seen side-on.
@@ -1184,15 +1190,16 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   --petal-a: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 116'%3E%3Cpath d='M50 114 C16 92 4 60 12 34 C20 8 42 2 50 2 C58 2 80 8 88 34 C96 60 84 92 50 114 Z' fill='%23000'/%3E%3C/svg%3E");
   --petal-b: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 116'%3E%3Cpath d='M48 114 C14 90 6 56 18 30 C28 8 52 0 66 6 C58 24 56 48 60 70 C63 88 58 102 48 114 Z' fill='%23000'/%3E%3C/svg%3E");
   --petal: var(--petal-a); }
-.preloader.burst .pl-petals { opacity: 1; }
-.pl-petals i { position: absolute; top: 0; left: var(--x); width: var(--size);
+.preloader.burst .pl-petals, .dd-aa.revealed .dd-aa-petals { opacity: 1; }
+.pl-petals i, .dd-aa-petals i { position: absolute; top: 0; left: var(--x); width: var(--size);
   height: calc(var(--size) * 1.16); opacity: 0;
   background: linear-gradient(155deg, color-mix(in srgb, var(--tint) 42%, #fff) 0%,
     var(--tint) 58%, color-mix(in srgb, var(--tint) 74%, #7d2340) 100%);
   -webkit-mask-image: var(--petal); mask-image: var(--petal);
   -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
-.preloader.burst .pl-petals i { animation: pl-petal-fall var(--dur) linear var(--delay) infinite; }
+.preloader.burst .pl-petals i,
+.dd-aa.revealed .dd-aa-petals i { animation: pl-petal-fall var(--dur) linear var(--delay) infinite; }
 /* Sway and spin are baked into the stops (one transform list, same functions at
    every stop, or the interpolation breaks); --drift flips sign mid-fall so the
    petal tacks left and right instead of sliding one way. */
@@ -1261,7 +1268,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .pl-text.pl-blink { animation: pl-text-blink 645ms ease-in-out 3; }
 @media (prefers-reduced-motion: reduce) {
   .chakra, .chakra::before, .chakra::after, .pl-nadi-a, .pl-nadi-b, .pl-rise, .pl-particle, .preloader.burst .pl-burst, .pl-text.pl-blink { animation: none !important; }
-  .pl-petals { display: none !important; }
+  .pl-petals, .dd-aa-petals { display: none !important; }
   .chakra { opacity: 1; transform: scale(1); box-shadow: 0 0 14px 3px color-mix(in srgb, var(--color) 55%, transparent); }
   .pl-nadi-a, .pl-nadi-b { stroke-dashoffset: 0; opacity: .4; }
 }
@@ -4835,13 +4842,13 @@ body.dd-sitting { overflow: hidden; }
   overscroll-behavior: contain;
   -webkit-user-select: none; user-select: none;
 }
-.dd-aa-x {
-  position: absolute; top: calc(env(safe-area-inset-top, 0px) + 8px); left: 8px;
-  z-index: 4; width: 38px; height: 38px; padding: 0;
-  background: none; border: 0; cursor: pointer;
-  font-size: 19px; line-height: 1; color: rgba(255,255,255,.34);
-  transition: opacity var(--dur) var(--ease);
-}
+/* ⚠ THERE IS NO ✕ ON THIS SCREEN (operator, 2026-08-30). It was a small grey
+   cross at the top-left, and it is gone: the way out is the phone's own back
+   button, which asks first (`.dd-aa-ask`). On a desktop browser — where there
+   is no hardware back — Esc opens the same question, so no surface is a trap.
+   Don't reinstate the cross without also removing that question; two ways out
+   that behave differently is how one of them ends up silently killing an aarti.
+*/
 .dd-aa-head {
   flex: none; text-align: center; padding: 16px 16px 2px;
   transition: opacity .9s ease;
@@ -4858,7 +4865,7 @@ body.dd-sitting { overflow: hidden; }
 
 /* ---- the painting ---- */
 .dd-aa-canvas {
-  flex: 1; min-height: 0;
+  flex: 1; min-height: 0; position: relative;
   display: flex; align-items: center; justify-content: center;
   padding: 2px 5px;
 }
@@ -4876,7 +4883,7 @@ body.dd-sitting { overflow: hidden; }
 
 /* ---- the countdown ----
    Deep sky blue on the black, the painting still hidden behind it. The panel
-   and the ✕ step aside so the number has the screen to itself. */
+   steps aside so the number has the screen to itself. */
 .dd-aa-cd {
   position: absolute; inset: 0; z-index: 3;
   display: grid; place-content: center; justify-items: center;
@@ -4884,9 +4891,8 @@ body.dd-sitting { overflow: hidden; }
 }
 .dd-aa.counting .dd-aa-cd { opacity: 1; }
 .dd-aa.counting .dd-aa-clock,
-.dd-aa.counting .dd-aa-btns,
-.dd-aa.counting .dd-aa-x { opacity: 0; pointer-events: none; }
-.dd-aa-clock, .dd-aa-btns, .dd-aa-x { transition: opacity .45s ease; }
+.dd-aa.counting .dd-aa-btns { opacity: 0; pointer-events: none; }
+.dd-aa-clock, .dd-aa-btns { transition: opacity .45s ease; }
 .dd-aa-num {
   font-family: var(--serif);
   font-size: min(38vw, 150px); line-height: 1;
@@ -4996,6 +5002,190 @@ body.dd-sitting { overflow: hidden; }
   margin-top: 10px; font-size: 12px; line-height: 1.45; color: #ffb4a2;
 }
 .dd-aa-err[hidden] { display: none; }
+
+/* ---- the deep burning at the Guru's feet ---------------------------------
+   The lamp itself is DRAWN, in app.js (aartiDeepSvg()) - see the long note there
+   for why a photograph could not do this. All that lives here is where it stands
+   and how it burns.
+
+   .dd-aa-deepbox is the picture's own rectangle, not the screen's: app.js
+   measures the `object-fit: contain` box and hands it over as --iw/--ih, so the
+   percentages below mean the same place on the painting whatever shape the phone
+   is. Until that measurement lands both are 0 and the lamp is simply not there,
+   which is the right thing for a photo that has not loaded.
+
+   The two numbers WORTH TUNING are --deep-w (how wide the lamp is, as a share of
+   the picture) and --deep-b (how far its foot stands above the picture's bottom
+   edge). The charan sit at about 81% down this painting and the grass runs from
+   there to the border; these two values put the lamp on that grass with its
+   topmost flame reaching the feet and its brass never covering them.
+   -------------------------------------------------------------------------- */
+.dd-aa-deepbox {
+  position: absolute; left: 50%; top: 50%;
+  width: var(--iw, 0px); height: var(--ih, 0px);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+
+  /* The three numbers worth your eye, all of them shares of THE PICTURE:
+     --deep-w   how wide the lamp is.
+     --orbit-cy where the middle of the circle sits down the painting.
+     --orb      the circle's radius. Taken from the picture's HEIGHT and used on
+                both axes, which is what keeps the path a circle instead of an
+                ellipse - the painting is far taller than it is wide, so a
+                percentage would come out flattened.
+     At these values the round reaches the waist at the top and the grass below
+     the charan at the bottom, and never touches the face. */
+  --deep-w: 29%;
+  --orbit-cy: 73.5%;
+  --orb: calc(var(--ih, 0px) * 0.09);
+}
+/* WARNING: the lamp is parked at TWELVE O'CLOCK when it is not moving, which is
+   where the orbit's own 0% is. Park it at the centre instead and every reveal
+   begins with a jump out to the top of the circle. */
+.dd-aa-deepsvg {
+  position: absolute; left: 50%; top: var(--orbit-cy);
+  width: var(--deep-w); height: auto;
+  transform: translate(-50%, -50%) translate(0, calc(var(--orb) * -1));
+  opacity: 0;
+  transition: opacity .6s ease;
+}
+
+/* ---- the round ----
+   The lamp is CARRIED, not stood down: it travels a circle before the Guru,
+   clockwise - left to right across the top, down the right, back along the
+   bottom - the way a diya is circled in pooja (operator, 2026-08-30). It
+   replaces the small sway that was here; two motions at once read as a wobble,
+   not as an offering.
+
+   WARNING: THE LAMP STAYS UPRIGHT ALL THE WAY ROUND. Every stop is a translate
+   and nothing else - the hand travels in a circle, the lamp does not tumble.
+   Adding a rotate here, or reaching for `offset-rotate: auto`, turns an offering
+   into a fairground ride.
+
+   WARNING: `linear`, never an ease. An eased round accelerates and slows once
+   per revolution, which on a continuous circle reads as a stutter rather than
+   as a hand. Only the fade-in is eased.
+
+   ONE gate, the same one the picture and the petals answer to: it is there,
+   and moving, while the aarti is SINGING and at no other moment. */
+.dd-aa.revealed .dd-aa-deepsvg {
+  opacity: 1;
+  animation: dd-dp-orbit 5s linear infinite;
+}
+@keyframes dd-dp-orbit {
+  0% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.0000), calc(var(--orb) * -1.0000)); }
+  4.1667% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.2588), calc(var(--orb) * -0.9659)); }
+  8.3333% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.5000), calc(var(--orb) * -0.8660)); }
+  12.5% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.7071), calc(var(--orb) * -0.7071)); }
+  16.6667% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.8660), calc(var(--orb) * -0.5000)); }
+  20.8333% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.9659), calc(var(--orb) * -0.2588)); }
+  25% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 1.0000), calc(var(--orb) * -0.0000)); }
+  29.1667% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.9659), calc(var(--orb) * 0.2588)); }
+  33.3333% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.8660), calc(var(--orb) * 0.5000)); }
+  37.5% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.7071), calc(var(--orb) * 0.7071)); }
+  41.6667% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.5000), calc(var(--orb) * 0.8660)); }
+  45.8333% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.2588), calc(var(--orb) * 0.9659)); }
+  50% { transform: translate(-50%, -50%) translate(calc(var(--orb) * 0.0000), calc(var(--orb) * 1.0000)); }
+  54.1667% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.2588), calc(var(--orb) * 0.9659)); }
+  58.3333% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.5000), calc(var(--orb) * 0.8660)); }
+  62.5% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.7071), calc(var(--orb) * 0.7071)); }
+  66.6667% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.8660), calc(var(--orb) * 0.5000)); }
+  70.8333% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.9659), calc(var(--orb) * 0.2588)); }
+  75% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -1.0000), calc(var(--orb) * 0.0000)); }
+  79.1667% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.9659), calc(var(--orb) * -0.2588)); }
+  83.3333% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.8660), calc(var(--orb) * -0.5000)); }
+  87.5% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.7071), calc(var(--orb) * -0.7071)); }
+  91.6667% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.5000), calc(var(--orb) * -0.8660)); }
+  95.8333% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.2588), calc(var(--orb) * -0.9659)); }
+  100% { transform: translate(-50%, -50%) translate(calc(var(--orb) * -0.0000), calc(var(--orb) * -1.0000)); }
+}
+
+/* ---- the lighting ----
+   WARNING: TWO animations on one property, and the order is the whole trick.
+   `catch` runs once, tier by tier from the bottom up, so the deep is LIT rather
+   than found already burning - which is what the operator asked for and what
+   actually happens at an aarti. `flick` is held back by exactly as long, so it
+   takes over the moment the catch has finished and never fights it.
+
+   --i is the tier index, set on each group by aartiDeepSvg(). Everything below
+   is derived from it, so adding or removing a tier needs no change here. */
+.dd-dp-f {
+  opacity: 0;
+  animation:
+    dd-dp-catch .55s ease-out calc(.35s + var(--i) * .13s) both,
+    dd-dp-flick calc(1.9s + var(--i) * .17s) ease-in-out calc(1s + var(--i) * .13s) infinite;
+  transform-box: fill-box; transform-origin: 50% 100%;
+}
+@keyframes dd-dp-catch {
+  0%   { opacity: 0; }
+  40%  { opacity: 1; }
+  100% { opacity: .93; }
+}
+@keyframes dd-dp-flick {
+  0%, 100% { opacity: .93; }
+  30%      { opacity: 1; }
+  62%      { opacity: .82; }
+}
+.dd-dp-glow {
+  opacity: 0;
+  animation: dd-dp-breathe 4.6s ease-in-out 1.1s infinite,
+             dd-dp-catch 1.4s ease-out .35s both;
+}
+@keyframes dd-dp-breathe {
+  0%, 100% { opacity: .9; }
+  50%      { opacity: 1; }
+}
+
+/* WARNING: nothing moves when the screen is not revealed. The flames are gated
+   by the ancestor, not by their own class, so a paused aarti stops sixty-odd
+   nodes dead rather than leaving them animating invisibly behind opacity 0 -
+   which a compositor happily keeps doing, and which is exactly the kind of thing
+   that drains a phone through a five-minute screen-on aarti. */
+.dd-aa:not(.revealed) .dd-dp-f,
+.dd-aa:not(.revealed) .dd-dp-glow { animation: none; opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* Parked at SIX o'clock, not twelve: a still lamp low on the grass reads as
+     one set down, where the same lamp halfway up the picture reads as one
+     hanging in the air. */
+  .dd-aa.revealed .dd-aa-deepsvg {
+    animation: none;
+    transform: translate(-50%, -50%) translate(0, var(--orb));
+  }
+  .dd-dp-f { animation: none; opacity: .95; }
+  .dd-dp-glow { animation: none; opacity: .95; }
+}
+
+/* ---- pushpa varsha over the aarti ----------------------------------------
+   ⚠ The rules live with the PRELOADER's petals (`.pl-petals`, search
+   pl-petal-fall) and are shared by selector, not copied — same silhouettes,
+   same fall, same reduced-motion opt-out. All this section owns is the gate:
+   petals rain only while `.dd-aa.revealed`, which is exactly while the aarti is
+   SINGING. Pause and they stop with the picture; that is ONE condition, not
+   two, so the two can never disagree. Bodies are injected by app.js. */
+
+/* ---- leaving the aarti ---------------------------------------------------
+   The back button's question. Above the petals (z 6) and the countdown (z 3),
+   because it may be asked at any moment of the aarti. Its two buttons are the
+   screen's own — the same lit pill and the same ghost outline — so this reads
+   as part of the lamp rather than as the app's dialogs arriving on top of it. */
+.dd-aa-ask {
+  position: absolute; inset: 0; z-index: 8;
+  display: grid; place-items: center; padding: 24px;
+  background: rgba(0,0,0,.72);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+}
+.dd-aa-ask[hidden] { display: none; }
+.dd-aa-askbox {
+  width: 100%; max-width: 320px; text-align: center;
+  padding: 20px 18px 16px; border-radius: 18px;
+  background: linear-gradient(180deg, #2a140b, #190c06);
+  border: 1px solid rgba(246,229,207,.18);
+  box-shadow: 0 22px 60px -18px rgba(0,0,0,.9);
+}
+.dd-aa-askt { font-size: 17px; font-weight: 600; color: #fff; }
+.dd-aa-asks { margin-top: 6px; font-size: 13px; line-height: 1.45; color: #c9a483; }
+.dd-aa-askb { display: flex; gap: 8px; margin-top: 16px; }
 
 /* On a desktop the overlay is the whole window, which would strand the
    painting in a field of black. Hold the column to a phone's width. */

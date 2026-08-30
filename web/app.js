@@ -170,19 +170,20 @@ function thumbImg(e) { return e && e.thumb_url ? `<img class="thumb" src="${e.th
 // the burst is already a full sky of petals mid-fall rather than an empty one that
 // slowly fills — and nothing animates at all during the load, when the WebView has
 // no cycles to spare.
-(function petalShower() {
-  const pl = document.getElementById("preloader");
-  if (!pl || pl.querySelector(".pl-petals")) return;
-  // index.html's reduced-motion path skips the burst entirely, so these would
-  // never be seen anyway — but don't build twenty nodes to leave them hidden.
-  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
+// ⚠ SHARED with the AARTI screen (mountAartiPetals(), inside mountDhyanDiary).
+// Same bodies, same silhouettes, same fall — only the gate differs, and the gate
+// is in CSS. Kept as one function rather than two loops so a change to how a
+// petal is built can never land on one surface and miss the other.
+//
+// The petal is deliberately given NOTHING but per-body variation here: the
+// silhouette, the colour ramp and the fall itself are all in styles.css, which
+// is where they can be edited without touching the two callers.
+function petalBodies(n) {
   const TINTS = ["#f4a7bd", "#e87f9d", "#d95c7f", "#f7c3d1", "#c9436a", "#fbdde4"];
   const rnd = (a, b) => a + Math.random() * (b - a);
   const sign = () => (Math.random() < 0.5 ? -1 : 1);
-
   let html = "";
-  for (let n = 0; n < 20; n++) {
+  for (let i = 0; i < n; i++) {
     const dur = rnd(2.6, 4.4);
     html += "<i style=\"" +
       // A little past both edges: drift carries the outliers into frame.
@@ -198,10 +199,24 @@ function thumbImg(e) { return e && e.thumb_url ? `<img class="thumb" src="${e.th
       (Math.random() < 0.34 ? "--petal:var(--petal-b);" : "") +
       "\"></i>";
   }
+  return html;
+}
+// True when this device has asked for less movement. Both petal fields skip
+// building anything at all in that case — the CSS hides them either way, but
+// there is no reason to make twenty nodes nobody will see.
+const petalsMuted = () =>
+  !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+(function petalShower() {
+  const pl = document.getElementById("preloader");
+  if (!pl || pl.querySelector(".pl-petals")) return;
+  // index.html's reduced-motion path skips the burst entirely, so these would
+  // never be seen anyway — but don't build twenty nodes to leave them hidden.
+  if (petalsMuted()) return;
   const box = document.createElement("div");
   box.className = "pl-petals";
   box.setAttribute("aria-hidden", "true");
-  box.innerHTML = html;
+  box.innerHTML = petalBodies(20);
   pl.appendChild(box);
 })();
 
@@ -9093,6 +9108,193 @@ const AARTI_AUDIO = (() => {
            TITLE, CREDIT, FILE, PHOTO_FILE, DONE_FRAC };
 })();
 
+// ---- the aarti deep, and why it is drawn instead of photographed ------------
+// The operator sent five photographs of the tiered brass deep (pancharati) that
+// is carried at a Ganga aarti, and asked for it burning at the Guru's feet for
+// the length of the aarti. It is DRAWN here instead, and the reasons are worth
+// keeping because they will come up again the next time an object like this is
+// wanted:
+//
+//   - A photograph's flames are PIXELS. They cannot burn. No CSS makes a pixel
+//     flicker, and a still lamp under a moving petal fall reads as a sticker.
+//   - Every one of the five was an unlit product shot, none larger than 429px -
+//     soft the moment it is bigger than a thumbnail on a 3x phone - and each sat
+//     on a background (white, green, black) that would have to be cut away, two
+//     of them under a stock watermark.
+//   - This costs nothing in the artwork channel. It ships inside app.js, which
+//     every phone already downloads on a publish; a PNG is a new file every user
+//     re-fetches, and it can never be sharper than the day it was made.
+//
+// What is drawn is the shape all five photographs share: a domed foot, a tapered
+// stem, seven plates of oil cups stepping outward as they descend, a finial, and
+// the curved handle resting on its own small foot.
+//
+// WARNING: THE FLICKER IS PER TIER, NEVER PER FLAME. There are sixty-odd cups,
+// and one animation each is sixty composited layers burning for the length of
+// the aarti on phones whose power manager is already fighting us (section 3d).
+// At the size this is shown a single flame is about three pixels - what the eye
+// reads is a tier breathing, and seven animations buy that for a hundredth of
+// the cost.
+//
+// WARNING: Geometry is GENERATED, not hand-written path data. Each tier is an
+// ellipse seen from slightly above and its cups are placed around it by angle,
+// so the tier count, the cup counts and the perspective are all numbers at the
+// top of this function rather than 4KB of coordinates nobody can safely edit.
+function aartiDeepSvg() {
+  // Bottom tier first. rx is the plate's half-width, cy its height up the stem,
+  // n the cups around it. Read off the operator's photographs - but the vertical
+  // gaps are deliberately WIDER than the brass ones. On a real lamp the tiers
+  // nearly touch; at 110px that packs into a solid cone and the fire has nowhere
+  // to be. Opening them up is what lets each row of flames be seen burning.
+  const TIERS = [
+    { rx: 48,   cy: 140, n: 20 },
+    { rx: 41.5, cy: 123, n: 17 },
+    { rx: 35,   cy: 107, n: 15 },
+    { rx: 28.5, cy:  92, n: 12 },
+    { rx: 22,   cy:  78, n: 10 },
+    { rx: 15.5, cy:  65, n:  7 },
+    { rx: 9.5,  cy:  53, n:  5 },
+  ];
+  const CX = 52;              // the stem's axis. Not the middle of the box -
+                              // the handle needs the room on the right.
+  const SQUASH = 0.29;        // how flat an ellipse is: the viewing angle.
+  // WARNING: THE CUPS STAND OUTSIDE THE PLATE, and that one number is what makes
+  // the lamp readable. Drawn at the plate's own radius they sit on its surface,
+  // where the plate of the tier above covers them and every flame but the bottom
+  // row disappears - which is exactly what the first draft did. On the real
+  // object the cups are a scalloped ring beyond the disc's edge; drawn that way
+  // they clear the tier above and each row can burn.
+  const PLATE = 0.82;         // the disc, as a share of the ring of cups.
+  const f2 = (v) => Math.round(v * 100) / 100;
+
+  let out = "";
+  TIERS.forEach((t, i) => {
+    const ry = t.rx * SQUASH;
+    const pr = t.rx * PLATE, pry = pr * SQUASH;
+    const cup = Math.max(1.4, t.rx * 0.052);
+    let cups = "", flames = "";
+    for (let k = 0; k < t.n; k++) {
+      // Half a step of rotation on alternate tiers, so the cups of one plate are
+      // not stacked directly over the cups of the plate below it.
+      const th = (k / t.n) * Math.PI * 2 + (i % 2 ? Math.PI / t.n : 0);
+      const sn = Math.sin(th);
+      const x = CX + t.rx * Math.cos(th);
+      const y = t.cy + ry * sn;
+      cups += `<ellipse cx="${f2(x)}" cy="${f2(y)}" rx="${f2(cup)}" ry="${f2(cup * 0.6)}" fill="url(#dpCup)"/>`;
+      // The far side of the ring keeps its cups - they are the scalloped rim -
+      // but not its flames. A flame back there is behind the lamp's own stem and
+      // plates, so it can only ever be a smudge, and sixty of them are the
+      // expensive half of this drawing.
+      // Every flame leans and stands a little differently. This is GEOMETRY, not
+      // another animation - sixty flames in a rigid grid read as candles on a
+      // cake however well they flicker, and the fix costs nothing at runtime.
+      // The wobble is derived from the indices, so it is the same lamp every
+      // time rather than a new one on each render.
+      if (sn > -0.42) {
+        const j = Math.sin((i + 1) * 12.9898 + k * 78.233) * 43758.5453;
+        const r = j - Math.floor(j);                       // 0..1, stable
+        const lean = f2((r - 0.5) * 13);                   // degrees
+        const size = f2(0.84 + r * 0.3);
+        flames += `<use href="#dpFl" transform="translate(${f2(x)} ${f2(y - cup * 0.55)}) rotate(${lean}) scale(${size})"/>`;
+      }
+    }
+    // Rim, plate, the light the fire throws back off it, then cups, then flames -
+    // and the whole tier painted over the one below, which is how a real deep
+    // occludes itself: an upper plate hides the tops of the flames beneath it.
+    out +=
+      `<g class="dd-dp-t">` +
+        // A thin disc, not a bowl: the plate again 1.6 units lower and dark, so
+        // it reads as edge thickness. Drawn as a deep bowl the tiers stack into
+        // a solid cone with nowhere for the fire to sit.
+        `<ellipse cx="${CX}" cy="${f2(t.cy + 1.6)}" rx="${f2(pr)}" ry="${f2(pry)}" fill="#2a1905"/>` +
+        `<ellipse cx="${CX}" cy="${f2(t.cy)}" rx="${f2(pr)}" ry="${f2(pry)}" fill="url(#dpPlate)"/>` +
+        `<ellipse cx="${CX}" cy="${f2(t.cy)}" rx="${f2(pr * 0.55)}" ry="${f2(pry * 0.55)}" fill="url(#dpPlate2)"/>` +
+        `<ellipse cx="${CX}" cy="${f2(t.cy - 1)}" rx="${f2(t.rx * 1.06)}" ry="${f2(ry * 1.1)}" fill="url(#dpLit)"/>` +
+        cups +
+        `<g class="dd-dp-f" style="--i:${i}">${flames}</g>` +
+      `</g>`;
+  });
+
+  return `<svg class="dd-aa-deepsvg" viewBox="0 0 132 176" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <!-- WARNING: the brass is DARK on purpose, darker than any of the
+           photographs. A lit lamp is mostly shadow with fire on it; drawn in
+           bright gold the flames land on the same value as the metal and the
+           whole thing reads as a gold ornament, which is what the first pass
+           did. The contrast IS the fire. -->
+      <linearGradient id="dpPlate" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#2b1a05"/><stop offset=".26" stop-color="#a67c28"/>
+        <stop offset=".5" stop-color="#6a4711" stop-opacity="1"/><stop offset=".78" stop-color="#946c1c"/>
+        <stop offset="1" stop-color="#231404"/>
+      </linearGradient>
+      <linearGradient id="dpPlate2" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#412b0a"/><stop offset=".42" stop-color="#845d16"/>
+        <stop offset="1" stop-color="#332106"/>
+      </linearGradient>
+      <linearGradient id="dpStem" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#241503"/><stop offset=".34" stop-color="#b98f38"/>
+        <stop offset=".62" stop-color="#6a4711"/><stop offset="1" stop-color="#1d1103"/>
+      </linearGradient>
+      <radialGradient id="dpCup" cx=".4" cy=".28">
+        <stop offset="0" stop-color="#d6ab53"/><stop offset=".55" stop-color="#6a4711"/>
+        <stop offset="1" stop-color="#241503"/>
+      </radialGradient>
+      <!-- The firelight lying along the top of each plate. Without it the brass
+           is lit from nowhere and the lamp looks unlit however bright the
+           flames are. -->
+      <radialGradient id="dpLit" cx=".5" cy=".5">
+        <stop offset="0" stop-color="rgba(255,183,86,.34)"/>
+        <stop offset="1" stop-color="rgba(255,150,50,0)"/>
+      </radialGradient>
+      <!-- WARNING: THERE IS NO CONTACT SHADOW, and there must not be one. The
+           deep was drawn standing on the grass and had one, correctly - an
+           object resting on a painted meadow with nothing under it reads as a
+           sticker. It is now CARRIED, circling before the Guru, and a carried
+           lamp touches nothing: a shadow under it would pin it to a ground it
+           has left. The light it throws travels with it instead (#dpGlow). -->
+      <radialGradient id="dpGlow">
+        <stop offset="0" stop-color="rgba(255,198,114,.6)"/>
+        <stop offset=".34" stop-color="rgba(255,152,50,.24)"/>
+        <stop offset="1" stop-color="rgba(255,140,40,0)"/>
+      </radialGradient>
+      <!-- ONE flame, placed sixty-odd times by <use>. Four elements: the light it
+           throws, the body, the bright heart, and a spark of white at the wick.
+           A per-flame copy of this would be sixty times the markup for a
+           difference of three pixels nobody can see. -->
+      <g id="dpFl">
+        <ellipse cx="0" cy="-5" rx="4.6" ry="6.6" fill="rgba(255,138,30,.32)"/>
+        <path d="M0 -13.4 C2.9 -9 3.6 -6 3.6 -4.1 C3.6 -1.5 2 0 0 0 C-2 0 -3.6 -1.5 -3.6 -4.1 C-3.6 -6 -2.9 -9 0 -13.4 Z" fill="#ff7a12"/>
+        <path d="M0 -10.3 C1.9 -7.1 2.3 -5.1 2.3 -3.7 C2.3 -1.8 1.3 -.9 0 -.9 C-1.3 -.9 -2.3 -1.8 -2.3 -3.7 C-2.3 -5.1 -1.9 -7.1 0 -10.3 Z" fill="#ffc844"/>
+        <path d="M0 -7 C1 -5 1.2 -3.8 1.2 -3 C1.2 -1.9 .7 -1.3 0 -1.3 C-.7 -1.3 -1.2 -1.9 -1.2 -3 C-1.2 -3.8 -1 -5 0 -7 Z" fill="#fff3c4"/>
+        <ellipse cx="0" cy="-3.6" rx="1" ry="2.1" fill="#fffdf2"/>
+      </g>
+    </defs>
+
+    <!-- The light the lamp throws, breathing on its own slower cycle. Kept well
+         inside the box so it never squares off against the picture behind it. -->
+    <ellipse class="dd-dp-glow" cx="52" cy="108" rx="56" ry="60" fill="url(#dpGlow)"/>
+
+    <!-- Handle: out to the right and down onto its own small foot, as in every
+         one of the operator's photographs. Drawn FIRST so the base covers where
+         it meets the lamp. -->
+    <path d="M62 152 C82 146 98 149 111 158" fill="none" stroke="url(#dpStem)" stroke-width="4" stroke-linecap="round"/>
+    <path d="M106 157 h11 l-1.7 6 h-7.6 Z" fill="url(#dpStem)"/>
+    <ellipse cx="111.5" cy="163.5" rx="7.6" ry="2.3" fill="url(#dpPlate)"/>
+
+    <!-- Stem, tapering as it rises, and the finial bud on top. -->
+    <path d="M50.1 150 L50.9 36 L53.1 36 L53.9 150 Z" fill="url(#dpStem)"/>
+    <path d="M52 29 C55 32.5 55.9 35 55.9 37.5 L48.1 37.5 C48.1 35 49 32.5 52 29 Z" fill="url(#dpStem)"/>
+    <ellipse cx="52" cy="39.4" rx="5.6" ry="1.8" fill="url(#dpPlate)"/>
+    <g class="dd-dp-f" style="--i:7"><use href="#dpFl" x="52" y="38"/></g>
+
+    ${out}
+
+    <!-- Domed foot, painted last so it sits in front of the handle's root. -->
+    <path d="M39 161 C40.6 151 45 146 46.6 144 L57.4 144 C59 146 63.4 151 65 161 Z" fill="url(#dpStem)"/>
+    <ellipse cx="52" cy="161.4" rx="13.6" ry="3.6" fill="url(#dpPlate)"/>
+  </svg>`;
+}
+
 // ---- what to tell the member when the Om did not sound ----------------------
 // ⚠ MEASURED, not guessed. Over adb on 2026-08-24 (status §3d) the renderer process
 // was seen being demoted from `cpuset:/top-app` to `/background` the instant the
@@ -11334,11 +11536,14 @@ async function mountDhyanDiary(node) {
     // playing, silently), so the countdown has to be asked for separately or the
     // lamp would go out at zero and light again a frame later.
     const alight = singing || !!aartiCountTimer;
-    // ⚠ The picture is up from the moment the countdown hands over until the
-    // aarti ends — and then it goes, and the screen is black again exactly as it
-    // started (operator, 2026-08-30). `live` is false both while the countdown
-    // runs (the file is playing, silently) and once it has finished.
-    screen.classList.toggle("revealed", a.live);
+    // ⚠ ONE class carries the whole reveal — the picture, and the pushpa varsha
+    // raining over it — and it is tied to the aarti being AUDIBLE, not merely
+    // begun (operator, 2026-08-30). Pause and the darshan closes: the Guru goes,
+    // the petals stop. Continue and both return. `live` alone is not enough,
+    // because it stays true through a pause; `live && playing` is the singing.
+    // ⚠ `playing` alone is not enough either — the file is playing, silently,
+    // all through the five-second countdown, and nothing may appear then.
+    screen.classList.toggle("revealed", a.live && a.playing);
     const ring = node.querySelector("[data-aring]");
     if (ring) ring.style.setProperty("--p", ((a.live ? a.frac : 0) * 360).toFixed(1) + "deg");
     const flame = node.querySelector("[data-aflame]");
@@ -11354,6 +11559,93 @@ async function mountDhyanDiary(node) {
     const again = node.querySelector("[data-aagain]");
     if (again) again.hidden = !a.live;
     return true;
+  }
+
+  // ---- the deep at the Guru's feet -----------------------------------------
+  // WARNING: The deep stands on the PICTURE, not on the screen. The photo is
+  // `object-fit: contain` inside a flex box, so its rendered edges are wherever
+  // the phone's aspect ratio puts them - letterboxed above and below on a tall
+  // screen, at the sides on a short one - and CSS cannot ask where those edges
+  // ended up. Anchoring the lamp to the canvas instead would slide it off the
+  // grass and onto the black the moment a phone is a different shape.
+  //
+  // So the contained box is computed the same way the browser computes it (the
+  // smaller of the two scale factors) and handed to CSS as two numbers. Every
+  // other measurement in this feature is a percentage OF THAT BOX, which is what
+  // makes "just below the charan" mean the same thing on every screen.
+  //
+  // WARNING: It reads naturalWidth/naturalHeight, so it is worthless before the
+  // image has loaded and must be called again on load - the first call during
+  // render() usually happens too early on a cold start and correctly does
+  // nothing.
+  function placeAartiDeep() {
+    const canvas = node.querySelector(".dd-aa-canvas");
+    const img = node.querySelector(".dd-aa-photo");
+    const box = node.querySelector("[data-adeep]");
+    if (!canvas || !img || !box || !img.naturalWidth || !img.naturalHeight) return;
+    const cs = getComputedStyle(canvas);
+    const w = canvas.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const h = canvas.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    if (w <= 0 || h <= 0) return;
+    const k = Math.min(w / img.naturalWidth, h / img.naturalHeight);
+    box.style.setProperty("--iw", (img.naturalWidth * k).toFixed(1) + "px");
+    box.style.setProperty("--ih", (img.naturalHeight * k).toFixed(1) + "px");
+  }
+
+  // ---- pushpa varsha over the aarti ----------------------------------------
+  // The same field of rose petals that falls over the Guru at launch — the
+  // operator asked for that one, not a new one, so it is literally the same
+  // bodies (petalBodies()) under the same keyframe. Built ONCE when the screen
+  // opens and then left alone: the CSS starts and stops the fall from
+  // `.dd-aa.revealed`, so pausing does not touch the DOM and nothing has to be
+  // rebuilt to resume. Every --delay is negative, so the first frame after a
+  // Continue is already a full sky mid-fall rather than an empty one filling.
+  //
+  // ⚠ Fewer than the preloader's twenty. That burst lasts about three seconds;
+  // this one runs for the length of the aarti with the screen held awake, and
+  // the phones this has to be gentle on are the same ones whose power manager
+  // is already fighting us (§3d).
+  function mountAartiPetals() {
+    const screen = node.querySelector("[data-aascreen]");
+    if (!screen || screen.querySelector(".dd-aa-petals") || petalsMuted()) return;
+    const box = document.createElement("div");
+    box.className = "dd-aa-petals";
+    box.setAttribute("aria-hidden", "true");
+    box.innerHTML = petalBodies(16);
+    screen.appendChild(box);
+  }
+
+  // ---- leaving the aarti ---------------------------------------------------
+  // ⚠ The ✕ is gone from this screen (operator, 2026-08-30), so the phone's back
+  // button is the ONLY way out — and it asks first. Answering Exit STOPS the
+  // aarti, which is what the question says and therefore what it must do; that
+  // is a deliberate departure from the rest of the screen's behaviour, where
+  // wandering off elsewhere in the app leaves the singing running.
+  //
+  // ⚠ Not on the _ddOverlays stack. That stack prunes its entries by whether
+  // their node is still in the DOM, and this dialog lives inside the aarti
+  // screen from the moment it opens — hidden, but always connected — so it would
+  // never be pruned and would answer every later back press in the diary. It is
+  // handled in _ddBack instead, which knows which view is up.
+  const aartiAsk = () => node.querySelector("[data-aask]");
+  const aartiAsking = () => { const a = aartiAsk(); return !!(a && !a.hidden); };
+  function openAartiAsk() {
+    const a = aartiAsk();
+    if (!a || !a.hidden) return false;
+    a.hidden = false; hapticTickHook();
+    return true;
+  }
+  function closeAartiAsk() {
+    const a = aartiAsk();
+    if (!a || a.hidden) return false;
+    a.hidden = true;
+    return true;
+  }
+  function exitAarti() {
+    closeAartiAsk();
+    stopAartiCount();
+    AARTI_AUDIO.stop();
+    goTo("home");
   }
 
   // ---- the five seconds before the lamp ------------------------------------
@@ -11618,7 +11910,6 @@ async function mountDhyanDiary(node) {
     if (view === "aarti") {
       node.replaceChildren(el(`
         <div class="dd-aa" data-aascreen>
-          <button class="dd-aa-x" data-home aria-label="Close the aarti">✕</button>
           <div class="dd-aa-head">
             <div class="dd-aa-title">${escapeHtml(AARTI_AUDIO.TITLE)}</div>
             <div class="dd-aa-cred">${escapeHtml(AARTI_AUDIO.CREDIT)}</div>
@@ -11626,6 +11917,7 @@ async function mountDhyanDiary(node) {
           <div class="dd-aa-canvas">
             <img class="dd-aa-photo" alt="" decoding="async"
                  src="${escapeHtml(AARTI_AUDIO.photoUrl())}">
+            <div class="dd-aa-deepbox" data-adeep aria-hidden="true">${aartiDeepSvg()}</div>
           </div>
           <div class="dd-aa-cd" aria-live="polite">
             <div class="dd-aa-num" data-anum>${AARTI_COUNT_SEC}</div>
@@ -11647,9 +11939,50 @@ async function mountDhyanDiary(node) {
             </div>
             <div class="dd-aa-err" data-aerr hidden></div>
           </div>
+          <div class="dd-aa-ask" data-aask hidden>
+            <div class="dd-aa-askbox" role="dialog" aria-modal="true"
+                 aria-label="Leave the aarti?">
+              <div class="dd-aa-askt">Leave the aarti?</div>
+              <div class="dd-aa-asks">The aarti will stop.</div>
+              <div class="dd-aa-askb">
+                <button class="dd-aa-btn" data-astay>Stay</button>
+                <button class="dd-aa-again" data-aexit>Exit</button>
+              </div>
+            </div>
+          </div>
         </div>`));
       wire();
+      mountAartiPetals();
       paintAarti();
+      // The picture is in the DOM at zero opacity from the first frame, but its
+      // pixels may not have arrived yet - and the lamp cannot be placed until
+      // they have. Both paths are needed: `complete` covers the cached second
+      // visit, where `load` will never fire again.
+      placeAartiDeep();
+      const aphoto = node.querySelector(".dd-aa-photo");
+      if (aphoto) {
+        if (aphoto.complete) placeAartiDeep();
+        else aphoto.addEventListener("load", placeAartiDeep, { once: true });
+      }
+      // A rotation, a keyboard, a fold - anything that reshapes the canvas moves
+      // the picture's edges, and the lamp has to follow. The observer retires
+      // itself with the screen; the resize listener is the fallback for a WebView
+      // old enough to lack ResizeObserver, and is harmless where it is not.
+      const acanvas = node.querySelector(".dd-aa-canvas");
+      if (acanvas && window.ResizeObserver) {
+        const ro = new ResizeObserver(() => {
+          if (!acanvas.isConnected) { ro.disconnect(); return; }
+          placeAartiDeep();
+        });
+        ro.observe(acanvas);
+      } else {
+        window.addEventListener("resize", function onDeepResize() {
+          if (!node.isConnected || view !== "aarti") {
+            window.removeEventListener("resize", onDeepResize); return;
+          }
+          placeAartiDeep();
+        });
+      }
       // The length is not known until the file's metadata is in. Repaint when
       // it arrives rather than showing a guess in the meantime.
       AARTI_AUDIO.ready().then(paintAarti);
@@ -11906,29 +12239,41 @@ async function mountDhyanDiary(node) {
         showAartiErr("This phone would not let the aarti start. Tap once more.");
       });
     });
-    // ⚠ Start again COUNTS DOWN AGAIN (operator, 2026-08-30). Beginning the
-    // aarti over is the ritual over, not a seek back to zero — so the picture
-    // goes, the five seconds run, and it is lit again.
+    // ⚠ Start again goes back to the BEGINNING — the screen as it was when the
+    // aarti was opened: black, no picture, one full-width "Light the lamp"
+    // (operator, 2026-08-30; it used to re-arm and count down by itself). It
+    // starts nothing, and that is the point beyond tidiness: the next aarti then
+    // begins inside a fresh tap, which is the only thing Android will grant
+    // audio to. Re-arming here and counting down again is how it would come back
+    // silent on a phone that enforces the rule, with nothing failing anywhere.
     const ag = node.querySelector("[data-aagain]");
     if (ag) ag.addEventListener("click", () => {
+      stopAartiCount();
       AARTI_AUDIO.stop();
-      const p = AARTI_AUDIO.armSilent();
       hapticTickHook();
       showAartiErr("");
       paintAarti();
-      startAartiCount();
-      if (p && p.catch) p.catch(() => {
-        stopAartiCount(); AARTI_AUDIO.stop(); paintAarti();
-        showAartiErr("This phone would not let the aarti start. Tap once more.");
-      });
     });
-    // A tap anywhere skips the countdown. While it runs the panel and the ✕ are
+    // A tap anywhere skips the countdown. While it runs the panel is
     // pointer-events:none, so the press lands here and nowhere else.
+    // ⚠ Except while the leaving question is up: a tap meant for its scrim must
+    // not also light the lamp behind it.
     const ascr = node.querySelector("[data-aascreen]");
     if (ascr) ascr.addEventListener("click", (ev) => {
-      if (!aartiCountTimer || ev.target.closest("button")) return;
+      if (!aartiCountTimer || aartiAsking() || ev.target.closest("button")) return;
       openAarti();
     });
+
+    // Stay is also what a tap on the scrim means — the safe answer, and the one
+    // a stray press should land on.
+    const askEl = node.querySelector("[data-aask]");
+    if (askEl) askEl.addEventListener("click", (ev) => {
+      if (ev.target === askEl) closeAartiAsk();
+    });
+    const stayB = node.querySelector("[data-astay]");
+    if (stayB) stayB.addEventListener("click", () => closeAartiAsk());
+    const exitB = node.querySelector("[data-aexit]");
+    if (exitB) exitB.addEventListener("click", () => exitAarti());
 
     const slot = node.querySelector(".dd-rem-slot");
     if (slot) slot.replaceChildren(ddRemindersEl(render));
@@ -12046,12 +12391,34 @@ async function mountDhyanDiary(node) {
   // the diary's main menu FIRST; only a press made on the main menu itself is
   // allowed to leave the diary. Read via _pageBackHook, which the panel's own
   // ‹ chevron honours too, so the two backs can never disagree.
+  //
+  // ⚠ The aarti is the one rung that does not simply step down. It has no ✕ any
+  // more, so a back press there is the whole exit — and an aarti must not end by
+  // accident. It asks; a second press answers Stay by closing the question, and
+  // only its Exit button stops the singing.
   _ddBack = () => {
     if (!node.isConnected) { _ddBack = null; return false; }
+    if (view === "aarti") {
+      if (!closeAartiAsk()) openAartiAsk();
+      return true;
+    }
     if (view === "home") return false;
     goTo("home");
     return true;
   };
+
+  // ⚠ Esc is the desktop's back button, and it exists for one reason: with the
+  // ✕ gone there is otherwise NO way out of the aarti in a browser — not in the
+  // local app, and not in the shell harness this is tested in. It opens exactly
+  // the same question, so the two surfaces cannot drift apart. The listener is
+  // on the document (the screen holds no focus) and unhooks itself once this
+  // mount is gone, which is the same isConnected rule the tickers follow.
+  document.addEventListener("keydown", function onDiaryKey(ev) {
+    if (!node.isConnected) { document.removeEventListener("keydown", onDiaryKey); return; }
+    if (ev.key !== "Escape" || view !== "aarti") return;
+    ev.preventDefault();
+    if (!closeAartiAsk()) openAartiAsk();
+  });
 
   // Paint from the cache at once, then repaint once Preferences has been
   // consulted — that reconcile is what restores a diary after a cache clear,
