@@ -16788,6 +16788,14 @@ const MOBILE_UI = (() => {
           shareCaption: [title, body].filter(Boolean).join("\n\n"),
         };
       },
+      // ⚠ Share sends the PAGE SCAN ALONE — never the OCR transcript (operator,
+      // 2026-08-31). The caption is the letterhead's heading and, for a
+      // multi-page message, which page is going out: "4/8" = page 4 of 8.
+      // A single-page message gets the heading only (same rule as the "_pN"
+      // filename suffix). `nativeShareImage`/`shareImage` take this as the
+      // caption; a mail target uses its first line as the subject.
+      shareText: (v, pageNo, pageCount) =>
+        [v.title, pageCount > 1 ? pageNo + "/" + pageCount : ""].filter(Boolean).join("\n"),
     },
     // ---- Important Updates -------------------------------------------------
     // A fifth message section, not a new subsystem: the index page, reader page,
@@ -17543,10 +17551,17 @@ const MOBILE_UI = (() => {
         // because mail targets use it as the SUBJECT; shareCaption already
         // opens with it, so chat targets that ignore `title` lose nothing.
         if (!u) return shareMsgText(v.shareCaption, v.title || sec.title);
+        // ⚠ The image caption is section-specific: Letterhead sends the scan
+        // with just its heading + "page N/total" and NEVER the transcript
+        // (see MSG_SECTIONS.letterpad.shareText). Other sections send the full
+        // shareCaption (title + body).
+        const cap = sec.shareText
+          ? sec.shareText(v, pageNo(), (v.pages || []).length)
+          : v.shareCaption;
         if (isNativeApp && window.Capacitor.Plugins.Share) {
-          try { await nativeShareImage(u, fileName(), v.shareCaption); }
+          try { await nativeShareImage(u, fileName(), cap); }
           catch (err) { toast("Couldn't share: " + (err && err.message ? err.message : "please try again.")); }
-        } else shareImage(u, fileName(), v.shareCaption);
+        } else shareImage(u, fileName(), cap);
       };
 
       // ⚠ TWO KINDS OF DOWNLOAD, chosen by whether this message HAS an image.
