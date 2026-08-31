@@ -11288,17 +11288,36 @@ const _ddNative = () => !!(window.Capacitor && window.Capacitor.isNativePlatform
 // reason the image viewer uses Share rather than the web APIs. On a phone the
 // file is staged in CACHE and handed to the system share sheet, which is what
 // lets someone put it in Drive, Files or a chat with themselves.
-async function dhyanSaveText(filename, text) {
+//
+// ⚠ THE SHEET IS NOT A CONSOLATION PRIZE, it is the only route: writing to the
+// public Downloads/Documents folder needs a storage permission this app
+// deliberately does not declare (see the APK notes in CLAUDE.md), and declaring
+// one to save a text file would be a poor trade. So "download" on Android means
+// "pick where this goes", and the toast has to say so rather than claim a file
+// landed somewhere the user should go looking for.
+//
+// Shared by the Dhyan Diary's backup and by the message reader's .txt download —
+// `opts` is what keeps them from being two copies. Returns "shared" (a sheet was
+// opened) or "downloaded" (a real file was written), which is what the caller
+// needs to word its toast honestly.
+async function saveTextFile(filename, text, opts) {
+  const o = opts || {};
+  const mime = o.mime || "application/json";
   if (_ddNative()) {
     const P = window.Capacitor.Plugins;
     if (!P || !P.Filesystem || !P.Share) throw new Error("sharing isn't available on this device");
     const path = "wa-share/" + filename;
     await P.Filesystem.writeFile({ path, data: text, directory: "CACHE", encoding: "utf8", recursive: true });
     const { uri } = await P.Filesystem.getUri({ path, directory: "CACHE" });
-    await P.Share.share({ title: filename, text: "Personal Dhyan Diary backup", files: [uri], dialogTitle: "Save your diary" });
+    await P.Share.share({
+      title: filename,
+      text: o.blurb || "Personal Dhyan Diary backup",
+      files: [uri],
+      dialogTitle: o.dialogTitle || "Save your diary",
+    });
     return "shared";
   }
-  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const url = URL.createObjectURL(new Blob([text], { type: mime }));
   const a = document.createElement("a");
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
@@ -11308,7 +11327,7 @@ async function dhyanSaveText(filename, text) {
 
 async function dhyanExport() {
   try {
-    const how = await dhyanSaveText(SADHANA.exportName(), SADHANA.exportText());
+    const how = await saveTextFile(SADHANA.exportName(), SADHANA.exportText());
     const n = SADHANA.all().length;
     // Only after the write actually succeeded — Reports shows "last copy kept"
     // off this, and a backup nobody took must never look like one that was.
@@ -15346,6 +15365,10 @@ const MOBILE_UI = (() => {
     const u = curImg();
     if (u) { dl.href = u; dl.setAttribute("download", curName()); dl.classList.remove("m-vact-disabled"); }
     else { dl.removeAttribute("href"); dl.classList.add("m-vact-disabled"); }
+    // ⚠ Undo the "Download as text" label a text section may have left on this
+    // shared node — the same reason m-datepill-flat is removed just above.
+    dl.title = "Download image";
+    dl.setAttribute("aria-label", dl.title);
     dl.onclick = async (ev) => {
       if (!isNativeApp) return;   // desktop/browser: the plain <a download> handles it
       ev.preventDefault();
@@ -16689,7 +16712,7 @@ const MOBILE_UI = (() => {
   // ==========================================================================
   const MSG_SECTIONS = {
     special: {
-      key: "special", icon: "✨",
+      key: "special", icon: "✨", filePrefix: "SM",
       title: "Special Telegram Message", listTitle: "Special Telegram Messages", hindi: "विशेष संदेश",
       // Short form for the top BAR, which also carries the date pill — the same
       // wording the drawer uses. The long listTitle still labels the page's own
@@ -16736,7 +16759,7 @@ const MOBILE_UI = (() => {
       },
     },
     letterpad: {
-      key: "letterpad", icon: "✍️",
+      key: "letterpad", icon: "✍️", filePrefix: "LP",
       title: "Letterhead Message", listTitle: "Letterhead Messages", hindi: "गुरुजी का पत्र संदेश",
       barTitle: "Letterhead Msg",   // see MSG_SECTIONS.special.barTitle
       emptyMsg: "No letterpad messages yet. Guru's handwritten messages will appear here.",
@@ -16773,7 +16796,7 @@ const MOBILE_UI = (() => {
     // ⚠ Displayed as "Important Updates"; the key stays `broadcast`. See
     // BROADCAST_PLAN.md §0 — "update" already means the OTA machinery here.
     broadcast: {
-      key: "broadcast", icon: "📢",
+      key: "broadcast", icon: "📢", filePrefix: "AA",
       title: "Admin Announcement", listTitle: "Admin Announcements", hindi: "महत्वपूर्ण सूचना",
       barTitle: "Admin Announcements",
       emptyMsg: "No announcements yet. Announcements from the admin will appear here.",
@@ -17473,7 +17496,7 @@ const MOBILE_UI = (() => {
       const page = () => (v.pages && v.pages.length
         ? v.pages[Math.min(v.pages.length - 1, art._car ? art._car.page() : 0)] : null);
       const pageNo = () => (art._car ? art._car.page() + 1 : 1);
-      const fileName = () => `${sec.key === "letterpad" ? "LP" : "SM"}_${v.date ? fmtDateFile(v.date) : v.id}` +
+      const fileName = () => `${sec.filePrefix || "MSG"}_${v.date ? fmtDateFile(v.date) : v.id}` +
         `${v.pages && v.pages.length > 1 ? "_p" + pageNo() : ""}.jpg`;
 
       // The pill shows THIS message's date as dd/mm/yyyy and opens the section's
@@ -17526,13 +17549,46 @@ const MOBILE_UI = (() => {
         } else shareImage(u, fileName(), v.shareCaption);
       };
 
+      // ⚠ TWO KINDS OF DOWNLOAD, chosen by whether this message HAS an image.
+      // Special Telegram and Important Updates are text (`pages: null`), so
+      // there is nothing to put in the Gallery — they save the WORDS as a .txt
+      // instead. Until 9.99 the button was simply greyed out for them, which
+      // reads as broken rather than as "there is nothing here to download".
       const dl = $("m-panel-dl"), u = page();
-      if (u) { dl.href = u; dl.setAttribute("download", fileName()); dl.classList.remove("m-vact-disabled"); }
-      else { dl.removeAttribute("href"); dl.classList.add("m-vact-disabled"); }
+      dl.classList.remove("m-vact-disabled");
+      const txtName = () => `${sec.filePrefix || "MSG"}_${v.date ? fmtDateFile(v.date) : v.id}.txt`;
+      // The file is exactly what the reader shows: the title, then the body and
+      // whatever footer the section prints under it (signature and place for a
+      // Special, the team byline for an update). A saved copy that differs from
+      // the screen it was saved from is a bug report waiting to be filed.
+      const txtBody = () => [v.title, v.text].filter(Boolean).join("\n\n");
+      if (u) { dl.href = u; dl.setAttribute("download", fileName()); }
+      else { dl.removeAttribute("href"); dl.removeAttribute("download"); }
+      // ⚠ One shared node, so this label must be set on BOTH branches — and
+      // reset by the daily reader too (wireVPanel), or walking from an update
+      // back to a daily message leaves "Download as text" over an image.
+      dl.title = u ? "Download image" : "Download as text";
+      dl.setAttribute("aria-label", dl.title);
       dl.onclick = async (ev) => {
-        if (!isNativeApp) { if (!page()) ev.preventDefault(); return; }
+        const uu = page();
+        if (!uu) {                             // text message → a .txt file
+          ev.preventDefault();
+          const body = txtBody();
+          if (!body) { toast("Nothing to download."); return; }
+          dl.classList.add("m-vact-disabled");
+          try {
+            const how = await saveTextFile(txtName(), body, {
+              mime: "text/plain", blurb: v.title || sec.title, dialogTitle: "Save as text",
+            });
+            // ⚠ Worded from what actually happened. On Android no file has
+            // landed anywhere yet — the sheet is still asking where it goes.
+            toast(how === "shared" ? "Choose where to save the file." : "Saved " + txtName());
+          } catch (err) { toast("Couldn't save: " + ((err && err.message) || "please try again.")); }
+          finally { dl.classList.remove("m-vact-disabled"); }
+          return;
+        }
+        if (!isNativeApp) return;              // desktop: the plain <a download> has it
         ev.preventDefault();
-        const uu = page(); if (!uu) return;
         dl.classList.add("m-vact-disabled");
         try { await nativeSaveToGallery(uu, fileName()); toast("Saved to Gallery → " + GALLERY_ALBUM); }
         catch (err) { toast("Couldn't save: " + (err && err.message ? err.message : "please try again.")); }
