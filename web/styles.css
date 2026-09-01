@@ -1972,10 +1972,55 @@ body.m-mode.m-libpage .content {
    forces a compositing layer around a COLOUR-emoji glyph -- a combination worth
    avoiding on Android WebView when the contrast is already there. Gold on this
    pale green needs no help. */
+/* ⚠ ABSOLUTE, and this reverses how it was first built (operator, 2026-09-01:
+   "write Your lucky msg just parallel to personal diary"). In the flow the star
+   row was 20px of real height inside .mm-rowtxt, which pushed "Your Lucky Msg"
+   10px BELOW "Personal Diary" in the card beside it -- measured, 642 vs 652.
+   Out of the flow it decorates the 24px of clear space above the words and
+   costs the layout nothing, so the two cards read as one row again.
+   Anchored to .mm-rowtxt rather than to the card, so it stays over the WORDS at
+   any width -- the standing lesson from the ☰ drawer, where offsets measured
+   off a full-width test page were wrong twice on a real 210px drawer. */
 .mm-sparks {
-  display: flex; gap: 7px; align-items: center; justify-content: flex-start;
-  height: 17px; margin-bottom: 3px; pointer-events: none;
+  position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 3px;
+  display: flex; gap: 7px; align-items: center; justify-content: center;
+  height: 16px; pointer-events: none;
 }
+/* The containing block for all five stars. */
+.mm-r-lucky .mm-rowtxt { position: relative; }
+/* ⚠ The bouquet is shrunk 26 → 18px and the row's gap widened 9 → 16px ON
+   THIS CARD ONLY, and that is the whole reason a star fits beside the words.
+   The numbers are measured, not chosen: on a 360px phone the card is 159px, the
+   words "Your Lucky Msg" are 92px of solid text and the bouquet was 26px, which
+   left exactly 9px a side -- too little for a star to read as one. This buys
+   16px on the left and 22px on the right. The operator accepted the bouquet
+   ending up visibly smaller than Personal Diary's book (2026-09-01).
+   ⚠ Do not shrink the gap back for tidiness: it IS the left-hand star's room.
+   ⚠ CSS beats the svg's own width/height attributes, which is why this works
+   without touching IC.bouquet -- shared with nothing else here, but still. */
+/* ⚠ 78px, and the number is derived, not taste. With the star row out of the
+   flow the card collapsed back to its true 63px, where the words fill the
+   content box exactly and there is only the 16px padding above them -- so the
+   stars rendered 3px ABOVE the card edge. The row needs 19px (16 + a 3px gap)
+   plus a little air, i.e. ~23px above the words; centred content in a card of
+   height H leaves 16 + (H-63)/2, so H = 78. Applied to BOTH cards, which is
+   what keeps the two names level -- a taller card on one side alone, or uneven
+   padding, puts them back out of line. */
+.mm-r-diary, .mm-r-lucky { min-height: 78px; }
+.mm-r-lucky { gap: 18px; }
+.mm-r-lucky .mm-ico svg { width: 18px; height: 18px; }
+/* Flanking stars. Absolute for the same reason as the row above, plus one more:
+   in the flow they would compete with the words for a width that has none to
+   spare, and the first thing to give would be "Your Lucky Msg" wrapping to two
+   lines -- which is exactly the fault this change exists to fix. `right: 100%`
+   and `left: 100%` pin them to the edges of the text column itself, so they
+   follow the words instead of sitting at a guessed offset. */
+.mm-side {
+  position: absolute; top: 0; bottom: 0; display: flex; align-items: center;
+  font-size: 11px; line-height: 1; opacity: .5; pointer-events: none;
+}
+.mm-side.sl { right: 100%; margin-right: 2px; animation: mluckyshine 1.9s ease-in-out .95s infinite; }
+.mm-side.sr { left: 100%; margin-left: 2px; animation: mluckyshine 1.9s ease-in-out .32s infinite; }
 /* Resting at .4, the same floor mluckyshine holds -- so a star is never fully
    absent, not even during its own start delay. (An element shows its BASE style
    while an animation-delay is still running; a 0 here would blank two of the
@@ -1985,7 +2030,7 @@ body.m-mode.m-libpage .content {
 .mm-spark.s2 { font-size: 16px; animation: mluckyshine 1.9s ease-in-out .63s infinite; }
 .mm-spark.s3 { font-size: 12px; animation: mluckyshine 1.9s ease-in-out 1.27s infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .mm-spark { animation: none !important; opacity: 1; }
+  .mm-spark, .mm-side { animation: none !important; opacity: 1; }
 }
 
 .mm-anush {

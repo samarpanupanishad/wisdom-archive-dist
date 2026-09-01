@@ -19465,7 +19465,7 @@ const MOBILE_UI = (() => {
     const row = (href, cls, icon, name, sub, badge, spark) => `
       <a class="mm-row ${cls}" href="${href}">
         <span class="mm-ico">${icon}</span>
-        <span class="mm-rowtxt">${spark ? `<span class="mm-sparks" aria-hidden="true"><span class="mm-spark s1">⭐</span><span class="mm-spark s2">⭐</span><span class="mm-spark s3">⭐</span></span>` : ""}<span class="mm-name">${name}</span><span class="mm-sub2">${sub}</span></span>
+        <span class="mm-rowtxt">${spark ? `<span class="mm-sparks" aria-hidden="true"><span class="mm-spark s1">⭐</span><span class="mm-spark s2">⭐</span><span class="mm-spark s3">⭐</span></span><span class="mm-side sl" aria-hidden="true">⭐</span><span class="mm-side sr" aria-hidden="true">⭐</span>` : ""}<span class="mm-name">${name}</span><span class="mm-sub2">${sub}</span></span>
         ${badge ? `<span class="mm-dot" data-${badge}-badge hidden></span>` : ""}
       </a>`;
 
