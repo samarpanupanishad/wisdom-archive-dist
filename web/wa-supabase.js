@@ -1293,6 +1293,14 @@ const WA = {
 
   // `me` is the username presence announces and the typing broadcast carries.
   //
+  // ⚠ A NULL `me` means "join this thread unlisted" — track() never runs, so the
+  // name is never put on the channel at all. That is the only honest way to be
+  // absent from the list: presence is Realtime, which has no RLS, and
+  // presenceState() is readable by any client holding the anon key that ships
+  // in this very file. A `hidden: true` flag filtered on the client would leave
+  // the name on the wire for anyone who opened a console. See presenceHiddenFor()
+  // in app.js. `reveal()` below is how an unlisted member joins the list later.
+  //
   // ⚠ Typing and presence ride the chat's EXISTING channel — no second socket.
   // Concurrent Realtime connections are the scarcest free-tier resource, so a
   // thread must never cost more than the one connection it already opens.
@@ -1301,6 +1309,12 @@ const WA = {
   // pass isModerator(); everyone else rides Realtime alone as before.
   subscribeChat(wid, { me, poll, onMessage, onUpdate, onDelete, onReact, onUnreact, onTyping, onPresence, onPin }) {
     const filter = "wisdom_id=eq." + String(wid);
+    // Who to announce (null = unlisted), and whether the channel is up yet.
+    // Both are needed because reveal() can be called either side of SUBSCRIBED:
+    // an unlisted sutradhar who types the instant the thread opens would
+    // otherwise track() into a channel that isn't listening and stay invisible.
+    let announce = me || null;
+    let subscribed = false;
     const ch = _sb.channel("wa-chat-" + wid, { config: { broadcast: { self: false } } })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter },
           (p) => { if (onMessage) onMessage(_mapMsg(p.new)); })
@@ -1332,7 +1346,10 @@ const WA = {
       .subscribe((status) => {
         // track() must wait for SUBSCRIBED — calling it earlier is a no-op and
         // the member silently never appears as present.
-        if (status === "SUBSCRIBED" && me) { try { ch.track({ user: me }); } catch (_) {} }
+        if (status === "SUBSCRIBED") {
+          subscribed = true;
+          if (announce) { try { ch.track({ user: announce }); } catch (_) {} }
+        }
       });
     const stopPoll = poll
       ? _startChatPoll(wid, { onMessage, onUpdate, onReact, onUnreact, onPin })
@@ -1346,6 +1363,15 @@ const WA = {
       // Fire-and-forget: a dropped typing ping is not worth a retry or an error.
       sendTyping(user) {
         try { ch.send({ type: "broadcast", event: "typing", payload: { user: user } }); } catch (_) {}
+      },
+      // Join the presence list after having opened the thread unlisted. Called
+      // when a hidden sutradhar starts typing — see revealPresence() in app.js.
+      // ⚠ Idempotent, and it must stay that way: it is called from the throttled
+      // typing path, so it runs again on every ping after the first.
+      reveal(user) {
+        if (!user || announce) return;
+        announce = user;
+        if (subscribed) { try { ch.track({ user: user }); } catch (_) {} }
       },
     };
   },

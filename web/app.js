@@ -401,6 +401,10 @@ async function signOutToGate() {
   // AND the read mark both belong to the account that just left. Leaving them
   // would greet the next person on this phone with somebody else's unread reply.
   try { ADMINMSG.forget(); } catch {}
+  // Which threads he had revealed himself in is session state belonging to the
+  // account that just left. The PREFERENCE itself stays — it is a device
+  // setting, and it is inert for anyone who is not the sutradhar.
+  _presenceRevealed.clear();
   refreshModNav();
   toast("Signed out");
   AUTH_GATE.reopen();
@@ -1757,10 +1761,9 @@ const TYPING_PING_MS = 2000;    // at most one broadcast per member per 2s
 const TYPING_HOLD_MS = 4500;    // how long a name lingers after their last ping
 
 // Who is currently typing, name -> expiry. A plain object beats a timer per
-// person: one repaint tick sweeps the expired ones.
-// `onIdle` runs when the last typer expires, so the strip can fall back to
-// showing presence instead of just going blank.
-function makeTypingBoard(lineEl, onIdle) {
+// person: one repaint tick sweeps the expired ones. When the last typer
+// expires the strip just hides — "who is here" is the header chip's job now.
+function makeTypingBoard(lineEl) {
   const seen = new Map();
   let tick = 0;
   const paint = () => {
@@ -1770,7 +1773,6 @@ function makeTypingBoard(lineEl, onIdle) {
     if (!names.length) {
       if (tick) { clearInterval(tick); tick = 0; }
       lineEl.hidden = true;
-      if (onIdle) onIdle();
       return;
     }
     lineEl.hidden = false;
@@ -2268,7 +2270,7 @@ function buildChatMsgEl(m, ctx, prev) {
     const dead = el(`<div class="wc-msg wc-msg-dead ${isMe ? "wc-msg-me" : ""}${grouped ? " wc-msg-grp" : ""}"
          data-mid="${escapeHtml(m.id || "")}" data-user="${escapeHtml(m.user || "")}" data-ts="${escapeHtml(m.ts || "")}">
       <div class="wc-avatar">${escapeHtml((m.user || "?")[0].toUpperCase())}</div>
-      <div class="wc-bubble"><div class="wc-gone">Removed by the Sutradhar</div></div>
+      <div class="wc-bubble"><div class="wc-gone">This message was removed</div></div>
     </div>`);
     return dead;
   }
@@ -2427,14 +2429,94 @@ function chatUpdateLive(msgsEl, m, ctx) {
   node.replaceWith(buildChatMsgEl(m, ctx, prev));
 }
 
+// ---- "Hide me from the online list" — SUTRADHAR ONLY ----------------------
+// A device preference, not an account one: presence means "this thread is open
+// on this phone", so the switch that governs it belongs to the phone. No column,
+// no migration, ships OTA.
+//
+// ⚠ Sutradhar only, and the switch is not BUILT for anyone else rather than
+// built-and-hidden. Nothing here is a security boundary — presence has no RLS
+// and never could — which is exactly why the mechanism is "don't announce the
+// name at all" (see subscribeChat) and not a flag filtered on the client.
+const PRESENCE_HIDE_KEY = "wa:presence:hidden";
+function presenceHidePref() {
+  try { return localStorage.getItem(PRESENCE_HIDE_KEY) === "1"; } catch { return false; }
+}
+// Threads he has already given himself away in, by wid. Module scope, NOT on
+// ctx, and deliberately: ctx dies on every re-render, so the ↻ refresh button
+// would have put him back in hiding mid-conversation — dropping him off the
+// list while his own message sat above it. Survives a refresh; does not survive
+// leaving the thread, a relaunch, or sign-out.
+const _presenceRevealed = new Set();
+function presenceHiddenFor(wid) {
+  return isSutradhar() && presenceHidePref() && !_presenceRevealed.has(wid);
+}
+// He touched the composer, so he is about to speak — being listed is now the
+// honest state. ⚠ track() goes FIRST so he appears in the list a beat AHEAD of
+// "…is typing", never behind it; the whole point is that the typing line must
+// not be what announces him. Idempotent: the typing path calls this on every
+// throttled ping, and posting a message calls it too (a media-only message
+// reaches Send without a single keystroke).
+function revealPresence(ctx) {
+  if (!ctx || !ctx.presenceHidden) return;
+  ctx.presenceHidden = false;
+  _presenceRevealed.add(ctx.wid);
+  if (_chatStream && _chatStream.reveal) _chatStream.reveal(ctx.me);
+  if (ctx.paintOnline) ctx.paintOnline();
+}
+
+// The Settings card for the switch above. ⚠ Mounted from renderInfo("settings"),
+// which BOTH shells render — deliberately NOT from MOBILE_UI.enhanceSettings(),
+// which runs only under the APK. The sutradhar works from the desktop most of
+// the time (operator, 2026-09-02), so a phone-only switch would have missed the
+// surface it was built for. `.m-switchrow`/`.m-switch`/`.m-hint` are unscoped
+// classes despite the prefix, so they style correctly off-mobile too.
+//
+// ⚠ Not built at all for anyone but the sutradhar, rather than built and
+// hidden. Nothing here is a security boundary — presence has no RLS and never
+// could — which is why the mechanism is "never announce the name" (see
+// subscribeChat) rather than a flag filtered on the client.
+function mountPresenceSwitch(prose) {
+  if (!prose || !isSutradhar() || prose.querySelector("#wa-presence-box")) return;
+  const box = el(`<div class="sync-box" id="wa-presence-box">
+    <h3 style="margin-top:0">Samuhik Satsang</h3>
+    <label class="m-switchrow">Hide me from the online list
+      <span class="m-switch"><input type="checkbox" id="wa-presence-hide"><i></i></span></label>
+    <div class="m-hint" id="wa-presence-hint"></div>
+  </div>`);
+  prose.appendChild(box);
+  const sw = box.querySelector("#wa-presence-hide");
+  const hint = box.querySelector("#wa-presence-hint");
+  sw.checked = presenceHidePref();
+  // ⚠ The second sentence stays. It is the one place he is told that typing
+  // gives him away — before it happens, rather than after he has seen his own
+  // name appear in front of the whole satsang.
+  const paintHint = () => {
+    hint.textContent = sw.checked
+      ? "Members won't see your name when you open a Samuhik Satsang. If you start typing or send a message you join the list straight away, and stay in it until you leave that satsang."
+      : "Your name appears to other members while you have a Samuhik Satsang open, the same as everyone else.";
+  };
+  paintHint();
+  sw.addEventListener("change", () => {
+    try { localStorage.setItem(PRESENCE_HIDE_KEY, sw.checked ? "1" : "0"); } catch (_) {}
+    // ⚠ Switching it back ON must forget the threads already revealed in, or it
+    // would appear to do nothing in whichever satsang he last spoke in.
+    if (sw.checked) _presenceRevealed.clear();
+    paintHint();
+    toast(sw.checked ? "You're hidden from the online list" : "You're visible in the online list");
+  });
+}
+
 function openChatStream(wid, msgsEl, ctx) {
   closeChatStream();
   if (!isSignedIn()) return;   // not signed in; the manual refresh button still works
   // Live updates via Supabase Realtime (replaces the old SSE stream). Deleting a
   // message is an UPDATE (a soft delete), not a DELETE — the DELETE path stays
   // for rows removed before the migration, and for a true purge.
+  ctx.presenceHidden = presenceHiddenFor(wid);
   _chatStream = WA.subscribeChat(wid, {
-    me: ctx.me,
+    // null = join unlisted. Nothing else in subscribeChat reads `me`.
+    me: ctx.presenceHidden ? null : ctx.me,
     // Admins need the polling fallback: their Realtime feed goes silent once
     // device binding is enforced, because a WebSocket cannot carry the device
     // header (see _startChatPoll in wa-supabase.js). Ordinary members are
@@ -2458,7 +2540,7 @@ function openChatStream(wid, msgsEl, ctx) {
     onPin: (mid) => { if (ctx.repaintPin) ctx.repaintPin(mid); },
     onPresence: (users) => {
       ctx.present = users.filter((u) => u !== ctx.me);
-      if (ctx.paintPresence) ctx.paintPresence();
+      if (ctx.paintOnline) ctx.paintOnline();
     },
     onDelete: (id) => {
       const node = msgsEl.querySelector(`[data-mid="${id}"]`);
@@ -2468,6 +2550,52 @@ function openChatStream(wid, msgsEl, ctx) {
       }
     },
   });
+}
+
+// The "who is here now" sheet, opened from the header chip (.wc-online). Every
+// name in it is someone with THIS thread open right now — nothing more.
+// ⚠ Deliberately NOT the Admin Talks participants sheet: no roles, no "added
+// on" date, no sutradhar-first order. Presence carries only a username (see
+// subscribeChat), so a moderator and an ordinary member are indistinguishable
+// here — which is the point. A snapshot at open time; the header count stays
+// live, and someone arriving while the sheet is up shows on the next open.
+function openChatPresenceSheet(ctx) {
+  const me = (ctx && ctx.me) || (currentUser() || {}).username || "";
+  const hidden = !!(ctx && ctx.presenceHidden);
+  // ctx.present already excludes us (openChatStream filters it out), and we are
+  // demonstrably here — so put ourselves at the top rather than nowhere.
+  const others = ((ctx && ctx.present) || [])
+    .filter((u) => u && u !== me)
+    .sort((a, b) => a.localeCompare(b));
+  const row = (name, self) => `<li class="at-p${self && hidden ? " at-p-ghost" : ""}">
+      <span class="at-p-av">${escapeHtml((name[0] || "?").toUpperCase())}${
+        self && hidden ? "" : `<i class="at-p-dot"></i>`}</span>
+      <span class="at-p-body">
+        <span class="at-p-name">${escapeHtml(name)}${
+          self ? ` <em class="at-p-you">${hidden ? "You · hidden" : "You"}</em>` : ""}</span>
+      </span>
+    </li>`;
+  // ⚠ His own row is shown even while hidden, but is NOT counted in the heading
+  // — the heading has to say what everyone else's chip says. Showing the row is
+  // the only standing reminder that the switch is on; silent invisibility is how
+  // somebody stays hidden for six months without noticing.
+  const rows = [me ? row(me, true) : "", ...others.map((n) => row(n, false))].join("");
+  const n = others.length + (hidden ? 0 : 1);
+
+  const sheet = el(`<div class="at-sheet">
+    <div class="at-sheet-card" role="dialog" aria-label="Who is here now">
+      <div class="at-sheet-top">
+        <span class="at-sheet-h">${n} here now</span>
+        <button class="at-sheet-x" type="button" aria-label="Close">✕</button>
+      </div>
+      <ul class="at-plist">${rows}</ul>
+      <div class="at-sheet-note">Members who are here right now — it changes as people come and go.</div>
+    </div>
+  </div>`);
+  const close = () => sheet.remove();
+  sheet.querySelector(".at-sheet-x").addEventListener("click", close);
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+  document.body.appendChild(sheet);
 }
 
 // ---- composer helpers, shared by every chat surface -----------------------
@@ -2524,6 +2652,8 @@ async function renderWisdomChat(body, wid, label, opts) {
   body.innerHTML = `<div class="wc-wrap">
     <div class="wc-hdr">
       <span class="wc-title">${COMMUNITY_ICON} ${escapeHtml(label || chatWidLabel(wid))}</span>
+      <button class="wc-online" type="button" hidden aria-label="Who is here now">
+        <i class="wc-online-dot"></i><span class="wc-online-n">1</span></button>
       <button class="wc-find-btn" title="Search in this satsang" aria-label="Search in this satsang">🔍</button>
       <button class="wc-refresh cp-refresh" title="Refresh">↻</button>
     </div>
@@ -2711,6 +2841,33 @@ async function renderWisdomChat(body, wid, label, opts) {
   // are wired after the first paint, not before it.
   ctx.repaintPin = (mid) => paintPin(body, msgsEl, ctx, mid);
   paintPin(body, msgsEl, ctx);
+  // "Who is here now" — a live head-count in the header that opens a sheet of
+  // names. Presence rides this thread's own Realtime channel (openChatStream)
+  // and carries only a username, so no role reaches the chip or its sheet.
+  // ⚠ Suppressed for Admin Talks (opts.noOnline) — it has its own participants
+  // header with the same information.
+  const onlineBtn = body.querySelector(".wc-online");
+  if (onlineBtn && !(opts && opts.noOnline)) {
+    // On mobile the whole .wc-hdr is hidden (styles.css) — lift the chip out to
+    // sit as a thin right-aligned strip above the messages instead.
+    if (document.body.classList.contains("m-mode")) {
+      onlineBtn.classList.add("wc-online-m");
+      wrap.insertBefore(onlineBtn, wrap.firstChild);
+    }
+    ctx.paintOnline = () => {
+      const others = (ctx.present && ctx.present.length) || 0;    // ctx.present excludes us
+      // Unlisted, so don't count yourself — the number then matches exactly what
+      // everyone else's chip says, and there is no discrepancy for anyone to
+      // read something into.
+      const n = others + (ctx.presenceHidden ? 0 : 1);
+      onlineBtn.hidden = others < 1;      // nobody else here → nothing to show
+      onlineBtn.classList.toggle("wc-online-off", !!ctx.presenceHidden);
+      onlineBtn.querySelector(".wc-online-n").textContent = String(n);
+    };
+    onlineBtn.addEventListener("click", () => openChatPresenceSheet(ctx));
+    ctx.paintOnline();
+  }
+
   const finder = wireChatSearch(body, msgsEl);
   const findBtn = body.querySelector(".wc-find-btn");
   // ⚠ The finder matches what is RENDERED, so on a windowed thread it has to
@@ -2750,7 +2907,7 @@ async function renderWisdomChat(body, wid, label, opts) {
   const isMuted = !data.can_moderate && data.is_muted;
 
   if (isMuted) {
-    footEl.innerHTML = `<div class="wc-muted">🔇 You have been muted by the moderator.</div>`;
+    footEl.innerHTML = `<div class="wc-muted">🔇 You have been muted and cannot post here right now.</div>`;
   } else {
     // The format controls live INSIDE the input box, not in a toolbar row above
     // it (2026-08-06). A tall composer plus a separate toolbar would cost ~130px
@@ -2850,19 +3007,12 @@ async function renderWisdomChat(body, wid, label, opts) {
     keepsKeyboard(sendBtn);
     keepsKeyboard(footEl.querySelector(".wc-emoji-btn"));
     footEl.querySelectorAll(".wc-tb-btn[data-wrap]").forEach(keepsKeyboard);
-    // Typing + presence share one strip above the composer. Presence only shows
-    // when someone else is actually here, and typing outranks it — "Anjali is
-    // typing…" is the more useful of the two when both are true.
+    // The strip above the composer is TYPING ONLY. "Who is here" lives in the
+    // header chip (.wc-online) and its sheet now — a second, quieter copy of the
+    // same fact under the composer was just noise once the list existed.
     const liveEl = footEl.querySelector("#wc-live");
-    ctx.typing = makeTypingBoard(liveEl, () => ctx.paintPresence && ctx.paintPresence());
+    ctx.typing = makeTypingBoard(liveEl);
     ctx.present = ctx.present || [];
-    ctx.paintPresence = () => {
-      if (!liveEl.hidden && liveEl.textContent.indexOf("typing") >= 0) return;
-      const n = ctx.present.length;
-      liveEl.hidden = !n;
-      if (n) liveEl.textContent = n === 1 ? `${ctx.present[0]} is here` : `${n} others are here`;
-    };
-    ctx.paintPresence();
 
     wireMentions(ta, msgsEl);
 
@@ -2887,6 +3037,12 @@ async function renderWisdomChat(body, wid, label, opts) {
       const now = Date.now();
       if (now - lastPing < TYPING_PING_MS) return;
       lastPing = now;
+      // ⚠ The reveal hangs off the THROTTLED TYPING PING, never off this
+      // listener directly. A restored draft sets ta.value without dispatching
+      // `input` (so it can't reveal him on open, which is right — he hasn't
+      // touched anything), while the Bold/Italic buttons DO dispatch one, and
+      // that is also right: tapping them is composing.
+      revealPresence(ctx);
       if (_chatStream && _chatStream.sendTyping) _chatStream.sendTyping(ctx.me);
     });
 
@@ -2982,6 +3138,9 @@ async function renderWisdomChat(body, wid, label, opts) {
     const doSend = async () => {
       const text = ta.value.trim();
       if (!text && !pending.length) return;
+      // Speaking lists you, whatever the switch says — and a media-only message
+      // can reach Send without one keystroke, so the typing path never fired.
+      revealPresence(ctx);
       const files = takeTray();          // whatever was picked when Send was tapped
       const reply = replyTo;
       ta.value = "";
@@ -3923,6 +4082,10 @@ function renderInfo(kind) {
     // (wa-native.js owns all of it; no-op on desktop).
     if (window.WA_NATIVE && WA_NATIVE.enhanceSettings) WA_NATIVE.enhanceSettings();
     if (MOBILE_UI.active && MOBILE_UI.enhanceSettings) MOBILE_UI.enhanceSettings();
+    // Sutradhar only, and on BOTH shells — hence here and not inside either
+    // enhancer. Called last so it is the final card on either surface: under
+    // Notifications/Display on the phone, under the sync box on the desktop.
+    mountPresenceSwitch($view.querySelector(".prose"));
   }
 }
 
@@ -7237,7 +7400,7 @@ async function mountAdminTalks(node) {
   const chat = el(`<div class="at-chat m-chatbody"></div>`);
   node.replaceChildren(head, chat);
   await renderWisdomChat(chat, ADMIN_TALKS_WID, ADMIN_TALKS_TITLE,
-                         { onCtx: (c) => { chatCtx = c; } });
+                         { onCtx: (c) => { chatCtx = c; }, noOnline: true });
   // WhatsApp reading order: open at the latest message.
   const msgs = chat.querySelector("#wc-msgs");
   if (msgs) msgs.scrollTop = msgs.scrollHeight;
@@ -19455,17 +19618,23 @@ const MOBILE_UI = (() => {
         <span class="mm-sub2">${sub}</span>
         ${badge ? `<span class="mm-dot" data-${badge}-badge hidden></span>` : ""}
       </a>`;
-    // ⚠ `spark` is true for the Lucky Msg card and nothing else, and the stars
-    // go INSIDE .mm-rowtxt, as the first line of the card's own text column.
-    // That is deliberate and it is the lesson from the drawer (2026-09-01): the
-    // ☰ row's sparkle was placed at fixed pixel offsets measured on a
-    // full-width test page, and was wrong twice over on the real 210px drawer.
-    // In the flow there is nothing to measure -- the stars sit above the words
-    // at any phone width, and cannot land off the edge of a narrow card.
+    // ⚠ `spark` is true for the Lucky Msg card and nothing else: a scattered
+    // field of twinkling stars over its black ground (operator, 2026-09-01 --
+    // "increase to full box, since it comes and goes"). Mono glyphs, NOT the ⭐
+    // emoji, so they stay crisp at 6px and take the gold `color`. It is the
+    // FIRST child of `.mm-row` and CSS layers it behind the text; every star is
+    // hand-placed in CSS (`.mm-star.nN`) and the card's `overflow: hidden` keeps
+    // the field inside the box at any OS font size -- the earlier fault was a
+    // large font pushing stars out ("going outside the box"). The loop here only
+    // stamps the markup; nothing about the positions is random.
+    const STARFIELD = `<span class="mm-stars" aria-hidden="true">${
+      Array.from({ length: 12 }, (_, i) => `<span class="mm-star n${i + 1}">${i % 2 ? "✧" : "✦"}</span>`).join("")
+    }</span>`;
     const row = (href, cls, icon, name, sub, badge, spark) => `
       <a class="mm-row ${cls}" href="${href}">
+        ${spark ? STARFIELD : ""}
         <span class="mm-ico">${icon}</span>
-        <span class="mm-rowtxt">${spark ? `<span class="mm-sparks" aria-hidden="true"><span class="mm-spark s1">⭐</span><span class="mm-spark s2">⭐</span><span class="mm-spark s3">⭐</span></span><span class="mm-side sl" aria-hidden="true">⭐</span><span class="mm-side sr" aria-hidden="true">⭐</span>` : ""}<span class="mm-name">${name}</span><span class="mm-sub2">${sub}</span></span>
+        <span class="mm-rowtxt"><span class="mm-name">${name}</span><span class="mm-sub2">${sub}</span></span>
         ${badge ? `<span class="mm-dot" data-${badge}-badge hidden></span>` : ""}
       </a>`;
 
