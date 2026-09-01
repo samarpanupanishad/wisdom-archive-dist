@@ -1959,6 +1959,34 @@ body.m-mode.m-libpage .content {
 .mm-r-anubhuti { background: #eef7f4; } .mm-r-anubhuti .mm-ico { color: #0e8074; }
 .mm-r-diary { background: #fdf1e4; } .mm-r-diary .mm-ico { color: #b4712a; }
 .mm-r-lucky { background: #f2f7e2; } .mm-r-lucky .mm-ico { color: #6f9235; }
+/* ---- the Lucky Msg card's sparkle (Menu page › Important Links) ---------
+   ⚠ IN THE FLOW, not absolutely positioned, and that is the whole point. The
+   ☰ drawer row's sparkle was positioned at fixed pixel offsets taken off a
+   full-width test page; the real drawer is `width: 56%` (~210px), so the offsets
+   were wrong and the operator saw nothing -- twice (2026-09-01). Here the stars
+   are simply the first line of the card's own text column, so they sit above
+   the words on any phone width with nothing for anyone to measure wrongly.
+   ⚠ The fixed `height` matters: mluckyshine scales to 1.18, and without it
+   the row of stars would breathe and nudge the words below on every pulse.
+   ⚠ And no `filter` here. The drawer's stars carry a drop-shadow halo, which
+   forces a compositing layer around a COLOUR-emoji glyph -- a combination worth
+   avoiding on Android WebView when the contrast is already there. Gold on this
+   pale green needs no help. */
+.mm-sparks {
+  display: flex; gap: 7px; align-items: center; justify-content: flex-start;
+  height: 17px; margin-bottom: 3px; pointer-events: none;
+}
+/* Resting at .4, the same floor mluckyshine holds -- so a star is never fully
+   absent, not even during its own start delay. (An element shows its BASE style
+   while an animation-delay is still running; a 0 here would blank two of the
+   three for the first second and a bit, every time the page is drawn.) */
+.mm-spark { font-size: 13px; line-height: 1; opacity: .5; }
+.mm-spark.s1 { animation: mluckyshine 1.9s ease-in-out infinite; }
+.mm-spark.s2 { font-size: 16px; animation: mluckyshine 1.9s ease-in-out .63s infinite; }
+.mm-spark.s3 { font-size: 12px; animation: mluckyshine 1.9s ease-in-out 1.27s infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .mm-spark { animation: none !important; opacity: 1; }
+}
 
 .mm-anush {
   position: relative; display: flex; align-items: center; gap: 8px;

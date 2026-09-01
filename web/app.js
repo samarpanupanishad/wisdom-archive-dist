@@ -19455,10 +19455,17 @@ const MOBILE_UI = (() => {
         <span class="mm-sub2">${sub}</span>
         ${badge ? `<span class="mm-dot" data-${badge}-badge hidden></span>` : ""}
       </a>`;
-    const row = (href, cls, icon, name, sub, badge) => `
+    // ⚠ `spark` is true for the Lucky Msg card and nothing else, and the stars
+    // go INSIDE .mm-rowtxt, as the first line of the card's own text column.
+    // That is deliberate and it is the lesson from the drawer (2026-09-01): the
+    // ☰ row's sparkle was placed at fixed pixel offsets measured on a
+    // full-width test page, and was wrong twice over on the real 210px drawer.
+    // In the flow there is nothing to measure -- the stars sit above the words
+    // at any phone width, and cannot land off the edge of a narrow card.
+    const row = (href, cls, icon, name, sub, badge, spark) => `
       <a class="mm-row ${cls}" href="${href}">
         <span class="mm-ico">${icon}</span>
-        <span class="mm-rowtxt"><span class="mm-name">${name}</span><span class="mm-sub2">${sub}</span></span>
+        <span class="mm-rowtxt">${spark ? `<span class="mm-sparks" aria-hidden="true"><span class="mm-spark s1">⭐</span><span class="mm-spark s2">⭐</span><span class="mm-spark s3">⭐</span></span>` : ""}<span class="mm-name">${name}</span><span class="mm-sub2">${sub}</span></span>
         ${badge ? `<span class="mm-dot" data-${badge}-badge hidden></span>` : ""}
       </a>`;
 
@@ -19526,7 +19533,7 @@ const MOBILE_UI = (() => {
       <h3 class="mm-h">Important Links</h3>
       <div class="mm-grid2">
         ${row("#/m/dhyan", "mm-r-diary", IC.book, "Personal Diary", "your private space", "")}
-        ${row("#/random", "mm-r-lucky", IC.bouquet, "Your Lucky Msg", "receive blessings", "")}
+        ${row("#/random", "mm-r-lucky", IC.bouquet, "Your Lucky Msg", "receive blessings", "", true)}
       </div>
     </div>`);
 
