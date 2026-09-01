@@ -13384,7 +13384,12 @@ const MOBILE_UI = (() => {
         <a href="#/m/dhyan"><span class="mi">🧘</span> Personal Dhyan Diary</a>
         <a href="#/random" class="m-lucky"><span class="mi m-lucky-ico">🌟</span>
           <span class="m-lucky-text">Your Lucky Msg for Today</span>
-          <span class="m-lucky-spark s1">✨</span><span class="m-lucky-spark s2">✨</span><span class="m-lucky-spark s3">⭐</span></a>
+          <!-- ⭐ and not ✨: the sparkles emoji is a pale, near-white glyph and
+               all but disappears on the white drawer, which is what "sparkling is
+               not visible" turned out to be (operator, 2026-09-01). A gold star
+               carries its own contrast. Sizes differ in styles.css so three of the
+               same glyph still read as a scatter rather than a row. -->
+          <span class="m-lucky-spark s1">⭐</span><span class="m-lucky-spark s2">⭐</span><span class="m-lucky-spark s3">⭐</span></a>
         <button class="m-menu-group" data-group="more"><span class="mi">➕</span> More
           <span class="m-badge" data-more-group-badge hidden></span><span class="m-caret">▾</span></button>
         <div class="m-submenu" data-sub="more" hidden>

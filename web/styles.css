@@ -3309,6 +3309,19 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
   50% { opacity: 1; transform: scale(1.15) rotate(28deg); }
 }
 @keyframes mluckyswing { 0%, 100% { transform: rotate(-12deg); } 50% { transform: rotate(12deg); } }
+/* ⚠ The drawer's own sparkle, and NOT mluckytwinkle -- that one drops to
+   opacity 0 at both ends, so each star is invisible for most of its 1.9s and
+   only flashes for a fraction of a second. Beside the words, in the open white
+   space at the right of a row, that flicker read as sparkle. Above two lines of
+   wrapped label in a 210px drawer it read as nothing at all, and the operator
+   reported the sparkle simply missing (2026-09-01). This one never leaves the
+   screen -- it rests at .38 and pulses to full -- so there is always something
+   there to see. mluckytwinkle is left exactly as it was for the three other
+   places that use it. */
+@keyframes mluckyshine {
+  0%, 100% { opacity: .38; transform: scale(.74) rotate(-8deg); }
+  50%      { opacity: 1;   transform: scale(1.18) rotate(20deg); }
+}
 
 /* ⚠ NOTHING in this row tilts any more (operator, 2026-09-01: "just
    sparkling no tilting"). The words used to rock through mluckydance and the
@@ -3318,15 +3331,31 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
    word away if it is ever wanted back.
    ⚠ `.m-menu a.m-lucky`, not `.m-lucky`: `.m-menu a` is (0,1,1) and would
    otherwise win the padding outright, whatever the source order says. */
-.m-menu a.m-lucky { position: relative; padding-top: 21px; }
+.m-menu a.m-lucky { position: relative; padding-top: 26px; }
 /* The sparks float ABOVE the words rather than beside them, which is what the
    extra top padding just made room for. `left` is measured, not guessed:
    .m-menu a is padding-left 20px + a 24px-wide .mi + a 14px gap, so the label
-   itself begins at 58px. */
-.m-lucky-spark { position: absolute; pointer-events: none; opacity: 0; font-size: 11px; top: 4px; }
-.m-lucky-spark.s1 { left: 72px; animation: mluckytwinkle 1.9s ease-in-out infinite; }
-.m-lucky-spark.s2 { left: 124px; top: 2px; animation: mluckytwinkle 1.9s ease-in-out .63s infinite; }
-.m-lucky-spark.s3 { left: 176px; top: 5px; font-size: 9px; animation: mluckytwinkle 1.9s ease-in-out 1.27s infinite; }
+   itself begins at 58px.
+   ⚠ And nothing may sit past ~170px. The drawer is `width: 56%` -- about
+   210px on a 375px phone and ~200px on a 360px one -- so the label WRAPS to two
+   lines and there is far less width here than a full-width menu suggests. A
+   harness that lays this row out at full screen width will happily show sparks
+   at 190px that are off the edge on the phone. */
+.m-lucky-spark {
+  position: absolute; pointer-events: none; top: 3px;
+  /* Not opacity 0. s2 and s3 start .63s and 1.27s late, and during a delay an
+     element shows its BASE style -- so a zero here means two of the three stars
+     are genuinely absent for the first second and a bit. Resting at the same
+     .38 the keyframe floors at means the row is never short of stars. */
+  opacity: .38;
+  font-size: 15px; line-height: 1;
+  /* A halo in the accent, so even the smallest star at the dim end of its
+     pulse still separates from the white drawer behind it. */
+  filter: drop-shadow(0 0 2px rgba(217, 102, 42, .55));
+}
+.m-lucky-spark.s1 { left: 70px; font-size: 15px; animation: mluckyshine 1.9s ease-in-out infinite; }
+.m-lucky-spark.s2 { left: 116px; top: 0; font-size: 18px; animation: mluckyshine 1.9s ease-in-out .63s infinite; }
+.m-lucky-spark.s3 { left: 162px; top: 5px; font-size: 12px; animation: mluckyshine 1.9s ease-in-out 1.27s infinite; }
 .m-lucky-text, #nav a[data-route="random"] .label {
   display: inline-block; font-weight: 700;
   background: linear-gradient(90deg, var(--accent), #f0a93c, #c14f16, #f0a93c, var(--accent));
