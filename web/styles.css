@@ -3310,19 +3310,30 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
 }
 @keyframes mluckyswing { 0%, 100% { transform: rotate(-12deg); } 50% { transform: rotate(12deg); } }
 
-.m-lucky { position: relative; }
-.m-lucky-ico { animation: mluckyswing 1.4s ease-in-out infinite; }
+/* ⚠ NOTHING in this row tilts any more (operator, 2026-09-01: "just
+   sparkling no tilting"). The words used to rock through mluckydance and the
+   star used to swing through mluckyswing; both are gone, and only the sparkle
+   and the colour sweep are left. The two @keyframes are KEPT, not deleted --
+   mluckyswing is still worn by the Special Telegram thumb, and the dance is one
+   word away if it is ever wanted back.
+   ⚠ `.m-menu a.m-lucky`, not `.m-lucky`: `.m-menu a` is (0,1,1) and would
+   otherwise win the padding outright, whatever the source order says. */
+.m-menu a.m-lucky { position: relative; padding-top: 21px; }
+/* The sparks float ABOVE the words rather than beside them, which is what the
+   extra top padding just made room for. `left` is measured, not guessed:
+   .m-menu a is padding-left 20px + a 24px-wide .mi + a 14px gap, so the label
+   itself begins at 58px. */
+.m-lucky-spark { position: absolute; pointer-events: none; opacity: 0; font-size: 11px; top: 4px; }
+.m-lucky-spark.s1 { left: 72px; animation: mluckytwinkle 1.9s ease-in-out infinite; }
+.m-lucky-spark.s2 { left: 124px; top: 2px; animation: mluckytwinkle 1.9s ease-in-out .63s infinite; }
+.m-lucky-spark.s3 { left: 176px; top: 5px; font-size: 9px; animation: mluckytwinkle 1.9s ease-in-out 1.27s infinite; }
 .m-lucky-text, #nav a[data-route="random"] .label {
   display: inline-block; font-weight: 700;
   background: linear-gradient(90deg, var(--accent), #f0a93c, #c14f16, #f0a93c, var(--accent));
   background-size: 200% auto;
   -webkit-background-clip: text; background-clip: text; color: transparent;
-  animation: mluckydance 1.8s ease-in-out infinite, mluckyshimmer 2.6s linear infinite;
+  animation: mluckyshimmer 2.6s linear infinite;
 }
-.m-lucky-spark { position: absolute; pointer-events: none; opacity: 0; font-size: 11px; }
-.m-lucky-spark.s1 { right: 26px; top: 5px; animation: mluckytwinkle 1.9s ease-in-out infinite; }
-.m-lucky-spark.s2 { right: 46px; bottom: 4px; animation: mluckytwinkle 1.9s ease-in-out .63s infinite; }
-.m-lucky-spark.s3 { right: 12px; top: 40%; font-size: 9px; animation: mluckytwinkle 1.9s ease-in-out 1.27s infinite; }
 #nav a[data-route="random"] .label::after {
   content: " ✨"; font-size: 12px; -webkit-text-fill-color: initial;
   display: inline-block; animation: mluckytwinkle 1.9s ease-in-out infinite;
@@ -4242,6 +4253,13 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 }
 .dd-ask-btns { display: flex; gap: 8px; justify-content: center; }
 .dd-ask .dd-ghost { border-color: var(--border); color: var(--muted); }
+/* ⚠ ...and inside a sheet, for the same reason. .dd-ghost is white-on-
+   transparent because it was written for the DARK sitting screen and the
+   .dd-live card; on a white sheet it is white on white. "Back" on Granth
+   Pathan's Add-a-book screen has therefore always been an invisible button,
+   and it only stopped reading as a MISSING one once Record was correctly
+   hidden beside it (2026-09-01). */
+.dd-sheet .dd-ghost { border-color: var(--border); color: var(--muted); }
 .dd-ask-note { margin-top: 10px; font-size: 11px; color: var(--muted); }
 
 /* ---- recent ---- */
@@ -4256,10 +4274,16 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
   border: 1px solid var(--border-soft); margin-bottom: 7px;
 }
 .dd-row-main { flex: 1; min-width: 0; }
-.dd-row-t { font-size: 14px; color: var(--text); font-weight: 550; }
-.dd-row-d { color: var(--accent); font-weight: 600; }
-.dd-row-s { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
-.dd-row-dur { font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; flex: none; }
+/* Purple, and deliberately NOT the theme accent (operator, 2026-09-01). The
+   tiles above are orange because they are what you are about to do; this list
+   is the record of what you have already done, and the two should not read as
+   the same thing. #5f4fb0 is the app's own former accent, written as a literal
+   because --accent is orange now -- see the ORANGE THEME TRIAL note at the top
+   of this file. If that trial is ever reverted, these are the lines to revisit. */
+.dd-row-t { font-size: 14px; color: #5f4fb0; font-weight: 550; }
+.dd-row-d { color: #7a68c6; font-weight: 600; }
+.dd-row-s { font-size: 11.5px; color: #918bab; margin-top: 1px; }
+.dd-row-dur { font-size: 13px; color: #5f4fb0; font-variant-numeric: tabular-nums; flex: none; }
 .dd-del {
   flex: none; width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
   border: 0; background: transparent; color: var(--muted); font-size: 13px; line-height: 1;
@@ -4307,6 +4331,18 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 .dd-tile-wide { grid-column: 1 / -1; min-height: 76px; }
 .dd-tile-hero { border-color: var(--accent); }
 .dd-tile-hero .dd-tile-t { color: var(--accent); }
+/* The four things you DO, dressed as one family (operator, 2026-09-01): a light
+   pink ground, and the accent on every title. The two Dhyan tiles already wore
+   the accent through .dd-tile-hero, so Naam Jaap and Granth Pathan are simply
+   joining them rather than being given a colour of their own.
+   ⚠ Carried by a class app.js puts on exactly those four, NOT by a :not()
+   chain over .dd-tiles -- that same grid is reused by the japa chooser, by
+   Add / Remove and by Backup, and a structural selector would repaint those
+   too. The wide Aarti tile keeps its own lamp-lit look on purpose. */
+.dd-tile-do { background: #fdeef2; border-color: #f2cddb; }
+.dd-tile-do .dd-tile-t { color: var(--accent); }
+/* Restated at (0,2,0) so the hero border survives the line above it. */
+.dd-tile-do.dd-tile-hero { border-color: var(--accent); }
 .dd-tile-flat { min-height: 58px; background: var(--bg); box-shadow: none; }
 .dd-tile-choice { min-height: 108px; }
 
@@ -4322,12 +4358,22 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 .dd-sub-t { font-size: 16px; font-weight: 650; }
 
 /* ---- the strip of occasional things ----
-   In normal flow, NOT pinned: this page scrolls, and a fixed bar would sit on
-   top of the last row of the list on a short screen. */
+   ⚠ STICKY, not fixed -- and this REVERSES the note that used to stand here
+   (operator, 2026-09-01: the list of sittings should scroll while Reports /
+   Add-Remove / Reminders stay put). The old objection was real and is worth
+   keeping in mind: a `position: fixed` bar is out of flow and lands on top of
+   the last row of the list on a short screen. Sticky does not have that fault.
+   It keeps its place in the flow, so the list still ends above it and the page
+   still ends below it; it only refuses to scroll away while .dd-wrap is being
+   scrolled. Nothing else on this route is pinned to the bottom edge (.m-bottom
+   needs body.m-viewing and .m-tabbar needs body.m-libpage -- the diary is
+   neither), so there is nothing down there to collide with. */
 .dd-strip {
   display: flex; gap: 6px; margin-top: 18px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 14px; padding: 8px 6px;
+  position: sticky; bottom: max(8px, env(safe-area-inset-bottom)); z-index: 3;
+  box-shadow: 0 6px 20px rgba(38, 28, 60, .11);
 }
 .dd-strip-b {
   cursor: pointer; flex: 1; border: 0; background: transparent; font-family: inherit;
@@ -4457,7 +4503,7 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 }
 .dd-g-in:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 .dd-g-hint { font-size: 11px; color: var(--muted); line-height: 1.5; margin: 2px 2px 12px; }
-.dd-g-addbtns { display: flex; gap: 8px; }
+.dd-g-addbtns { display: flex; gap: 8px; margin-bottom: 4px; }
 .dd-g-addbtns .btn { flex: 1; justify-content: center; }
 .dd-g-empty { text-align: center; color: var(--muted); font-size: 13px; padding: 18px 0 14px; }
 .dd-g-first { width: 100%; justify-content: center; }
@@ -4492,6 +4538,15 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 }
 .dd-sheet-btns { display: flex; gap: 8px; }
 .dd-sheet-btns .btn { flex: 1; justify-content: center; }
+/* ⚠ `.btn { display: inline-flex }` is an AUTHOR rule, so it beats the UA
+   stylesheet's `[hidden] { display: none }` outright -- exactly the trap
+   already documented on .m-menu a and on .m-exit. openGranthEntry() has always
+   set `saveBtn.hidden = true` on the "Add a book" screen, and it did NOTHING:
+   Record and Cancel stayed on, pressed hard against "Add this book" with no gap
+   between them (operator, 2026-09-01). THIS is what hides them. The row needs
+   no :empty rule -- a flex container whose every child is display:none already
+   collapses to zero height. */
+.dd-sheet-btns .btn[hidden] { display: none !important; }
 /* ⚠ The "leave this sitting?" question is the ONE sheet that opens over the
    sitting screen and the bead counter, and both of those are z-index 70 — at
    the sheet's own 60 this would render behind the thing it is asking about and
@@ -4783,6 +4838,15 @@ body.dd-sitting { overflow: hidden; }
 }
 .dd-rem-row:not(.off) .dd-rem-tog { background: var(--accent); border-color: var(--accent); color: #fff; }
 .dd-rem-add { width: 100%; justify-content: center; margin-top: 4px; }
+/* The test button is a DIAGNOSTIC, not a second way to set a reminder — kept
+   visibly quieter than "+ Remind me to sit" above it so it never reads as one.
+   Its note is empty until the button has been pressed, and takes up no room
+   until then. */
+.dd-rem-test {
+  width: 100%; justify-content: center; margin-top: 12px;
+  font-size: 12.5px; font-weight: 600; color: var(--muted);
+}
+.dd-rem-testnote:empty { display: none; }
 /* Three wheels side by side need a little more room than two. */
 .dd-rem-editor .m-dp-wheel { flex: 1 1 auto; }
 
@@ -4805,8 +4869,18 @@ body.dd-sitting { overflow: hidden; }
 .dd-diya.on { filter: none; opacity: 1; }
 
 /* ---- the tile ---- */
+/* ⚠ A straight LEFT-TO-RIGHT ramp, and the evenness is the point (operator,
+   2026-09-01). The old gradient was 100deg -- tilted 10 degrees off horizontal
+   -- and held near-black for the first 62% before lightening only in the last
+   stretch, so the whole tile read as one flat brown. 90deg with the mid stop at
+   50% is what makes the lightening actually visible across the width.
+   ⚠ The right end stops at a warm mid-brown, NOT a pale one, and that is a
+   constraint rather than a taste: the three text colours below are white, gold
+   and tan on the assumption that every part of this tile stays dark. Take the
+   right stop any lighter and .dd-tile-t / .dd-tile-s have to be re-picked with
+   it. */
 .dd-tile-aarti {
-  background: linear-gradient(100deg, #2a0f0a 0%, #4a1c10 62%, #6d2c15 100%);
+  background: linear-gradient(90deg, #2a0f0a 0%, #632612 50%, #9a4a1e 100%);
   border-color: #7d451f; color: #f6e5cf;
   display: grid; grid-template-columns: auto 1fr; align-items: center;
   column-gap: 12px; row-gap: 0; min-height: 72px;

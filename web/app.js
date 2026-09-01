@@ -10500,6 +10500,9 @@ function ddRemindersEl(onChanged) {
       <div class="dd-rem-list"></div>
       ${rs.length < DHYAN_REMIND.MAX ? `<button class="btn dd-rem-add" data-add>+ Remind me to sit</button>` : ""}
       <div class="dd-backup-note" data-remnote></div>
+      ${DHYAN_REMIND.available() ? `
+        <button class="btn dd-rem-test" data-test>Send a test notification</button>
+        <div class="dd-backup-note dd-rem-testnote" data-testnote></div>` : ""}
     </div>`);
   const list = wrap.querySelector(".dd-rem-list");
 
@@ -10527,11 +10530,24 @@ function ddRemindersEl(onChanged) {
   } else {
     // ⚠ Said plainly rather than failing silently: someone who refused
     // notifications has no reminder, and a switch that looks on while nothing
-    // ever arrives is worse than no switch.
-    DHYAN_REMIND.permission().then((p) => {
-      note.textContent = p === "granted"
-        ? "You'll be nudged each day at this time."
-        : "Notifications are switched off for this app, so no reminder can arrive. Turn them on in Android's app settings.";
+    // ever arrives is worse than no switch. explain() now goes further and asks
+    // Android what it is actually holding, because permission alone was never
+    // the whole answer — a granted permission and a cleared alarm read the
+    // same way from here (operator, 2026-09-01: "we are not getting
+    // notification of reminder").
+    DHYAN_REMIND.explain().then((t) => { note.textContent = t; });
+  }
+
+  const testBtn = wrap.querySelector("[data-test]");
+  const testNote = wrap.querySelector("[data-testnote]");
+  if (testBtn) {
+    testBtn.addEventListener("click", async () => {
+      testBtn.disabled = true;
+      testNote.textContent = "Setting a test…";
+      const err = await DHYAN_REMIND.testNow();
+      testBtn.disabled = false;
+      testNote.textContent = err || ("A test reminder is set for one minute from now. Lock the " +
+        "phone and wait — if it does not arrive, Android is holding it back, not the diary.");
     });
   }
 
@@ -10684,11 +10700,7 @@ function aartiRemindersEl(onChanged) {
   if (!AARTI_REMIND.available()) {
     note.textContent = "Reminders work in the phone app. On a computer this is only a setting.";
   } else {
-    AARTI_REMIND.permission().then((p) => {
-      note.textContent = p === "granted"
-        ? "You'll be called to the aarti at this time."
-        : "Notifications are switched off for this app, so no reminder can arrive. Turn them on in Android's app settings.";
-    });
+    AARTI_REMIND.explain().then((t) => { note.textContent = t; });
   }
 
   const commit = async (rs2) => { await AARTI_REMIND.save(rs2); onChanged(); };
@@ -10723,12 +10735,22 @@ const DHYAN_REMIND = (() => {
   // app schedules later. Cancels are by explicit id for the same reason —
   // cancelling "all" would be someone else's bug one day.
   const BASE_ID = 41001, MAX = 3;
+  // One id past the range sync() cancels, so a test can never be mistaken for a
+  // real reminder — nor cancelled by one being saved.
+  const TEST_ID = BASE_ID + MAX;
 
   const LN = () => {
     const P = window.Capacitor && window.Capacitor.Plugins;
     return (P && P.LocalNotifications) || null;
   };
   const available = () => !!LN();
+
+  // ⚠ Every failure below USED to be swallowed (`catch (_) { return false; }`
+  // and nothing else), which made "the reminder is armed" and "Android refused
+  // to arm it" look identical from the diary. The operator reported reminders
+  // not arriving on 2026-09-01 and there was nothing anywhere — no screen, no
+  // log — that could say why. This records the reason; explain() reads it out.
+  let lastError = "";
 
   // ⚠ A notification's words are fixed when it is SCHEDULED, not when it is
   // shown. Someone who switches the app to English would otherwise keep being
@@ -10766,14 +10788,19 @@ const DHYAN_REMIND = (() => {
   // shell whose pending notifications were cleared out from under it.
   async function sync() {
     const ln = LN();
-    if (!ln) return false;
+    lastError = "";
+    if (!ln) { lastError = "this app has no notifications on this device"; return false; }
     const rs = list();
     try {
       await ln.cancel({ notifications: Array.from({ length: MAX }, (_, i) => ({ id: BASE_ID + i })) });
     } catch (_) {}
     const on = rs.filter((r) => r && r.on);
     if (!on.length) return true;
-    if ((await permission()) !== "granted") return false;
+    const perm = await permission();
+    if (perm !== "granted") {
+      lastError = "Android is not letting this app show notifications (" + perm + ")";
+      return false;
+    }
     const w = words();
     try {
       await ln.schedule({
@@ -10789,17 +10816,95 @@ const DHYAN_REMIND = (() => {
         } : null)).filter(Boolean),
       });
       return true;
-    } catch (_) { return false; }
+    } catch (e) {
+      lastError = "Android refused to set the alarm — " + ((e && e.message) || e);
+      return false;
+    }
+  }
+
+  // What Android ACTUALLY holds, asked of Android instead of assumed from what
+  // we sent it. This is the only one of the three checks in explain() that is
+  // evidence rather than intention: a battery saver that clears our alarms
+  // leaves sync() reporting success and this reporting zero.
+  // Returns null — not 0 — on a shell whose plugin has no getPending().
+  async function armed() {
+    const ln = LN();
+    if (!ln || !ln.getPending) return null;
+    try {
+      const r = await ln.getPending();
+      const all = (r && r.notifications) || [];
+      return all.filter((n) => {
+        const id = Number(n && n.id);
+        return id >= BASE_ID && id < BASE_ID + MAX;
+      }).length;
+    } catch (_) { return null; }
+  }
+
+  // The plain-English answer to "is this going to arrive?", assembled from the
+  // three facts above rather than from one hopeful sentence.
+  async function explain() {
+    const p = await permission();
+    if (p === "unavailable") return "Reminders work in the phone app. On a computer this is only a setting.";
+    if (p !== "granted") {
+      return "Notifications are switched off for this app, so no reminder can arrive. " +
+             "Turn them on in Android's app settings.";
+    }
+    if (!list().some((r) => r && r.on)) return "No reminder is switched on yet.";
+    if (lastError) return "This reminder could not be set — " + lastError + ".";
+    const n = await armed();
+    if (n === 0) {
+      // ⚠ Reported as an OBSERVATION, not a verdict. getPending() is the
+      // plugin's own record and a shell could conceivably keep a working alarm
+      // it does not list; telling someone their reminder is broken when it is
+      // not would be worse than saying nothing. The test button below is what
+      // settles it.
+      return "Android says it is not holding this reminder. If it never arrives, a battery saver " +
+             "has most likely cleared it \u2014 allow Samarpan Upanishad to run in the background, " +
+             "then reopen the app.";
+    }
+    return "You'll be nudged each day at this time." +
+           (n ? " Android is holding " + n + " reminder" + (n === 1 ? "" : "s") + " for this app." : "");
+  }
+
+  // Fires the same words, on the same route, one minute from now. Waiting a day
+  // to find out whether a reminder works is not a test, and asking whether one
+  // was heard is not evidence — this is how "Android is dropping our
+  // notifications" gets told apart from "the time has not come yet".
+  async function testNow() {
+    const ln = LN();
+    if (!ln) return "Reminders only work in the phone app.";
+    const p = await permission();
+    if (p !== "granted") {
+      return "Android is not letting this app show notifications. Turn them on in Android's app " +
+             "settings for Samarpan Upanishad, then try again.";
+    }
+    try { await ln.cancel({ notifications: [{ id: TEST_ID }] }); } catch (_) {}
+    try {
+      await ln.schedule({
+        notifications: [{
+          id: TEST_ID,
+          title: words().title,
+          body: words().body,
+          schedule: { at: new Date(Date.now() + 60000), allowWhileIdle: true },
+          extra: { route: "#/m/dhyan" },
+        }],
+      });
+      return "";
+    } catch (e) {
+      return "Android refused to set the alarm — " + ((e && e.message) || e);
+    }
   }
 
   // Tapping the reminder should land on the diary ready to begin, not on home.
+  // ⚠ The range is inclusive of TEST_ID: a test notification that opened
+  // nothing would look like a second, different fault.
   function bindTap() {
     const ln = LN();
     if (!ln || !ln.addListener) return;
     try {
       ln.addListener("localNotificationActionPerformed", (a) => {
         const id = a && a.notification && a.notification.id;
-        if (typeof id !== "number" || id < BASE_ID || id >= BASE_ID + MAX) return;
+        if (typeof id !== "number" || id < BASE_ID || id > BASE_ID + MAX) return;
         location.hash = MOBILE_UI.active ? "#/m/dhyan" : "#/dhyan";
       });
     } catch (_) {}
@@ -10810,7 +10915,8 @@ const DHYAN_REMIND = (() => {
     return sync();
   }
 
-  return { available, list, save, sync, bindTap, permission, notifyAt, MAX };
+  return { available, list, save, sync, bindTap, permission, notifyAt,
+           armed, explain, testNow, MAX };
 })();
 
 // ---- the aarti reminder ------------------------------------------------------
@@ -10830,6 +10936,9 @@ const AARTI_REMIND = (() => {
   // weekday ones (1 = Sunday, as Android counts them). Ids are worked out, never
   // handed round, so nothing here can collide with DHYAN_REMIND's 41001..41003.
   const BASE_ID = 41101, MAX = 3, STRIDE = 8;
+  // See DHYAN_REMIND: a silent `catch (_) { return false; }` is why nobody could
+  // tell an armed reminder from a refused one.
+  let lastError = "";
   const idFor = (i, slot) => BASE_ID + i * STRIDE + slot;
   const ALL_IDS = () => {
     const out = [];
@@ -10924,21 +11033,68 @@ const AARTI_REMIND = (() => {
   // pending notifications were cleared out from under it.
   async function sync() {
     const ln = LN();
-    if (!ln) return false;
+    lastError = "";
+    if (!ln) { lastError = "this app has no notifications on this device"; return false; }
     const rs = list();
     // ⚠ Cancel the WHOLE id range, not just what we are about to schedule.
     // Dropping Wednesday from a reminder leaves Wednesday's notification armed
     // on the phone otherwise, and it would keep arriving for ever.
     try { await ln.cancel({ notifications: ALL_IDS() }); } catch (_) {}
     if (!rs.some((r) => r && r.on)) return true;
-    if ((await permission()) !== "granted") return false;
+    const perm = await permission();
+    if (perm !== "granted") {
+      lastError = "Android is not letting this app show notifications (" + perm + ")";
+      return false;
+    }
     const w = words();
     const notifications = rs.flatMap((r, i) => notificationsFor(r, i, w));
     if (!notifications.length) return true;
     try {
       await ln.schedule({ notifications });
       return true;
-    } catch (_) { return false; }
+    } catch (e) {
+      lastError = "Android refused to set the alarm — " + ((e && e.message) || e);
+      return false;
+    }
+  }
+
+  // Same three checks as DHYAN_REMIND.explain(), against this reminder's own,
+  // much wider id range — one aarti reminder can be up to seven notifications.
+  async function armed() {
+    const ln = LN();
+    if (!ln || !ln.getPending) return null;
+    try {
+      const r = await ln.getPending();
+      const all = (r && r.notifications) || [];
+      return all.filter((n) => {
+        const id = Number(n && n.id);
+        return id >= BASE_ID && id < BASE_ID + MAX * STRIDE;
+      }).length;
+    } catch (_) { return null; }
+  }
+
+  async function explain() {
+    const p = await permission();
+    if (p === "unavailable") return "Reminders work in the phone app. On a computer this is only a setting.";
+    if (p !== "granted") {
+      return "Notifications are switched off for this app, so no reminder can arrive. " +
+             "Turn them on in Android's app settings.";
+    }
+    if (!list().some((r) => r && r.on)) return "No aarti reminder is switched on yet.";
+    if (lastError) return "This reminder could not be set — " + lastError + ".";
+    const n = await armed();
+    if (n === 0) {
+      // ⚠ Reported as an OBSERVATION, not a verdict. getPending() is the
+      // plugin's own record and a shell could conceivably keep a working alarm
+      // it does not list; telling someone their reminder is broken when it is
+      // not would be worse than saying nothing. The test button below is what
+      // settles it.
+      return "Android says it is not holding this reminder. If it never arrives, a battery saver " +
+             "has most likely cleared it \u2014 allow Samarpan Upanishad to run in the background, " +
+             "then reopen the app.";
+    }
+    return "You'll be called to the aarti at this time." +
+           (n ? " Android is holding " + n + " reminder" + (n === 1 ? "" : "s") + " for this app." : "");
   }
 
   // Tapping it should land on the diary, ready to light the lamp.
@@ -10966,7 +11122,7 @@ const AARTI_REMIND = (() => {
     return sync();
   }
 
-  return { available, list, save, sync, bindTap, permission,
+  return { available, list, save, sync, bindTap, permission, armed, explain,
            cleanDays, daysLabel, everyDay, DAY_NAMES, MAX };
 })();
 
@@ -12102,24 +12258,30 @@ async function mountDhyanDiary(node) {
         </div>` : `
         <div class="dd-sect-label">Sit now</div>
         <div class="dd-tiles">
-          <button class="dd-tile dd-tile-hero" data-start="guru">
+          <!-- ⚠ dd-tile-do is what carries the pink ground and the accent
+               title on these FOUR and nowhere else (operator, 2026-09-01). The
+               wide Aarti tile below is deliberately not one of them, and the
+               same .dd-tiles grid is reused by the japa chooser, Add / Remove
+               and Backup — which is why this is a class and not a CSS
+               :not() chain over the grid. -->
+          <button class="dd-tile dd-tile-do dd-tile-hero" data-start="guru">
             <span class="dd-tile-ico">🧘</span>
             <span class="dd-tile-t">Dhyan</span>
             <span class="dd-tile-q">(with Guru Mantra)</span>
             <span class="dd-tile-s">${st.targetMin} min</span>
           </button>
-          <button class="dd-tile dd-tile-hero" data-start="maun">
+          <button class="dd-tile dd-tile-do dd-tile-hero" data-start="maun">
             <span class="dd-tile-ico">🤍</span>
             <span class="dd-tile-t">Dhyan</span>
             <span class="dd-tile-q">(in Maun State)</span>
             <span class="dd-tile-s">${st.targetMin} min</span>
           </button>
-          <button class="dd-tile" data-go="japa">
+          <button class="dd-tile dd-tile-do" data-go="japa">
             <span class="dd-tile-ico">📿</span>
             <span class="dd-tile-t">Naam Jaap</span>
             <span class="dd-tile-s">mala or phone</span>
           </button>
-          <button class="dd-tile" data-granth>
+          <button class="dd-tile dd-tile-do" data-granth>
             <span class="dd-tile-ico">📖</span>
             <span class="dd-tile-t">Granth Pathan</span>
             <span class="dd-tile-s">${escapeHtml(granthLine())}</span>

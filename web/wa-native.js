@@ -530,7 +530,15 @@
       // file). Downloaded and hash-checked by the frozen shell, applied on the
       // NEXT launch -- never swapped under a live session.
       const code = await B.downloadCode(live, remote, checked.signed);
-      if (code.updated) result.ui_updated = code.updated;
+      if (code.updated) {
+        result.ui_updated = code.updated;
+        // Delayed for exactly the reason maybeShowAppUpdateDialog is: at launch
+        // the preloader is still on screen at this point, and a modal opened
+        // behind it is dismissed unseen. Fired from HERE rather than from
+        // boot(), so it covers the resume and notification-tap syncs too — the
+        // operator asked for it "when user starts the app or he is in the app".
+        setTimeout(function () { maybeShowUiUpdatedDialog(code.updated); }, 4000);
+      }
       if (code.blocked) result.ui_blocked = code.blocked;
 
       // The shell only reports `blocked` when it actually reached the code half.
@@ -766,6 +774,95 @@
     showAppUpdateDialog(st);
   }
 
+  // ---------------------------------------------------------------- UI updates
+  /*
+   * "Samarpan Upanishad has been updated — restart now?"
+   *
+   * The frozen shell downloads a new UI, hash-checks every file, writes it to
+   * app storage and arms it for the NEXT launch (wa-boot.js downloadCode). It
+   * never swaps code under a live session, and that is right: app.js is already
+   * running and a half-swapped app is worse than an old one.
+   *
+   * What was missing is that nothing ever TOLD anyone, and that is where "it
+   * takes two restarts" came from (operator, 2026-09-01). Pressing Back or Home
+   * does not kill this app — Android resumes the same WebView, wa-boot never
+   * runs a second time, and the update surfaces only on the next genuinely cold
+   * start. The first "restart" was never a restart at all.
+   *
+   * So: ask, and on Yes reload. A reload re-runs index.html, which re-runs
+   * wa-boot, which reads wa:mobile:uiFiles and serves the downloaded copies —
+   * the same path a cold start takes, minus the cold start. Zero restarts
+   * rather than two. On No, this session carries on with the UI it booted with
+   * and the new one lands whenever the app is next started properly; nothing is
+   * lost either way, because the files are already on disk before we ask.
+   *
+   * ⚠ Deliberately NOT automatic. A page that reloads itself out from under a
+   * half-typed message or a sitting in progress is a bug, however new the code
+   * it lands on. The user presses Yes or nothing happens.
+   *
+   * ⚠ The safety net still applies and must not be "tidied away": wa-boot sets
+   * wa:mobile:uiBoot to "pending" while the overrides load and to "ok" once they
+   * have. If the UI we are about to reload into is broken, the boot after that
+   * blacklists it and falls back to the bundled files. Reloading here does not
+   * bypass that — it runs straight through it.
+   */
+  const UU_ASKED = "wa:mobile:uiRestartAsked";   // the ui_version already offered
+
+  function showUiUpdatedDialog(version) {
+    if (document.getElementById("wa-uu-modal")) return;
+    // The APK dialog owns the screen while it is up. Two stacked modals is a
+    // worse fault than a restart offered one sync later — and because the mark
+    // below is not written on this path, it WILL be offered again.
+    if (document.getElementById("wa-au-modal")) return;
+    ls.set(UU_ASKED, version || "");
+    const ov = document.createElement("div");
+    ov.id = "wa-uu-modal";
+    ov.style.cssText =
+      "position:fixed;inset:0;z-index:900;background:rgba(20,16,28,.55);display:flex;" +
+      "align-items:center;justify-content:center;padding:24px;font-family:var(--sans,system-ui)";
+    ov.innerHTML =
+      '<div role="dialog" aria-modal="true" style="max-width:340px;width:100%;padding:20px;' +
+      "border-radius:var(--radius,16px);background:var(--surface,#fff);color:var(--text,#2a2730);" +
+      'box-shadow:var(--shadow-lg,0 22px 48px rgba(38,28,60,.28))">' +
+      '<div style="font-size:17px;font-weight:700;margin-bottom:7px">' +
+      "Samarpan Upanishad has been updated</div>" +
+      '<div style="font-size:13.5px;line-height:1.55">Press Yes to restart now and use the new ' +
+      "version" + (version ? " (" + auEsc(version) + ")" : "") +
+      ", or No to carry on with what you are doing.</div>" +
+      '<div style="margin-top:9px;font-size:12px;line-height:1.45;color:var(--muted,#8b8794)">' +
+      "Restarting takes a moment. Your diary, favourites and notes are not touched.</div>" +
+      '<div style="margin-top:16px;display:flex;gap:9px;justify-content:flex-end">' +
+      auButton("No", false) + auButton("Yes, restart", true) + "</div></div>";
+    const close = function () { try { ov.remove(); } catch (_) {} };
+    const no = ov.querySelector(".wa-au-later");
+    if (no) no.addEventListener("click", close);
+    const yes = ov.querySelector(".wa-au-go");
+    if (yes) {
+      yes.addEventListener("click", function () {
+        yes.disabled = true;
+        yes.textContent = "Restarting\u2026";
+        // ⚠ location.reload(), NOT a native restart or an app-exit: this is the
+        // same document load a cold start performs, and re-running index.html
+        // is precisely what re-runs wa-boot's UI loader. Anything that merely
+        // backgrounds the app would land us back in the two-restart problem
+        // this exists to solve.
+        try { window.location.reload(); } catch (_) { window.location.href = window.location.href; }
+      });
+    }
+    // ⚠ No tap-the-scrim-to-close here, unlike the APK dialog. That one has a
+    // single meaningful button; this one has a Yes and a No that mean different
+    // things, and a stray tap on the background must not answer for the user.
+    document.body.appendChild(ov);
+  }
+
+  // Asked once per ui_version. Answering No is an answer, so it is not asked
+  // again for that version — the update still lands on the next cold start.
+  function maybeShowUiUpdatedDialog(version) {
+    if (!version) return;
+    if (ls.get(UU_ASKED, "") === version) return;
+    showUiUpdatedDialog(version);
+  }
+
   // ---------------------------------------------------------------- settings page enhancement
   // Called by app.js at the end of renderInfo("settings") — see the guarded
   // one-liner there. Keeps all mobile-only UI in this file.
@@ -866,6 +963,9 @@
     appUpdate: appUpdateState,
     openAppUpdate,
     showAppUpdateDialog,
+    // Exposed so app.js can offer the restart from somewhere else later (a
+    // Settings row, say) without this file having to know where.
+    showUiUpdatedDialog,
     // A function, not a string: the facade is built before boot() has read
     // wa-mobile.json, so a value snapshotted here would always be "". app.js uses
     // it to rebuild a public image URL when an on-device one fails to load, and
