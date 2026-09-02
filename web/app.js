@@ -2680,7 +2680,8 @@ async function renderWisdomChat(body, wid, label, opts) {
     <div class="wc-hdr">
       <span class="wc-title">${COMMUNITY_ICON} ${escapeHtml(label || chatWidLabel(wid))}</span>
       <button class="wc-online" type="button" hidden aria-label="Who is here now">
-        <i class="wc-online-dot"></i><span class="wc-online-n">1</span></button>
+        <span class="wc-online-top"><i class="wc-online-dot"></i><span class="wc-online-n">1</span></span>
+        <span class="wc-online-lb">Here</span></button>
       <button class="wc-find-btn" title="Search in this satsang" aria-label="Search in this satsang">🔍</button>
       <button class="wc-refresh cp-refresh" title="Refresh">↻</button>
     </div>
@@ -2875,11 +2876,32 @@ async function renderWisdomChat(body, wid, label, opts) {
   // header with the same information.
   const onlineBtn = body.querySelector(".wc-online");
   if (onlineBtn && !(opts && opts.noOnline)) {
-    // On mobile the whole .wc-hdr is hidden (styles.css) — lift the chip out to
-    // sit as a thin right-aligned strip above the messages instead.
+    // On mobile the whole .wc-hdr is hidden (styles.css), so the chip has to be
+    // lifted out of it. TWO homes, and the caller picks:
+    //
+    //  · opts.headRow — Samuhik Satsang. A 62px square TILE beside the subject
+    //    card, in its own bordered box (operator, 2026-09-02: the old chip "is
+    //    not easy catchable" — a 40×22 pill in the gutter with no word on it).
+    //    ⚠ A SIBLING of .m-chat-head and never a child: that card is a <button>
+    //    that opens the Guru's msg, and a button inside a button is an
+    //    ambiguous tap — Android will either swallow the inner one or fire both.
+    //  · no headRow — Anubhuti Sharing, unchanged: a thin right-aligned strip
+    //    above the messages. Its .an-head is the sharing's own text, up to 38vh
+    //    and internally scrolling, so 70px off its width would cost the CONTENT.
+    //    The satsang card only loses some of a subject line it can ellipsise.
+    const tile = !!(opts && opts.headRow) && document.body.classList.contains("m-mode");
     if (document.body.classList.contains("m-mode")) {
-      onlineBtn.classList.add("wc-online-m");
-      wrap.insertBefore(onlineBtn, wrap.firstChild);
+      if (tile) {
+        // ↻ re-renders the chat but NOT the head row — that lives outside
+        // `body`, so last render's tile is still sitting in it. Drop it, or
+        // every refresh leaves another one behind.
+        opts.headRow.querySelectorAll(".wc-online-tile").forEach((n) => n.remove());
+        onlineBtn.classList.add("wc-online-tile");
+        opts.headRow.appendChild(onlineBtn);
+      } else {
+        onlineBtn.classList.add("wc-online-m");
+        wrap.insertBefore(onlineBtn, wrap.firstChild);
+      }
     }
     ctx.paintOnline = () => {
       const others = (ctx.present && ctx.present.length) || 0;    // ctx.present excludes us
@@ -2887,9 +2909,22 @@ async function renderWisdomChat(body, wid, label, opts) {
       // everyone else's chip says, and there is no discrepancy for anyone to
       // read something into.
       const n = others + (ctx.presenceHidden ? 0 : 1);
-      onlineBtn.hidden = others < 1;      // nobody else here → nothing to show
+      const solo = others < 1;
+      // ⚠ The TILE never hides. It is a column in the head row, so hiding it
+      // would snap the subject card wider and narrower every time somebody
+      // joined or left — a jump at the top of the screen. Alone, it goes quiet
+      // instead: hollow grey dot, no count, "You". That is also the only way
+      // most members ever meet the control at all, a satsang being empty far
+      // more often than it is busy. The header pill still hides (a chip in a
+      // header row costs nothing when it goes).
+      onlineBtn.hidden = tile ? false : solo;
+      onlineBtn.classList.toggle("wc-online-solo", solo);
       onlineBtn.classList.toggle("wc-online-off", !!ctx.presenceHidden);
       onlineBtn.querySelector(".wc-online-n").textContent = String(n);
+      const lb = onlineBtn.querySelector(".wc-online-lb");
+      if (lb) lb.textContent = solo ? "You" : "Here";
+      onlineBtn.setAttribute("aria-label",
+        solo ? "Only you are here — see who is here" : n + " here now — see who is here");
     };
     onlineBtn.addEventListener("click", () => openChatPresenceSheet(ctx));
     ctx.paintOnline();
@@ -17110,8 +17145,12 @@ const MOBILE_UI = (() => {
     const head = el(`<button class="m-chat-head" title="Open the message">
         <div class="m-ch-text"><div class="m-ch-date">Loading…</div><div class="m-ch-topic"></div></div>
       </button>`);
+    // The card shares its row with the "who is here" tile, which renderWisdomChat
+    // appends (see there for why it is a sibling and not a child of the card).
+    const headRow = el(`<div class="m-headrow"></div>`);
+    headRow.appendChild(head);
     const body = el(`<div class="m-chatbody"></div>`);
-    node.appendChild(head);
+    node.appendChild(headRow);
     node.appendChild(body);
     let label = null;
     if (ns) {
@@ -17133,7 +17172,7 @@ const MOBILE_UI = (() => {
         head.querySelector(".m-ch-topic").textContent = e.topic_hi || e.topic_en || "";
       }).catch(() => { head.querySelector(".m-ch-date").textContent = "Guru's msg #" + wid; });
     }
-    await renderWisdomChat(body, wid, label);
+    await renderWisdomChat(body, wid, label, { headRow });
     // WhatsApp reading order: open at the latest message (bottom).
     const msgs = body.querySelector("#wc-msgs");
     if (msgs) msgs.scrollTop = msgs.scrollHeight;

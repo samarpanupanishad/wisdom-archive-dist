@@ -738,15 +738,47 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   border-radius: 999px; white-space: nowrap; }
 .wc-online:hover { background: var(--accent-soft); border-color: var(--accent-2); }
 .wc-online[hidden] { display: none; }
+.wc-online-top { display: inline-flex; align-items: center; gap: 5px; }
+.wc-online-lb { display: none; }   /* the desktop pill is dot + count only */
 .wc-online-dot { width: 7px; height: 7px; border-radius: 50%; background: #2fa84f; flex: 0 0 auto; }
 /* Sutradhar only, and only while he is unlisted: a hollow dot instead of the
    solid green one, so his own chip never claims he is in the list he is
    reading. Paired with the "You · hidden" row in the sheet. */
 .wc-online-off .wc-online-dot { background: none; box-shadow: inset 0 0 0 1.5px var(--muted); }
 .at-p-ghost .at-p-name { color: var(--muted); }
-/* On mobile the full .wc-hdr is hidden; renderWisdomChat lifts the chip out to
-   here — a thin right-aligned strip directly above the message list. */
+/* On mobile the full .wc-hdr is hidden; renderWisdomChat lifts the chip out.
+   ANUBHUTI SHARING keeps this shape — a thin right-aligned strip directly above
+   the message list. Samuhik Satsang gets the tile below instead. */
 .wc-online-m { align-self: flex-end; flex: 0 0 auto; margin: 2px 14px 4px; }
+
+/* Samuhik Satsang: the chip becomes a 62px SQUARE TILE beside the subject card,
+   in a bordered box of its own, so it reads as a second thing to tap rather
+   than a badge stuck on the first (operator, 2026-09-02). The dot is 14px and
+   carries the meaning on its own — green means people, grey means nobody; the
+   9px word underneath is only there to say what the dot is about the first time
+   somebody looks.
+   ⚠ Height comes from align-items: stretch, so the tile always matches whatever
+   the card computes to. A fixed height here would drift apart from it the
+   moment the date or topic line changed size. */
+.m-headrow { display: flex; align-items: stretch; gap: 8px; margin-bottom: 8px; flex: 0 0 auto; }
+.m-headrow .m-chat-head { flex: 1; min-width: 0; width: auto; margin-bottom: 0; }
+.wc-online-tile {
+  flex: 0 0 62px; width: 62px; flex-direction: column; justify-content: center;
+  gap: 4px; padding: 0; border-radius: 14px;
+}
+.wc-online-tile .wc-online-top { gap: 4px; }
+.wc-online-tile .wc-online-dot { width: 14px; height: 14px; }
+.wc-online-tile .wc-online-n { font-size: 15px; }
+.wc-online-tile .wc-online-lb {
+  display: block; font: 600 9px var(--sans); letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted);
+}
+/* :hover never fires on a phone — the press has to say something itself. */
+.wc-online-tile:active { background: var(--accent-soft); border-color: var(--accent-2); }
+/* Alone in the satsang: hollow grey dot, no count, "You". The BOX stays — see
+   paintOnline for why it must never hide. */
+.wc-online-solo .wc-online-n { display: none; }
+.wc-online-solo .wc-online-dot { background: none; box-shadow: inset 0 0 0 2px var(--muted); }
 /* ⚠ overflow-anchor: none is load-bearing. A chat holds only its newest page
    and prepends older ones as the reader scrolls up (ctx.loadEarlier), which
    restores the scroll position by hand. Chrome's own scroll anchoring corrects
