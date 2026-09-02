@@ -2885,10 +2885,16 @@ async function renderWisdomChat(body, wid, label, opts) {
     //    ⚠ A SIBLING of .m-chat-head and never a child: that card is a <button>
     //    that opens the Guru's msg, and a button inside a button is an
     //    ambiguous tap — Android will either swallow the inner one or fire both.
-    //  · no headRow — Anubhuti Sharing, unchanged: a thin right-aligned strip
-    //    above the messages. Its .an-head is the sharing's own text, up to 38vh
-    //    and internally scrolling, so 70px off its width would cost the CONTENT.
-    //    The satsang card only loses some of a subject line it can ellipsise.
+    //  · opts.headRow — Anubhuti Sharing too, but INSIDE the sharing's card
+    //    rather than beside it (.an-headtop). That card is the sharing's own
+    //    text and it scrolls internally, so a tile beside it would leave a 70px
+    //    dead gutter down its whole height AND narrow the paragraph; a tile
+    //    inside it would scroll away. The card's non-scrolling top strip is the
+    //    one place that is neither.
+    //  · no headRow — the fallback, and nothing on mobile takes it today: a thin
+    //    right-aligned strip above the messages. Kept because renderWisdomChat
+    //    is generic — a future surface that supplies no row still gets the
+    //    control rather than silently losing it.
     const tile = !!(opts && opts.headRow) && document.body.classList.contains("m-mode");
     if (document.body.classList.contains("m-mode")) {
       if (tile) {
@@ -17301,11 +17307,26 @@ const MOBILE_UI = (() => {
     }
 
     const when = String(topic.created_at || "").slice(0, 10);
+    // ⚠ Two parts, and the split is the whole point. `.an-headtop` does NOT
+    // scroll: it holds the title, the byline and the "who is here" tile, which
+    // would otherwise slide out of sight the moment somebody read the sharing.
+    // Everything that can be long goes in `.an-head-scroll` below it, at FULL
+    // width — narrowing the sharing's own paragraph to make room for a 62px
+    // tile is what this shape exists to avoid.
+    // ⚠ The DESKTOP sharing page (an-topic, above) keeps the old flat markup on
+    // purpose: it overrides both the height cap and the overflow, so it has
+    // nothing to scroll and no tile to hold.
     const head = el(`<div class="an-head">
-        <div class="an-head-title">${escapeHtml(topic.title || "—")}</div>
-        <div class="an-head-by">${escapeHtml(topic.author || "")}${when ? " · " + escapeHtml(fmtDate(when)) : ""}</div>
-        ${topic.body ? `<div class="an-head-body">${renderMarkdown(topic.body)}</div>` : ""}
-        ${topic.partial ? `<div class="an-partial">Showing a shortened offline copy — reconnect to read the whole sharing.</div>` : ""}
+        <div class="an-headtop">
+          <div class="an-headtop-text">
+            <div class="an-head-title">${escapeHtml(topic.title || "—")}</div>
+            <div class="an-head-by">${escapeHtml(topic.author || "")}${when ? " · " + escapeHtml(fmtDate(when)) : ""}</div>
+          </div>
+        </div>
+        <div class="an-head-scroll">
+          ${topic.body ? `<div class="an-head-body">${renderMarkdown(topic.body)}</div>` : ""}
+          ${topic.partial ? `<div class="an-partial">Showing a shortened offline copy — reconnect to read the whole sharing.</div>` : ""}
+        </div>
       </div>`);
     // Moderators + sutradhar may remove a whole sharing (operator's call). The
     // server takes its messages with it — see add_anubhuti.sql.
@@ -17321,13 +17342,16 @@ const MOBILE_UI = (() => {
           go("#/m/anubhuti");
         } catch (e) { toast(e.message || "Could not remove this sharing."); del.disabled = false; }
       });
-      head.appendChild(del);
+      // Into the SCROLLER, not the card: appended to the card it would sit
+      // between the byline and the sharing, above the text it removes.
+      head.querySelector(".an-head-scroll").appendChild(del);
     }
 
     const body = el(`<div class="m-chatbody"></div>`);
     node.appendChild(head);
     node.appendChild(body);
-    await renderWisdomChat(body, wid, topic.title || "Anubhuti Sharing");
+    await renderWisdomChat(body, wid, topic.title || "Anubhuti Sharing",
+                           { headRow: head.querySelector(".an-headtop") });
     // WhatsApp reading order: open at the latest message (bottom).
     const msgs = body.querySelector("#wc-msgs");
     if (msgs) msgs.scrollTop = msgs.scrollHeight;
