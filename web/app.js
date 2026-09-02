@@ -6567,6 +6567,37 @@ const LETTERPAD = (() => {
     warmMedia(_index);            // background; never blocks the first paint
     return _index || { messages: [] };
   }
+  // Force a re-read of index.json, defeating the memo in loadIndex().
+  //
+  // ⚠ loadIndex() answers from `_index` for the whole LIFE OF THE PAGE, so a
+  // letter published while the app is running is invisible to every caller.
+  // That memo is right for the dozens of ordinary callers — a screen painting
+  // is not a reason to re-fetch — but it is wrong for the one path that runs
+  // BECAUSE something new is believed to have arrived. Hence a second door
+  // rather than weakening the memo for everyone.
+  //
+  // ⚠ Never nulls `_index` first: items() is synchronous and reads it, so a
+  // caller painting mid-flight must keep seeing the old list, not an empty one.
+  async function reload() {
+    // Nothing memoized yet — the normal path also resolves bundle-vs-cache.
+    if (!_index) return loadIndex();
+    try {
+      const r = await fetch(base() + "/index.json?v=" + Date.now(), { cache: "no-store" });
+      if (r.ok) {
+        const fresh = await r.json();
+        // Same version test loadIndex() uses. Without it an ordinary wake — the
+        // overwhelmingly common case, nothing published since boot — would rewrite
+        // localStorage and re-walk every page in warmMedia for no reason.
+        if (fresh && fresh.messages && fresh.version !== _index.version) {
+          _index = fresh;
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify(fresh)); } catch (_) {}
+          refreshBadges();
+          warmMedia(fresh);            // background; never awaited
+        }
+      }
+    } catch (_) { /* offline — keep the index we already have */ }
+    return _index;
+  }
   // Bundled (survives everything) → persisted on device → the update host.
   const imgUrl = (rel) =>
     _bundled.has(rel) ? LOCAL + "/" + rel : (_onDevice.get(rel) || base() + "/" + rel);
@@ -6590,7 +6621,7 @@ const LETTERPAD = (() => {
   // Synchronous read of whatever we already have (memory, else localStorage) —
   // lets a screen paint instantly/offline before loadIndex() resolves.
   const items = () => ((_index || cached() || {}).messages) || [];
-  return { loadIndex, imgUrl, unread, markSeen, refreshBadges, items, lastSeen: lastSeenAt };
+  return { loadIndex, reload, imgUrl, unread, markSeen, refreshBadges, items, lastSeen: lastSeenAt };
 })();
 
 // ==========================================================================
@@ -14193,9 +14224,17 @@ const MOBILE_UI = (() => {
     try { await contentSync(want); }
     finally { const s = $("m-freshsync"); if (s) s.remove(); }
     go(hash);
+    // The tap just installed today's msg. The widget builds its Guru's msg rows
+    // from the same /api/latest and would otherwise carry yesterday's until the
+    // next cold start — on the one day the user demonstrably looked.
+    refreshWidget(true);
     if (want && contentVersionNow() !== want) {
       awaitLaunchSync(want, 60000).then(() => {
-        if (contentVersionNow() === want && AT_HOME_RE.test(location.hash || "#/")) safeRoute();
+        if (contentVersionNow() !== want) return;
+        if (AT_HOME_RE.test(location.hash || "#/")) safeRoute();
+        // The slow path landed after we gave up waiting — rebuild on it too, or
+        // the widget keeps a list built from content that had not arrived yet.
+        refreshWidget(true);
       });
     }
   }
@@ -14217,6 +14256,9 @@ const MOBILE_UI = (() => {
     catch (_) {}
     finally { const s = $("m-freshsync-msg"); if (s) s.remove(); }
     go(hash);
+    // The section has just synced, so this is the cheapest moment there will
+    // ever be to put the message the user is reading into the widget too.
+    refreshWidget(true);
   }
 
   // Resuming a backgrounded app never re-checked for new content at all — the
@@ -14227,6 +14269,45 @@ const MOBILE_UI = (() => {
   // A Special/Letterpad reader route WITH an id — "#/m/special" (index only,
   // nothing to chase) must not go through goFreshMsg.
   const MSG_READER_RE = /^#\/m\/(?:special|letterpad)\/[^/?]+/;
+
+  // ---- the home-screen widget, on wake ------------------------------------
+  // ⚠ WIDGET.refresh() ran at COLD START ONLY (AUTH_GATE.boot) and from the
+  // Settings switch. So a phone that was asleep when a Special arrived, was
+  // woken by the notification and then RESUMED — the ordinary case, and the
+  // only case on a phone that is left running — never rebuilt the snapshot.
+  // The app had the new message and the widget went on painting the previous
+  // one until the app was killed and cold-started. Reported 2026-09-02: two
+  // Specials on the same day, the widget stuck on the first.
+  //
+  // ⚠ And the widget's own ↻ button cannot rescue that: it repaints from the
+  // snapshot already on disk and cannot fetch (see WaWidgetProvider). Pressing
+  // it on a stale snapshot faithfully redraws the stale list, which is exactly
+  // what makes this look like a broken widget rather than a missing rebuild.
+  //
+  // ⚠ Deliberately ABOVE the syncIsSafeToStart() / SYNC_ON_WAKE_MS guards in
+  // the listener below, not behind them. Those exist to stop two syncOnce()
+  // calls overlapping — each swaps `db` and closes the one it replaced — and
+  // this touches none of it: SPECIAL and LETTERPAD are their own delta fetches,
+  // and the hand-off is a preference write plus a repaint. Sharing that
+  // ten-minute throttle would put the widget back to sleep at precisely the
+  // moment a notification woke the phone.
+  //
+  // ⚠ LETTERPAD.reload(), never loadIndex(): the latter is memoized for the
+  // life of the page and would quietly hand back the boot-time list forever.
+  const WIDGET_WAKE_MS = 60 * 1000;
+  let _lastWidgetWake = 0;
+  function refreshWidget(force) {
+    if (!force && Date.now() - _lastWidgetWake < WIDGET_WAKE_MS) return;
+    _lastWidgetWake = Date.now();
+    // allSettled, not all: a failed Letterpad fetch must not cost the snapshot
+    // its new Special. Same contract as the boot call. WIDGET.refresh() itself
+    // no-ops on desktop and on any shell built before the widget shipped, which
+    // is what lets every one of these call sites ship OTA.
+    Promise.allSettled([SPECIAL.sync(), LETTERPAD.reload()])
+      .then(() => WIDGET.refresh())
+      .catch(() => {});
+  }
+
   if (_capApp && _capApp.addListener) {
     _capApp.addListener("appStateChange", (st) => {
       if (!st || !st.isActive) return;
@@ -14236,10 +14317,20 @@ const MOBILE_UI = (() => {
       ANUBHUTI.refresh(true).catch(() => {});
       ADMINTALK.refresh(true).catch(() => {});
       ADMINMSG.refresh(true).catch(() => {});
+      // …and the home-screen widget, which until now only rebuilt on a cold
+      // start. Throttled to once a minute, and above the returns below on
+      // purpose — see refreshWidget.
+      refreshWidget(false);
       if (!syncIsSafeToStart()) return;
       if (Date.now() - _lastContentSync < SYNC_ON_WAKE_MS) return;
       contentSync().then((r) => {
-        if (r && r.added && r.added.length && AT_HOME_RE.test(location.hash || "#/")) safeRoute();
+        if (!r || !r.added || !r.added.length) return;
+        if (AT_HOME_RE.test(location.hash || "#/")) safeRoute();
+        // The widget's Guru's msg rows are built from /api/latest, so they only
+        // change once THIS sync has installed the new entries. Forced past the
+        // throttle: the wake refresh above ran before this resolved and cannot
+        // have seen them.
+        refreshWidget(true);
       });
     });
   }
@@ -14403,6 +14494,154 @@ const MOBILE_UI = (() => {
     Object.assign(d, patch);
     try { localStorage.setItem("wa:push:diag", JSON.stringify(d)); } catch (_) {}
   }
+
+  // ---- FOREGROUND NOTIFICATIONS (2026-09-02) -------------------------------
+  // WHY THIS EXISTS, because the reason is not guessable from here. Android
+  // hands an FCM `notification` message to the APP instead of the tray whenever
+  // our Activity is resumed, and Capacitor's push plugin only draws one in that
+  // case if capacitor.config.json sets PushNotifications.presentationOptions to
+  // include "alert" (see fireNotification() in PushNotificationsPlugin.java -
+  // that notificationManager.notify sits inside exactly that test). Ours sets no
+  // PushNotifications block at all, so the branch is dead code on every
+  // installed phone: EVERY push of EVERY kind arrived invisibly while the app
+  // was open, badged by the listener below and drawn by nobody. The operator
+  // reported it as "when the app is open generally notification not coming".
+  //
+  // AND WHY IT IS FIXED HERE RATHER THAN IN THAT CONFIG. capacitor.config.json
+  // is baked into the APK (mobile/android/app/src/main/assets/) and is NOT in
+  // publish_update.py's UI_FILES, so the one-line config fix costs a ~600 MB APK
+  // and reaches nobody until they reinstall. This file IS in UI_FILES. Posting
+  // it ourselves is also the better half of the trade: Capacitor's built-in path
+  // runs Firebase's CommonNotificationBuilder, which resolves a channel of its
+  // own and knows nothing about our routes, while this keeps the push's channel
+  // (so Android's per-channel mute goes on working), its replace-the-last-one
+  // behaviour, and its tap destination.
+  //
+  // If a future APK ever DOES set presentationOptions, delete this - the two
+  // paths would both fire and every foreground push would arrive twice.
+  //
+  // The small icon is LocalNotifications' configured ic_stat_notify rather than
+  // the app icon a pushed notification carries. Deliberate: it is the properly
+  // monochrome status icon, and it is what the diary's reminders already use.
+
+  // Kept clear of DHYAN_REMIND's 41001..41004 and the sitting reminders'
+  // 41101..41124.
+  const FG_BASE = 41201, FG_SPAN = 64;
+
+  // A push replaces an unread one by TAG; LocalNotifications replaces by ID.
+  // Deriving the id from the same thing the tag is derived from keeps the two
+  // consistent - a second message in one Satsang thread replaces the first here
+  // exactly as it does in the background, and two different threads stay two
+  // notifications. A collision inside FG_SPAN costs one replaced notification,
+  // never a lost one.
+  function fgKey(d) {
+    switch (d.kind) {
+      case "chat": case "anubhuti": return "wid:" + (d.wid || "");
+      case "admin_msg": return "thread:" + (d.thread || "");
+      default: return "kind:" + (d.kind || "push");
+    }
+  }
+  function fgId(key) {
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+    return FG_BASE + Math.abs(h) % FG_SPAN;
+  }
+
+  // The push payload does NOT carry its own channel - FCM puts it in
+  // android.notification.channel_id, which the JS event never sees. This table
+  // therefore MIRRORS send-push's channel choice and must be kept in step with
+  // it. A kind missing here still notifies, on the Satsang channel, which is the
+  // one every shell has held the longest; it is a wrong mute group, not silence.
+  const FG_CHANNEL = {
+    daily: "daily_wisdom",
+    special: "special_messages",
+    letterpad: "letterpad_messages",
+    thought: "upanishad_gyan",
+    broadcast: "broadcast_messages",
+  };
+
+  // Already reading the very thing it is about: the badge work below has it
+  // covered and a tray row would be talking over the reader. Compared on the
+  // push's OWN route rather than a second per-kind table, so nothing here has to
+  // be updated when a kind is added. Fails toward POSTING, like
+  // WaMessagingService.isAppInForeground() - a redundant notification is a small
+  // cost, a swallowed one is the bug this whole block exists to fix.
+  function fgLookingAt(d) {
+    const r = d && d.route;
+    return !!r && (location.hash || "") === r;
+  }
+
+  async function postForeground(n) {
+    const LN = window.Capacitor && window.Capacitor.Plugins &&
+               window.Capacitor.Plugins.LocalNotifications;
+    if (!LN) return;
+    const d = (n && n.data) || {};
+    // wa_notif_* is the data-only shape (send-push's dataOnlyMessage). No kind
+    // sends it today, but reading it costs one || and means a future one is not
+    // silently blank here.
+    const title = (n && n.title) || d.wa_notif_title || "";
+    const body = (n && n.body) || d.wa_notif_body || "";
+    if (!title && !body) return;
+    if (fgLookingAt(d)) return;
+    try {
+      await LN.schedule({ notifications: [{
+        id: fgId(fgKey(d)),
+        // Upanishad Ganga sends no title on purpose (the thought stands on its
+        // own words) - but LocalNotifications draws a blank row without one, so
+        // the app name stands in where a push would have let Android do it.
+        title: title || "Samarpan Upanishad",
+        body: body,
+        channelId: FG_CHANNEL[d.kind] || "samuhik_satsang",
+        // The push's own payload, so a tap routes through the identical code the
+        // tray tap uses.
+        extra: d,
+      }] });
+      _pdiag({ fgNotif: "posted " + (d.kind || "?") + " @ " + Date.now() });
+    } catch (e) { _pdiag({ fgNotif: "FAILED: " + (e && e.message || e) }); }
+  }
+
+  // Where a notification tap goes. Extracted from the pushNotificationAction-
+  // Performed listener so the notification we post ourselves lands in exactly
+  // the same place as the one Android posts - two routers would drift.
+  function openFromPush(data) {
+    data = data || {};
+    let route = data.route || "#/m/special";
+    // Older payloads (everything sent before 2026-08-13) addressed a Special
+    // Message to the section INDEX and left the reader to the user - the tap
+    // dumped them in a 1,100-row list with no hint which row was the new one.
+    // send-push now routes straight to the reader, but notifications already
+    // sitting in the tray still carry the old route, and data.msg_id is enough
+    // to repair those here.
+    //
+    // Special only. A letterpad row's data.msg_id is its POSTGRES id, while its
+    // reader is keyed by the dist slug ("<date>_<nn>") - building
+    // "#/m/letterpad/<msg_id>" would open the reader on nothing. Old letterpad
+    // payloads therefore keep landing on the list; new ones carry the slug in
+    // data.route already.
+    if (data.kind === "special" && data.msg_id && /^#\/m\/special\/?$/.test(route)) {
+      route = "#/m/special/" + encodeURIComponent(data.msg_id);
+    }
+    // Same repair for Important Updates. Its ids ARE the reader's ids (one
+    // table, no dist slug in the way - the reason letterpad can't have this), so
+    // a payload that only reached the section index can always be pointed at the
+    // right message. Worth having from the very first send: this is the one
+    // thing here that can never be fixed for a notification already sitting in
+    // somebody's tray.
+    if (data.kind === "broadcast" && data.msg_id && /^#\/m\/broadcast\/?$/.test(route)) {
+      route = "#/m/broadcast/" + encodeURIComponent(data.msg_id);
+    }
+    try {
+      if (data.kind === "daily" || AT_HOME_RE.test(route)) goFresh(route, data.cv || "");
+      // Special/Letterpad, landing on a specific message: sync first so the
+      // reader never flashes the previous cached message before jumping to the
+      // one this tap is about (see goFreshMsg above).
+      else if ((data.kind === "special" || data.kind === "letterpad") && MSG_READER_RE.test(route)) {
+        goFreshMsg(route, data.kind);
+      }
+      else go(route);
+    } catch (_) {}
+  }
+
   async function initPush(force) {
     const Push = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.PushNotifications;
     _pdiag({ at: Date.now(), plugin: !!Push, capacitor: !!window.Capacitor,
@@ -14557,6 +14796,16 @@ const MOBILE_UI = (() => {
         // one kind of message the operator most needs people to notice. Pull it
         // now; the sync is a cheap delta.
         if (d.kind === "broadcast") BROADCAST.sync().catch(() => {});
+        // A Special or Letterpad that arrives while the app is OPEN is not in
+        // the widget's snapshot either, and nothing else would put it there
+        // until the next cold start.
+        //
+        // ⚠ `daily` is deliberately absent. Its rows come from /api/latest and
+        // the new archive content is NOT installed at this point — rebuilding
+        // here would write a snapshot from the OLD database and then look like
+        // it had refreshed. The daily case is handled from the two contentSync
+        // callbacks instead, which run after the content actually lands.
+        if (d.kind === "special" || d.kind === "letterpad") refreshWidget(true);
         // Msg to Admin, both directions. One increment serves both roles (see
         // ADMINMSG.noteIncoming) — and an open Msg to Admin screen repaints
         // itself off this event, since a conversation with nothing arriving on
@@ -14573,6 +14822,12 @@ const MOBILE_UI = (() => {
         if (d.kind === "broadcast_pending") {
           try { window.dispatchEvent(new CustomEvent("wa:broadcast-pending")); } catch (_) {}
         }
+
+        // AND FINALLY, DRAW IT. Everything above this line updates the app;
+        // nothing above it tells a user who is looking at a different screen of
+        // the app that anything happened, and Android will not either while we
+        // are in the foreground. See postForeground() for why that is ours to do.
+        postForeground(n);
       });
       // Routes by the notification's own data payload (send-push sets
       // data.route per kind) instead of a single hardcoded destination, now
@@ -14582,44 +14837,32 @@ const MOBILE_UI = (() => {
       // device may not have yet, so it waits for the sync (goFresh) instead of
       // rendering the previous day's message. `data.kind` is only present on
       // newer send-push payloads — the route shape is the fallback test.
+      // Routes by the notification's own data payload (send-push sets data.route
+      // per kind) instead of a single hardcoded destination, now that several
+      // push kinds share this handler. The routing itself lives in
+      // openFromPush() so the notifications we post ourselves in the foreground
+      // land in exactly the same place.
       Push.addListener("pushNotificationActionPerformed", (a) => {
-        const data = (a && a.notification && a.notification.data) || {};
-        let route = data.route || "#/m/special";
-        // Older payloads (everything sent before 2026-08-13) addressed a Special
-        // Message to the section INDEX and left the reader to the user — the tap
-        // dumped them in a 1,100-row list with no hint which row was the new one.
-        // send-push now routes straight to the reader, but notifications already
-        // sitting in the tray still carry the old route, and data.msg_id is enough
-        // to repair those here.
-        //
-        // ⚠ Special only. A letterpad row's data.msg_id is its POSTGRES id, while
-        // its reader is keyed by the dist slug ("<date>_<nn>") — building
-        // "#/m/letterpad/<msg_id>" would open the reader on nothing. Old letterpad
-        // payloads therefore keep landing on the list; new ones carry the slug in
-        // data.route already.
-        if (data.kind === "special" && data.msg_id && /^#\/m\/special\/?$/.test(route)) {
-          route = "#/m/special/" + encodeURIComponent(data.msg_id);
-        }
-        // Same repair for Important Updates. Its ids ARE the reader's ids (one
-        // table, no dist slug in the way — the reason letterpad can't have
-        // this), so a payload that only reached the section index can always be
-        // pointed at the right message. Worth having from the very first send:
-        // this handler is the one thing here that can never be fixed for a
-        // notification already sitting in someone's tray.
-        if (data.kind === "broadcast" && data.msg_id && /^#\/m\/broadcast\/?$/.test(route)) {
-          route = "#/m/broadcast/" + encodeURIComponent(data.msg_id);
-        }
-        try {
-          if (data.kind === "daily" || AT_HOME_RE.test(route)) goFresh(route, data.cv || "");
-          // Special/Letterpad, landing on a specific message: sync first so the
-          // reader never flashes the previous cached message before jumping to
-          // the one this tap is about (see goFreshMsg above).
-          else if ((data.kind === "special" || data.kind === "letterpad") && MSG_READER_RE.test(route)) {
-            goFreshMsg(route, data.kind);
-          }
-          else go(route);
-        } catch (_) {}
+        openFromPush((a && a.notification && a.notification.data) || {});
       });
+
+      // The same tap, for a notification postForeground() drew. Its `extra` is
+      // the push's own data, so it goes through the identical router.
+      //
+      // The id-range test is load-bearing: the Dhyan Diary's reminders have
+      // their own listener and their own destination, and this event is
+      // delivered to every listener regardless of who scheduled the
+      // notification.
+      try {
+        const LNp = window.Capacitor && window.Capacitor.Plugins &&
+                    window.Capacitor.Plugins.LocalNotifications;
+        if (LNp) LNp.addListener("localNotificationActionPerformed", (a) => {
+          const note = (a && a.notification) || {};
+          const id = note.id;
+          if (typeof id !== "number" || id < FG_BASE || id >= FG_BASE + FG_SPAN) return;
+          openFromPush(note.extra || {});
+        });
+      } catch (e) { _pdiag({ fgTap: "listener failed: " + (e && e.message || e) }); }
       await Push.register();
       _pdiag({ result: "register() called — awaiting token event" });
     } catch (e) { _pdiag({ result: "initPush threw: " + (e && e.message || e) }); }
