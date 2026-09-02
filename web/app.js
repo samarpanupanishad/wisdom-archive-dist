@@ -1535,6 +1535,33 @@ function chatLastRendered(msgsEl) {
   return last ? { user: last.dataset.user || "", ts: last.dataset.ts || "" } : null;
 }
 
+// Set while one of the chat sheets is on screen — the message action sheet,
+// the forward picker it opens, Admin Talks' participants list, or the "who is
+// here now" list — so Android BACK closes the sheet instead of walking history.
+//
+// ⚠ These sheets are appended to <body>, not to the page. Without this hook a
+// Back press fell straight through to history.back(): the chat navigated away
+// and the sheet stayed painted on top of whatever loaded next (operator,
+// 2026-09-02). onHardwareBack() reads it through the same chain as
+// _axSheetClose / _moreClose.
+//
+// ONE variable serves all four on purpose: the picker is opened from the action
+// sheet's own handler, which closes the action sheet first, and both people
+// lists are reached from a room header, which the action sheet's scrim covers.
+// No two of them are ever open together — and armChatSheet only ever clears the
+// hook while it still points at its own, so even if that stopped holding, one
+// sheet closing could not disarm another's.
+let _chatSheetClose = null;
+function armChatSheet(sheet) {
+  const close = () => {
+    sheet.remove();
+    if (_chatSheetClose === hook) _chatSheetClose = null;   // only ever clear OUR hook
+  };
+  const hook = () => { close(); return true; };
+  _chatSheetClose = hook;
+  return close;
+}
+
 // Long-press (touch) / right-click (desktop) → the message action sheet.
 // ⚠ Delete is SUTRADHAR-ONLY (ctx.canDelete, not ctx.canModerate) — see the note
 // on WA.getChat in wa-supabase.js.
@@ -1553,7 +1580,7 @@ function openChatMsgMenu(m, ctx, msgEl) {
       <button class="wc-sheet-item wc-sheet-cancel" data-act="cancel">Cancel</button>
     </div>
   </div>`);
-  const close = () => sheet.remove();
+  const close = armChatSheet(sheet);
   sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
   sheet.querySelectorAll(".wc-sr-btn").forEach((b) => {
     b.addEventListener("click", () => {
@@ -1659,7 +1686,7 @@ async function openForwardPicker(m, ctx) {
       <button class="wc-sheet-item wc-sheet-cancel" data-act="cancel">Cancel</button>
     </div>
   </div>`);
-  const close = () => sheet.remove();
+  const close = armChatSheet(sheet);
   sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
   sheet.querySelector(".wc-sheet-cancel").addEventListener("click", close);
   sheet.querySelectorAll(".wc-fwd-list .wc-sheet-item").forEach((b) => {
@@ -2592,7 +2619,7 @@ function openChatPresenceSheet(ctx) {
       <div class="at-sheet-note">Members who are here right now — it changes as people come and go.</div>
     </div>
   </div>`);
-  const close = () => sheet.remove();
+  const close = armChatSheet(sheet);   // …so Android BACK closes it, not the room
   sheet.querySelector(".at-sheet-x").addEventListener("click", close);
   sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
   document.body.appendChild(sheet);
@@ -5466,6 +5493,7 @@ document.addEventListener("click", (e) => {
 // .pc-count ("2/5") and .pc-dots.
 // ==========================================================================
 let hapticTickHook = () => {};   // set by MOBILE_UI; no-op in the browser shell
+let refreshJoinBadgeHook = () => {};   // ↑ same idiom: MOBILE_UI's refreshJoinBadge()
 
 function wireCarousel(root, opts) {
   const o = opts || {};
@@ -5695,6 +5723,12 @@ function refreshAnyMsgDot() {
   // carries it — the sin the note above describes.
   group("[data-more-group-badge]", broadcast + adminmsg);
   group("[data-sutradhar-group-badge]", admintalk);
+
+  // The Join Satsang card's NEW dot is NOT one of these sums — it speaks for a
+  // single thread (see refreshJoinBadge). It is repainted from here anyway
+  // because this is the one funnel every module already calls when unread state
+  // moves, so a live arrival or a markSeen() lands on it without a second path.
+  refreshJoinBadgeHook();
 }
 
 // ==========================================================================
@@ -5743,6 +5777,17 @@ const SATSANG = (() => {
     // Your own last word in a thread is not something to notify you about.
     if (t.last_user && t.last_user === (currentUser() || {}).username) return false;
     return t.last_at > seenFor(t.wid);
+  }
+
+  // Is one NAMED thread unread? The archive-wide `unread()` below counts
+  // threads and cannot answer this — which is what the Join Satsang card on a
+  // message screen needs, since that card speaks for exactly one discussion.
+  // Unknown wid (never refreshed, or nothing ever posted there) → false: a dot
+  // we cannot justify is worse than no dot.
+  function isUnreadWid(wid) {
+    if (!wid) return false;
+    const t = threads.find((x) => x.wid === String(wid));
+    return !!t && isUnread(t);
   }
 
   function unread() { return count; }
@@ -5841,8 +5886,8 @@ const SATSANG = (() => {
     setCount(count + 1);
   }
 
-  return { unread, known, markSeen, refreshBadges, refresh, noteIncoming, isUnread, seenFor,
-           adoptBaseline, lastError: () => loadFailed };
+  return { unread, known, markSeen, refreshBadges, refresh, noteIncoming, isUnread, isUnreadWid,
+           seenFor, adoptBaseline, lastError: () => loadFailed };
 })();
 
 // ==========================================================================
@@ -7351,7 +7396,7 @@ function openAdminTalkParticipants(roster, ctx) {
         sees the conversation from the day they were added.</div>
     </div>
   </div>`);
-  const close = () => sheet.remove();
+  const close = armChatSheet(sheet);   // …so Android BACK closes it, not the room
   sheet.querySelector(".at-sheet-x").addEventListener("click", close);
   sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
   document.body.appendChild(sheet);
@@ -13444,9 +13489,16 @@ const MOBILE_UI = (() => {
          lower-menu drawing). What changed and why it must not drift back:
 
          1. The satsang CHAT ICON and the HOME ICON are gone. Join Satsang is
-            the chat icon, grown into a full-width card, and it carries the
-            unread count that used to have nowhere to sit on this bar
-            ([data-satsang-badge] — the same hook the drawer row uses).
+            the chat icon, grown into a full-width card.
+            ⚠ It used to carry [data-satsang-badge] — the ARCHIVE-WIDE unread
+            count, the same hook the drawer row uses. That was wrong and was
+            removed on 2026-09-02: this card names ONE discussion ("for
+            dd/mm/yyyy"), so a badge on it lighting up because a message landed
+            in some OTHER thread read as "there is something new in THIS
+            satsang", which it wasn't. It now carries a plain dot for its own
+            thread only (#m-join-new → refreshJoinBadge). The archive-wide count
+            still lives on the Menu dot and the drawer's Samuhik Satsang row —
+            don't put it back here.
             Home went with them on the operator's call: this bar only ever
             appears on a screen that already IS a message, and the way back to
             today's is the Menu or the back gesture.
@@ -13467,7 +13519,7 @@ const MOBILE_UI = (() => {
         <span class="m-join-go" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h12.5"/><path d="m12 6.5 6 5.5-6 5.5"/></svg>
         </span>
-        <span class="m-join-badge" data-satsang-badge hidden></span>
+        <span class="m-join-badge" id="m-join-new" hidden></span>
       </button>
       <div class="m-botrow">
         <div class="m-langseg" id="m-langseg" role="group" aria-label="Language">
@@ -13697,7 +13749,28 @@ const MOBILE_UI = (() => {
     const t = iso ? dpSlashText(iso) : "";
     d.textContent = t ? "for " + t : "";
     d.hidden = !t;
+    refreshJoinBadge();
   }
+
+  // The dot on the Join Satsang card: "there is something new in THE
+  // DISCUSSION THIS CARD OPENS", and nothing wider.
+  //
+  // ⚠ The wid is read with the SAME expression the card's own tap handler uses
+  // — keep the two in step, or the dot and the destination disagree.
+  // ⚠ It is a dot, not a number, on purpose: the thread list gives us a total
+  // message count and a last_at, never a per-thread unread count, so any number
+  // here would be invented.
+  // ⚠ Callers must repaint AFTER publishing the current message. msgReaderPage
+  // sets _chatCtx four lines below its setJoinDate() call, so that screen calls
+  // this again itself; the daily feed sets _stageId before wireVPanel runs, so
+  // setJoinDate() alone is enough there.
+  function refreshJoinBadge() {
+    const b = $("m-join-new");
+    if (!b) return;
+    const wid = (_chatCtx && _chatCtx.wid) || _stageId;
+    b.hidden = !(wid && SATSANG.isUnreadWid(wid));
+  }
+  refreshJoinBadgeHook = refreshJoinBadge;
   $("m-scrim").addEventListener("click", closeDrawer);
   $("m-drawer").addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
   const goBack = () => { if (_pageBackHook && _pageBackHook()) return; history.back(); };
@@ -14029,6 +14102,7 @@ const MOBILE_UI = (() => {
     if (_dpClose && _dpClose()) return;
     if (_axSheetClose && _axSheetClose()) return;
     if (_moreClose && _moreClose()) return;      // the More sheet, over the जीवन्त Library
+    if (_chatSheetClose && _chatSheetClose()) return;   // a chat sheet: actions, forward, who's here
     if (ddOverlayBack()) return;   // a diary popup, or the live sitting's own question
     if (hideExitSheet()) return;
     if (exitZoom()) return;
@@ -14578,6 +14652,10 @@ const MOBILE_UI = (() => {
     setTopAction(null);   // pages that want one re-set it after pageFrame()
     setTopDate(null);     // …same for the left-hand date pill
     setJoinDate(null);    // …and the Join Satsang card's "for dd/mm/yyyy" line
+    // …and its NEW dot. Cleared OUTRIGHT rather than recomputed: setChrome runs
+    // BEFORE the new screen publishes _stageId/_chatCtx, so recomputing here
+    // would answer for the message we are leaving. Whoever lands re-paints it.
+    const jn = $("m-join-new"); if (jn) jn.hidden = true;
   }
 
   // ==========================================================================
@@ -17863,6 +17941,7 @@ const MOBILE_UI = (() => {
         dateLabel: v.date ? fmtHumanDate(v.date) : "",
         back: "#/m/" + sec.key + "/" + encodeURIComponent(v.id),
       };
+      refreshJoinBadge();   // ↑ setJoinDate() above ran before this wid existed
 
       const favId = sec.key + ":" + v.id;              // namespaced — `wa:favorites` is shared with the archive
       const fav = $("m-panel-fav");

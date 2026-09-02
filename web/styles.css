@@ -1736,14 +1736,17 @@ body.m-mode.m-viewing .m-bottom { display: flex; }
   display: flex; align-items: center; justify-content: center;
   background: #bd1762; color: #fff; box-shadow: 0 2px 7px rgba(189, 23, 98, .38);
 }
-/* Unread satsang count, on the arrow's shoulder. Same [data-satsang-badge]
-   hook as the drawer row — until now the mobile bar had nowhere to show it. */
+/* "Something new in THIS discussion", on the arrow's shoulder.
+   ⚠ A DOT, not a count. It used to be [data-satsang-badge] — the archive-wide
+   number — which made this card claim news about a satsang the message wasn't
+   in (see the m-bottom markup note in app.js). It is now painted per-thread by
+   refreshJoinBadge(), and the thread list carries no per-thread unread count,
+   so there is no honest number to show. */
 .m-join-badge {
-  position: absolute; top: 3px; right: 4px;
-  min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
-  background: #e0483e; color: #fff; font: 700 11px var(--sans);
-  display: flex; align-items: center; justify-content: center;
-  border: 2px solid #f9e9f0;
+  position: absolute; top: 6px; right: 7px;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: #e0483e; border: 2px solid #f9e9f0;
+  box-shadow: 0 1px 3px rgba(224, 72, 62, .45);
 }
 .m-join-badge[hidden] { display: none; }
 
