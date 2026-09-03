@@ -6642,22 +6642,39 @@ function openAnubhutiReader(topic, id) {
 function specialCardHtml(r, mode) {
   const foot = (place) =>
     [r.signature, place, r.msg_date ? fmtDate(r.msg_date) : ""].filter(Boolean).map(escapeHtml).join(" · ");
-  const col = (title, body, place, cls) => `<div class="sp-col${cls || ""}">
+  // The sign-off as the guru posted it — "आपका अपना", the flowered name, the
+  // address and his own date, on their own lines. `sign_*` is NULL on rows
+  // imported before add_special_signoff.sql, and on the handful of genuinely
+  // unsigned early posts, so the old middot footer stays as the fallback and
+  // no card is ever left with nothing under it.
+  const tail = (sign, place) => {
+    if (!sign) return foot(place) ? `<div class="sp-foot">${foot(place)}</div>` : "";
+    // His block normally ends with his own date line. Append the parsed one
+    // only when the block carries no digits at all, so the date is never lost
+    // and never shown twice.
+    const extra = r.msg_date && !/[\d०-९]/.test(sign) ? "\n" + fmtDate(r.msg_date) : "";
+    return `<div class="sp-sign">${escapeHtml(sign + extra)}</div>`;
+  };
+  const col = (title, body, place, sign, cls) => `<div class="sp-col${cls || ""}">
       ${title ? `<div class="sp-title">${escapeHtml(title)}</div>` : ""}
       <div class="sp-body">${escapeHtml(body || "")}</div>
-      ${foot(place) ? `<div class="sp-foot">${foot(place)}</div>` : ""}
+      ${tail(sign, place)}
     </div>`;
   if (mode === "dual") {
     return r.body_en
-      ? `<article class="sp-card sp-dual" data-id="${escapeHtml(String(r.id))}">${col(r.title_hi, r.body_hi, r.place_hi)}${col(r.title_en, r.body_en, r.place_en)}</article>`
-      : `<article class="sp-card" data-id="${escapeHtml(String(r.id))}">${col(r.title_hi, r.body_hi, r.place_hi)}</article>`;
+      ? `<article class="sp-card sp-dual" data-id="${escapeHtml(String(r.id))}">${col(r.title_hi, r.body_hi, r.place_hi, r.sign_hi)}${col(r.title_en, r.body_en, r.place_en, r.sign_en)}</article>`
+      : `<article class="sp-card" data-id="${escapeHtml(String(r.id))}">${col(r.title_hi, r.body_hi, r.place_hi, r.sign_hi)}</article>`;
   }
   const en = mode === "en";
   const title = en ? (r.title_en || r.title_hi) : (r.title_hi || r.title_en);
   const body = en ? (r.body_en || r.body_hi) : (r.body_hi || r.body_en);
   const place = en ? (r.place_en || r.place_hi) : (r.place_hi || r.place_en);
+  // Follow the BODY's language, not the preference: a Hindi-only row shown to
+  // an English reader falls back to Hindi text, and must not then be signed
+  // "Yours truly," under it.
+  const sign = (en ? !!r.body_en : !r.body_hi) ? r.sign_en : r.sign_hi;
   const hiTag = en && !r.body_en ? `<span class="sp-hitag">हिंदी</span>` : "";
-  return `<article class="sp-card">${hiTag}${col(title, body, place)}</article>`;
+  return `<article class="sp-card">${hiTag}${col(title, body, place, sign)}</article>`;
 }
 
 // Incremental list: with ~900 backfilled messages, painting every card at once
@@ -18097,19 +18114,40 @@ const MOBILE_UI = (() => {
         const title = en ? (r.title_en || r.title_hi) : (r.title_hi || r.title_en);
         const body = en ? (r.body_en || r.body_hi) : (r.body_hi || r.body_en);
         const place = en ? (r.place_en || r.place_hi) : (r.place_hi || r.place_en);
+        // The sign-off exactly as posted, following the BODY's language (a
+        // Hindi-only row read in English must not be signed "Yours truly,").
+        // NULL before add_special_signoff.sql and on genuinely unsigned early
+        // posts, so the middot footer stays as the fallback.
+        const sign = (en ? !!r.body_en : !r.body_hi) ? r.sign_en : r.sign_hi;
         const foot = [r.signature, place, r.msg_date ? fmtDate(r.msg_date) : ""].filter(Boolean).join(" · ");
+        // His block normally ends with his own date; add the parsed one only
+        // when it carries no digits at all, so it is never lost or doubled.
+        const tail = sign
+          ? sign + (r.msg_date && !/[\d०-९]/.test(sign) ? "\n" + fmtDate(r.msg_date) : "")
+          : foot;
         // Feed date = when it was POSTED (the guru re-posts old teachings), the
         // same key the list is sorted by; msg_date stays a display detail.
         const date = (r.posted_at || r.created_at || "").slice(0, 10) || r.msg_date || "";
         return {
           id: String(r.id), date, title: title || "",
           pages: null,
-          text: [body || "", foot].filter(Boolean).join("\n\n"),
+          // `text` stays the whole message as PLAIN text — search matches it,
+          // the snippet is cut from it, text-zoom and copy/share use it. The
+          // split-out halves below exist only so textHtml() can centre the
+          // sign-off; every existing consumer of `text` is unaffected.
+          text: [body || "", tail].filter(Boolean).join("\n\n"),
+          body: body || "", sign: sign ? tail : "",   // `tail` = sign + his date
           hasEn: !!r.body_en,          // gates the bottom-bar English toggle
           hiTag: en && !r.body_en,
-          shareCaption: [title, body, foot].filter(Boolean).join("\n\n"),
+          shareCaption: [title, body, tail].filter(Boolean).join("\n\n"),
         };
       },
+      // The reader paints the body as flowing text but the sign-off as its own
+      // centred block, the way it sits under the message on Telegram. Rows with
+      // no `sign` fall through to the default escaped-text path via `v.text`.
+      textHtml: (v) => (v.sign
+        ? escapeHtml(v.body) + `<div class="sp-sign sp-sign-read">${escapeHtml(v.sign)}</div>`
+        : escapeHtml(v.text || "")),
     },
     letterpad: {
       key: "letterpad", icon: "✍️", filePrefix: "LP",

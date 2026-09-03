@@ -3660,6 +3660,24 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
 .sp-title { font: 700 17px var(--serif); color: var(--accent); margin-bottom: 8px; }
 .sp-body { white-space: pre-wrap; font-size: 15.5px; line-height: 1.65; }
 .sp-foot { margin-top: 10px; color: var(--muted); font-size: 13px; }
+/* The guru's sign-off, printed as he writes it: "आपका अपना", the 🌺 and his
+   name, the ashram address, his own date — each on its own line.
+   ⚠ CENTRED rather than reproducing his leading spaces. He centres by hand
+   with 5–13 spaces tuned to Telegram's column width; replayed at phone width
+   those go ragged, and the English posts carry none at all, so the two halves
+   of a bilingual card would not even agree. Centring reproduces the intent at
+   every width. `pre-wrap` is what keeps his line breaks.
+   ⚠ Font is INHERITED on purpose — .sp-body sets none either, and the mobile
+   reader's text flow (.pc-track.pc-text) sets none either, so pinning a face
+   here would sign a sans-serif message in serif on one surface and not the
+   other. Telegram shows the sign-off in the message's own font; so do we. */
+.sp-sign {
+  margin-top: 16px; white-space: pre-wrap; text-align: center;
+  font-size: 15.5px; line-height: 1.65; color: var(--text);
+}
+/* Same block inside the mobile reader, where it sits in the paginated text
+   flow and so takes that flow's size and leading. */
+.sp-sign-read { margin-top: 20px; font-size: inherit; line-height: inherit; }
 .sp-hitag {
   position: absolute; top: 10px; right: 12px;
   background: var(--accent-soft); color: var(--accent);

@@ -216,8 +216,15 @@ function _specialMissing(error) {
     ? "Special messages aren't set up yet. (Admin: run the special_messages section of supabase/schema.sql.)"
     : null;
 }
+// ⚠ Mirrored in mobile/build_www.py's SPECIAL_COLS, which bakes the same rows
+// into the APK's offline snapshot. A column added here must be added there too,
+// or a fresh install shows less than a synced one until its first delta.
+// `sign_hi`/`sign_en` carry the guru's sign-off verbatim (supabase/
+// add_special_signoff.sql); a row from before that migration has NULL and the
+// reader falls back to the signature · place · date footer.
 const _SPECIAL_COLS =
-  "id,title_hi,title_en,body_hi,body_en,signature,place_hi,place_en,msg_date,posted_at,published,created_at,updated_at";
+  "id,title_hi,title_en,body_hi,body_en,signature,sign_hi,sign_en," +
+  "place_hi,place_en,msg_date,posted_at,published,created_at,updated_at";
 
 // Friendly text when add_broadcast.sql hasn't been run. Matched on the RPC
 // names too: a missing FUNCTION reports "Could not find the function
