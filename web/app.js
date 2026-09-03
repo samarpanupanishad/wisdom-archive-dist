@@ -2462,20 +2462,29 @@ function chatUpdateLive(msgsEl, m, ctx) {
 // screen is touched. The DOM is plainly intact, so nothing has crashed — a
 // frame was simply never painted, and the touch is what invalidates it.
 //
-// ⚠ A fix cannot be chosen until one question is answered: is our JavaScript
-// running before that touch? It splits the outcome completely.
-//   · JS runs, frames don't  -> a forced repaint on resume fixes it, ships OTA.
-//   · nothing runs until the touch -> no JS can help, and the fix is native:
-//     a NEW APK. (Same family as the Dhyan Diary finding in
-//     DHYAN_DIARY_STATUS.md §3d, where Android demotes the renderer out of
-//     cpuset:/top-app on screen-off and stops driving it.)
+// ⚠ ANSWERED ON THE PHONE, 2026-09-03 (the operator's four wakes on 9.112):
+//     js 2 / 69 / 206 / 98 ms · paint 88 / 98 / 477 / 126 ms · touch 4262 / — / — / 3369 ms
+// JS is alive within milliseconds and the renderer schedules a frame within
+// half a second — SECONDS before the finger arrives. So the page is not frozen,
+// and it is not waiting on the touch to start working.
+// ⚠ But rAF proves the renderer RAN a frame, not that those pixels reached the
+// glass. The reading is therefore: the page paints, and the Android surface is
+// not PRESENTING the new frames until an input event wakes that path. Do not
+// quote the raf number as proof the screen was drawn.
+// ⚠ And it is still unknown whether any of those four was a WHITE wake: they
+// were 8-16 minutes apart, and the fault is reported after a LONG absence.
+// That is what `away` (below) exists to settle.
 //
-// So this records THREE clocks from the moment a resume is signalled, and
-// nothing else — no repaint, no nudge. A blind nudge shipped alongside would
-// make its own measurement unreadable.
+// So this records the clocks AND, since 9.113, attempts one repaint — see
+// resumeRepaint(). Until the phone had answered, a nudge would have made its
+// own measurement unreadable, which is why 9.112 deliberately shipped none.
 //   timer  — a setTimeout(0) landed: the JS thread is alive.
-//   raf    — a requestAnimationFrame landed: the compositor is producing frames.
+//   raf    — a requestAnimationFrame landed: the renderer is scheduling frames.
 //   touch  — the first finger down after the resume.
+//   away   — how long the app had been in the background. THE key column now:
+//            if the white wakes are the long ones, this is what will show it.
+//   nudge  — when resumeRepaint() actually ran, so "the fix did not work" can
+//            never be confused with "the fix never fired".
 // Read them as: timer small + raf small        -> both alive, look elsewhere.
 //               timer small + raf ≈ touch      -> JS alive, frames asleep (OTA).
 //               timer ≈ touch                  -> the page itself is frozen (APK).
@@ -2486,6 +2495,41 @@ function chatUpdateLive(msgsEl, m, ctx) {
 const RESUME_DIAG_KEY = "wa:resume:diag";
 const RESUME_DIAG_KEEP = 6;
 let _resumeMark = null;
+let _hiddenAt = 0;              // when the app last went away, for `away`
+
+// THE REPAINT ATTEMPT (9.113). The root element's background is propagated to
+// the page canvas, so changing it dirties the WHOLE viewport's paint — and it
+// changes no layout, creates no stacking context and creates no containing
+// block.
+// ⚠ That last part is the whole reason it is background-color and not the
+// obvious transform / opacity / will-change nudge: each of those three makes
+// the root a containing block for `position: fixed`, so the top bar and the
+// bottom bar would jump for a frame on EVERY resume — trading a rare white
+// screen for a twitch every single time.
+// ⚠ #fafafb is one step off the app's own #fafafa: it has to be a real change
+// or the style engine coalesces it into nothing, and it has to be invisible
+// because body paints over it anyway.
+// ⚠ A synthetic window `resize` was considered and dropped: both
+// addEventListener("resize") in this file are ResizeObserver fallbacks a modern
+// WebView never registers, and the real viewport handler is on visualViewport,
+// which a window event does not reach. It would have been a line that did
+// nothing.
+function resumeRepaint(rec, t0) {
+  try {
+    const de = document.documentElement;
+    const prev = de.style.backgroundColor;
+    const restore = () => { try { de.style.backgroundColor = prev; } catch (_) {} };
+    de.style.backgroundColor = "#fafafb";
+    void de.offsetHeight;                    // forced reflow, so it cannot coalesce
+    requestAnimationFrame(() => {
+      restore();
+      if (rec && rec.nudge === null) { rec.nudge = Date.now() - t0; resumeDiagSave(rec); }
+    });
+    // ⚠ If frames really are stopped, that rAF never runs and the colour would
+    // stay applied for good. Invisible either way, but leaving it is sloppy.
+    setTimeout(restore, 400);
+  } catch (_) {}
+}
 
 function resumeDiagRead() {
   try { const a = JSON.parse(localStorage.getItem(RESUME_DIAG_KEY) || "[]"); return Array.isArray(a) ? a : []; }
@@ -2513,11 +2557,13 @@ function resumeDiagStart(via) {
       }
       return;
     }
-    const rec = { id: t0, at: new Date().toISOString(), via, timer: null, raf: null, touch: null };
+    const rec = { id: t0, at: new Date().toISOString(), via, timer: null, raf: null,
+                  touch: null, away: _hiddenAt ? t0 - _hiddenAt : null, nudge: null };
     _resumeMark = { t0, rec };
     resumeDiagSave(rec);
     setTimeout(() => { if (rec.timer === null) { rec.timer = Date.now() - t0; resumeDiagSave(rec); } }, 0);
     requestAnimationFrame(() => { if (rec.raf === null) { rec.raf = Date.now() - t0; resumeDiagSave(rec); } });
+    resumeRepaint(rec, t0);
   } catch (_) {}
 }
 // One listener for the life of the page, not one per resume: passive + capture
@@ -2533,7 +2579,8 @@ try {
   document.addEventListener("pointerdown", onFirstTouch, { capture: true, passive: true });
   document.addEventListener("touchstart", onFirstTouch, { capture: true, passive: true });
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) resumeDiagStart("visibility");
+    if (document.hidden) _hiddenAt = Date.now();
+    else resumeDiagStart("visibility");
   });
 } catch (_) {}
 
@@ -2543,22 +2590,37 @@ try {
 function resumeDiagCardEl() {
   const rows = resumeDiagRead();
   const ms = (v) => (v === null || v === undefined ? "—" : v + " ms");
+  // `away` is the one number a person reads rather than compares, so it is
+  // written the way a person says it.
+  const away = (v) => {
+    if (v === null || v === undefined) return "—";
+    const s = Math.round(v / 1000);
+    if (s < 90) return s + "s";
+    const m = Math.round(s / 60);
+    if (m < 90) return m + "m";
+    const h = Math.floor(m / 60);
+    return h + "h " + (m % 60) + "m";
+  };
+  // ⚠ "frames came on their own" is NOT "the screen was drawn": rAF says the
+  // renderer ran a frame, and the phone can still have failed to present it.
+  // The wording says only what is actually known.
   const verdict = (r) => {
     if (r.timer === null) return "JS never ran — the page was frozen.";
     if (r.raf === null && r.touch === null) return "waiting — no frame and no touch yet.";
-    if (r.raf === null) return "NO FRAME, even after the touch.";
-    if (r.touch !== null && r.raf >= r.touch) return "frames only after the touch — native fix.";
-    return "frames came on their own — fixable over the air.";
+    if (r.raf === null) return "no frame, even after the touch.";
+    if (r.touch !== null && r.raf >= r.touch) return "rendered only after the touch — native fix.";
+    return "awake and rendering before the touch.";
   };
   const card = el(`<div class="mod-card">
     <div class="mod-card-h">Screen wake (debug)</div>
     <div class="mod-card-sub">Why the app can come back white. Each line is one wake:
-      when the JS thread woke, when the screen actually painted, and when you first
-      touched it. Send these to whoever is fixing it.</div>
+      how long it had been away, when the JS thread woke, when it rendered, when the
+      repaint ran, and when you first touched it. Send these to whoever is fixing it —
+      and say which of these wakes came back white.</div>
     ${rows.length ? `<div class="mod-diag">${rows.map((r) => `
       <div class="mod-diag-r">
-        <div class="mod-diag-t">${escapeHtml(new Date(r.at).toLocaleString())} · ${escapeHtml(r.via)}</div>
-        <div class="mod-diag-n">js ${ms(r.timer)} · paint ${ms(r.raf)} · touch ${ms(r.touch)}</div>
+        <div class="mod-diag-t">${escapeHtml(new Date(r.at).toLocaleString())} · away ${escapeHtml(away(r.away))} · ${escapeHtml(r.via)}</div>
+        <div class="mod-diag-n">js ${ms(r.timer)} · paint ${ms(r.raf)} · repaint ${ms(r.nudge)} · touch ${ms(r.touch)}</div>
         <div class="mod-diag-v">${escapeHtml(verdict(r))}</div>
       </div>`).join("")}</div>`
       : `<div class="mod-diag-none">Nothing recorded yet. Put the app in the background,
@@ -15039,7 +15101,11 @@ const MOBILE_UI = (() => {
 
   if (_capApp && _capApp.addListener) {
     _capApp.addListener("appStateChange", (st) => {
-      if (!st || !st.isActive) return;
+      if (!st) return;
+      // Going away is half the measurement: `away` is what will show whether the
+      // white wakes are the long ones. Recorded before the early return that
+      // used to be this listener's first line.
+      if (!st.isActive) { _hiddenAt = Date.now(); return; }
       // FIRST, and above every early return below: this must record the wake
       // even on the wakes that do no syncing at all.
       resumeDiagStart("appState");
