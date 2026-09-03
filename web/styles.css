@@ -746,11 +746,16 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-online-top { display: inline-flex; align-items: center; gap: 5px; }
 .wc-online-lb { display: none; }   /* the desktop pill is dot + count only */
 .wc-online-dot { width: 7px; height: 7px; border-radius: 50%; background: #2fa84f; flex: 0 0 auto; }
-/* Sutradhar only, and only while he is unlisted: a hollow dot instead of the
-   solid green one, so his own chip never claims he is in the list he is
-   reading. Paired with the "You · hidden" row in the sheet. */
+/* Any admin, and only while he is unlisted: a hollow dot instead of the solid
+   green one, so his own tile never claims he is in the list he is reading.
+   ⚠ Since 2026-09-03 this is the ONLY standing signal on the chat screen that
+   the switch is on — the greyed "You · hidden" row it used to be paired with is
+   gone from the sheet at the operator's request (the sheet's foot note says it
+   in words instead). Don't quietly drop the hollow dot too. */
 .wc-online-off .wc-online-dot { background: none; box-shadow: inset 0 0 0 1.5px var(--muted); }
-.at-p-ghost .at-p-name { color: var(--muted); }
+/* Nobody else in the satsang. Not an error, so it is worded and coloured as a
+   fact — but the list must not be simply blank under a heading. */
+.at-p-none { color: var(--muted); font-size: 13.5px; font-style: italic; padding: 14px 16px; }
 /* On mobile the full .wc-hdr is hidden; renderWisdomChat lifts the chip out.
    This is the FALLBACK shape — a thin right-aligned strip directly above the
    message list — for any surface that supplies no head row. Nothing on mobile
@@ -1602,6 +1607,19 @@ body {
 .mod-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px; margin-bottom: 18px; max-width: 860px; }
 .mod-card-h { font-family: var(--serif); font-size: 17px; font-weight: 600; margin-bottom: 2px; }
 .mod-card-sub { font-size: 13px; color: var(--muted); }
+/* The "Screen wake (debug)" readout. Developer output, so it is quiet and
+   monospaced rather than dressed up -- and it lives here, on the admin-only
+   Moderator page, never on Settings (operator, 2026-08-22). The numbers are
+   read side by side down a column, which is what tabular-nums is for. */
+.mod-diag { display: flex; flex-direction: column; gap: 9px; margin-top: 11px; }
+.mod-diag-r { border-left: 2px solid var(--border); padding-left: 9px; }
+.mod-diag-t { font: 500 11.5px var(--sans); color: var(--muted); }
+.mod-diag-n {
+  font: 500 12px ui-monospace, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; color: var(--text); margin-top: 1px;
+}
+.mod-diag-v { font: 600 11.5px var(--sans); color: var(--accent); margin-top: 1px; }
+.mod-diag-none { margin-top: 10px; font-size: 12.5px; color: var(--muted); font-style: italic; }
 .mod-row-between { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 /* ⚠ ONE rule for both toggles on this page. The bare `.btn.active` further up
    is the PALE variant, so a new ON/OFF card that is not named here silently
@@ -1991,10 +2009,15 @@ body.m-mode.m-libpage .content {
 .mm-t-daily .mm-name, .mm-t-special .mm-name, .mm-t-letterhead .mm-name { color: #c2185b; }
 .mm-r-satsang .mm-name, .mm-r-anubhuti .mm-name { color: #6b3fa0; }
 .mm-r-diary .mm-name { color: #9b1b3f; }
-/* ⚠ The Lucky Msg card is BLACK (operator, 2026-09-01) -- its name + sub-line
-   are re-lit for that ground, and #9b1b3f (2.3:1 on black) is left to Diary. */
+/* ⚠ The Lucky Msg card is RED (operator, 2026-09-03; it was black from
+   2026-09-01) -- its name + sub-line are lit for that ground, and #9b1b3f
+   (3.0:1 on this red) is left to Diary.
+   ⚠ The sub-line is #ded9e4 and NOT the #b9b4c2 it wore on black: measured on
+   #a32b3a that grey lands at 3.50:1, under the threshold for 11.5px text. This
+   one is 5.1:1. The gold name needs nothing -- it is 5.0:1 here. Any further
+   lightening of the card MUST be checked against both. */
 .mm-r-lucky .mm-name { color: #ffd36b; }
-.mm-r-lucky .mm-sub2 { color: #b9b4c2; }
+.mm-r-lucky .mm-sub2 { color: #ded9e4; }
 .mm-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-bottom: 16px; }
 .mm-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-bottom: 26px; }
 .mm-tile, .mm-row {
@@ -2031,13 +2054,18 @@ body.m-mode.m-libpage .content {
 .mm-r-satsang { background: #f2ecfa; } .mm-r-satsang .mm-ico { color: #6b3fa0; }
 .mm-r-anubhuti { background: #eef7f4; } .mm-r-anubhuti .mm-ico { color: #0e8074; }
 .mm-r-diary { background: #fdf1e4; } .mm-r-diary .mm-ico { color: #b4712a; }
-/* ⚠ BLACK, on the operator's instruction (2026-09-01). Was #f2f7e2 pale green;
-   don't "restore" it. The bouquet glyph carries its own baked colours (red
-   blooms, green stems) so it still reads on black -- .mm-ico `color` only feeds
-   any currentColor bits, kept as a pale green. `overflow: hidden` clips the
-   sparkle decorations to the rounded card so a large OS font can't push a star
-   outside it. */
-.mm-r-lucky { background: #111; overflow: hidden; } .mm-r-lucky .mm-ico { color: #cdd9b0; }
+/* ⚠ RED, on the operator's instruction (2026-09-03). The history is #f2f7e2
+   pale green -> #111 black (2026-09-01) -> here; don't "restore" either.
+   ⚠ A DARK red, and the darkness is the feature, not a taste: the twinkling
+   field below is a light-on-dark effect -- a star reads because it is brighter
+   than its ground. A light red was mocked up and rejected for exactly that (the
+   stars all but vanish even darkened to crimson at double resting opacity). If
+   this ever needs to go lighter again, the stars have to stop being stars.
+   The bouquet glyph carries its own baked colours (red blooms, green stems) so
+   it still reads here -- .mm-ico `color` only feeds any currentColor bits, kept
+   as a pale green. `overflow: hidden` clips the sparkle decorations to the
+   rounded card so a large OS font can't push a star outside it. */
+.mm-r-lucky { background: #a32b3a; overflow: hidden; } .mm-r-lucky .mm-ico { color: #cdd9b0; }
 /* ---- the Lucky Msg card's starfield (Menu page › Important Links) -------
    A scattered field of small twinkling stars over the black card (operator,
    2026-09-01: "increase to full box, since it comes and goes"). It replaced a
@@ -2057,15 +2085,20 @@ body.m-mode.m-libpage .content {
    black has the contrast to spare) but never sits on top of it. */
 .mm-stars { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
 .mm-r-lucky .mm-ico, .mm-r-lucky .mm-rowtxt { position: relative; z-index: 1; }
-/* Rest very dim (matches the keyframe's 0%, so a star is never blank while its
-   delay runs), pulse to full. Each .nN sets its own position, size, delay AND
-   duration -- the varied duration is what stops the field blinking in unison. */
+/* Rest dim (matches the keyframe's 0%, so a star is never blank while its delay
+   runs), pulse to full. Each .nN sets its own position, size, delay AND
+   duration -- the varied duration is what stops the field blinking in unison.
+   ⚠ The two .16s became .26 when the card went from black to red (2026-09-03):
+   gold at 16% composites against #a32b3a to very nearly nothing, where against
+   #111 it was still a visible ember. The rest value and the keyframe's 0%/100%
+   must stay EQUAL -- that is what stops a star sitting blank through its delay
+   (see the animation-delay note in the drawer's own sparkle). */
 .mm-star {
-  position: absolute; line-height: 1; color: #ffd36b; opacity: .16;
+  position: absolute; line-height: 1; color: #ffd36b; opacity: .26;
   animation: mmstartwinkle 2.6s ease-in-out infinite;
 }
 @keyframes mmstartwinkle {
-  0%, 100% { opacity: .16; transform: scale(.55) rotate(-8deg); }
+  0%, 100% { opacity: .26; transform: scale(.55) rotate(-8deg); }
   50%      { opacity: 1;   transform: scale(1.1)  rotate(12deg); }
 }
 .mm-star.n1  { left: 6%;  top: 17%;    font-size: 9px; animation-duration: 2.6s; animation-delay: 0s;   }
@@ -4568,6 +4601,28 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 .dd-tile-do .dd-tile-t { color: var(--accent); }
 /* Restated at (0,2,0) so the hero border survives the line above it. */
 .dd-tile-do.dd-tile-hero { border-color: var(--accent); }
+
+/* ---- one tint per tile, borrowed from the section it belongs to ---------
+   Operator, 2026-09-03: Dhyan with Guru Mantra wears Daily's colour, Dhyan in
+   Maun wears Letterhead's, Naam Jaap wears Samuhik Satsang's and Granth Pathan
+   wears Anubhuti Sharing's. The four grounds above (one pink for all of them,
+   2026-09-01) are what this replaces; .dd-tile-do is now shape and type only.
+
+   ⚠ These are the section hues DEEPENED, not the Menu page's literal hexes,
+   and that was a decision rather than a slip. The Menu tints are about 1.08:1
+   against white -- deliberately almost invisible there, because on that page a
+   coloured GLYPH tells the tiles apart and the tint only has to whisper. Here
+   the two Dhyan tiles sit side by side, and at Menu strength Daily's cream and
+   Letterhead's stone were indistinguishable from each other and from the page.
+   The operator saw exactly that in a mock-up ("in mockup colo is not getting
+   clear") and chose the deeper set. Same four hues, roughly twice the strength.
+   ⚠ Each pair must be written .dd-tile-do.dd-do-* at (0,2,0) and stay AFTER
+   the hero rule above, or the two Dhyan tiles keep the accent's orange border
+   over their new grounds -- which is the one combination none of this wants. */
+.dd-tile-do.dd-do-guru   { background: #fbecd0; border-color: #f2dcb4; }   /* Daily */
+.dd-tile-do.dd-do-maun   { background: #f3eae0; border-color: #e6d8c6; }   /* Letterhead */
+.dd-tile-do.dd-do-japa   { background: #e9dffa; border-color: #d5c4ee; }   /* Samuhik Satsang */
+.dd-tile-do.dd-do-granth { background: #ddf0e9; border-color: #c2e2d6; }   /* Anubhuti Sharing */
 .dd-tile-flat { min-height: 58px; background: var(--bg); box-shadow: none; }
 .dd-tile-choice { min-height: 108px; }
 

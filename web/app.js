@@ -2456,6 +2456,117 @@ function chatUpdateLive(msgsEl, m, ctx) {
   node.replaceWith(buildChatMsgEl(m, ctx, prev));
 }
 
+// ---- WHY THE APP COMES BACK WHITE: a measurement, not a fix -------------
+// Operator, 2026-09-03: after a long spell in the background the app returns
+// to a WHITE screen, and the page it was left on appears THE INSTANT the
+// screen is touched. The DOM is plainly intact, so nothing has crashed — a
+// frame was simply never painted, and the touch is what invalidates it.
+//
+// ⚠ A fix cannot be chosen until one question is answered: is our JavaScript
+// running before that touch? It splits the outcome completely.
+//   · JS runs, frames don't  -> a forced repaint on resume fixes it, ships OTA.
+//   · nothing runs until the touch -> no JS can help, and the fix is native:
+//     a NEW APK. (Same family as the Dhyan Diary finding in
+//     DHYAN_DIARY_STATUS.md §3d, where Android demotes the renderer out of
+//     cpuset:/top-app on screen-off and stops driving it.)
+//
+// So this records THREE clocks from the moment a resume is signalled, and
+// nothing else — no repaint, no nudge. A blind nudge shipped alongside would
+// make its own measurement unreadable.
+//   timer  — a setTimeout(0) landed: the JS thread is alive.
+//   raf    — a requestAnimationFrame landed: the compositor is producing frames.
+//   touch  — the first finger down after the resume.
+// Read them as: timer small + raf small        -> both alive, look elsewhere.
+//               timer small + raf ≈ touch      -> JS alive, frames asleep (OTA).
+//               timer ≈ touch                  -> the page itself is frozen (APK).
+//
+// ⚠ Displayed on the MODERATOR page, never in Settings. The operator had the
+// last diagnostics card taken off Settings on 2026-08-22 — "it is developer
+// output, and every member could see it" — and that still holds.
+const RESUME_DIAG_KEY = "wa:resume:diag";
+const RESUME_DIAG_KEEP = 6;
+let _resumeMark = null;
+
+function resumeDiagRead() {
+  try { const a = JSON.parse(localStorage.getItem(RESUME_DIAG_KEY) || "[]"); return Array.isArray(a) ? a : []; }
+  catch (_) { return []; }
+}
+function resumeDiagSave(rec) {
+  try {
+    const all = resumeDiagRead().filter((r) => r.id !== rec.id);
+    all.unshift(rec);
+    localStorage.setItem(RESUME_DIAG_KEY, JSON.stringify(all.slice(0, RESUME_DIAG_KEEP)));
+  } catch (_) {}
+}
+// `via` says which signal woke us — the Capacitor plugin or the page's own
+// visibilitychange. Both are recorded because either may be the one that is
+// late, and a resume usually fires both: the second call inside 1.5s is folded
+// into the first record rather than starting a new one, or every wake would
+// show up twice with the second one's clocks reading zero.
+function resumeDiagStart(via) {
+  try {
+    const t0 = Date.now();
+    if (_resumeMark && t0 - _resumeMark.t0 < 1500) {
+      if (_resumeMark.rec.via.indexOf(via) < 0) {
+        _resumeMark.rec.via += "+" + via;
+        resumeDiagSave(_resumeMark.rec);
+      }
+      return;
+    }
+    const rec = { id: t0, at: new Date().toISOString(), via, timer: null, raf: null, touch: null };
+    _resumeMark = { t0, rec };
+    resumeDiagSave(rec);
+    setTimeout(() => { if (rec.timer === null) { rec.timer = Date.now() - t0; resumeDiagSave(rec); } }, 0);
+    requestAnimationFrame(() => { if (rec.raf === null) { rec.raf = Date.now() - t0; resumeDiagSave(rec); } });
+  } catch (_) {}
+}
+// One listener for the life of the page, not one per resume: passive + capture
+// so it can never interfere with a tap, and it only writes for the FIRST touch
+// after each wake.
+try {
+  const onFirstTouch = () => {
+    const m = _resumeMark;
+    if (!m || m.rec.touch !== null) return;
+    m.rec.touch = Date.now() - m.t0;
+    resumeDiagSave(m.rec);
+  };
+  document.addEventListener("pointerdown", onFirstTouch, { capture: true, passive: true });
+  document.addEventListener("touchstart", onFirstTouch, { capture: true, passive: true });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) resumeDiagStart("visibility");
+  });
+} catch (_) {}
+
+// The card. Moderator page only (see above). Reads what the clocks recorded and
+// says what it MEANS — three numbers with no reading are how a diagnostic gets
+// screenshotted and still not answer the question it was shipped for.
+function resumeDiagCardEl() {
+  const rows = resumeDiagRead();
+  const ms = (v) => (v === null || v === undefined ? "—" : v + " ms");
+  const verdict = (r) => {
+    if (r.timer === null) return "JS never ran — the page was frozen.";
+    if (r.raf === null && r.touch === null) return "waiting — no frame and no touch yet.";
+    if (r.raf === null) return "NO FRAME, even after the touch.";
+    if (r.touch !== null && r.raf >= r.touch) return "frames only after the touch — native fix.";
+    return "frames came on their own — fixable over the air.";
+  };
+  const card = el(`<div class="mod-card">
+    <div class="mod-card-h">Screen wake (debug)</div>
+    <div class="mod-card-sub">Why the app can come back white. Each line is one wake:
+      when the JS thread woke, when the screen actually painted, and when you first
+      touched it. Send these to whoever is fixing it.</div>
+    ${rows.length ? `<div class="mod-diag">${rows.map((r) => `
+      <div class="mod-diag-r">
+        <div class="mod-diag-t">${escapeHtml(new Date(r.at).toLocaleString())} · ${escapeHtml(r.via)}</div>
+        <div class="mod-diag-n">js ${ms(r.timer)} · paint ${ms(r.raf)} · touch ${ms(r.touch)}</div>
+        <div class="mod-diag-v">${escapeHtml(verdict(r))}</div>
+      </div>`).join("")}</div>`
+      : `<div class="mod-diag-none">Nothing recorded yet. Put the app in the background,
+         leave it a while, then open it again and come back here.</div>`}
+  </div>`);
+  return card;
+}
+
 // ---- "Hide me from the online list" — MODERATORS + SUTRADHAR ------------
 // A device preference, not an account one: presence means "this thread is open
 // on this phone", so the control that governs it belongs to the phone. No
@@ -2637,19 +2748,27 @@ function openChatPresenceSheet(ctx) {
   const others = ((ctx && ctx.present) || [])
     .filter((u) => u && u !== me)
     .sort((a, b) => a.localeCompare(b));
-  const row = (name, self) => `<li class="at-p${self && hidden ? " at-p-ghost" : ""}">
-      <span class="at-p-av">${escapeHtml((name[0] || "?").toUpperCase())}${
-        self && hidden ? "" : `<i class="at-p-dot"></i>`}</span>
+  const row = (name, self) => `<li class="at-p">
+      <span class="at-p-av">${escapeHtml((name[0] || "?").toUpperCase())}<i class="at-p-dot"></i></span>
       <span class="at-p-body">
         <span class="at-p-name">${escapeHtml(name)}${
-          self ? ` <em class="at-p-you">${hidden ? "You · hidden" : "You"}</em>` : ""}</span>
+          self ? ` <em class="at-p-you">You</em>` : ""}</span>
       </span>
     </li>`;
-  // ⚠ His own row is shown even while hidden, but is NOT counted in the heading
-  // — the heading has to say what everyone else's chip says. Showing the row is
-  // the only standing reminder that the switch is on; silent invisibility is how
-  // somebody stays hidden for six months without noticing.
-  const rows = [me ? row(me, true) : "", ...others.map((n) => row(n, false))].join("");
+  // ⚠ WHILE HIDDEN HIS OWN ROW IS NOT IN THE LIST AT ALL (operator,
+  // 2026-09-03: "i want only one box .. he can see others online and himself
+  // hidden"). Until then it was shown greyed as "You · hidden", on the argument
+  // that it was the one standing reminder the switch is on. The operator read
+  // that as a second box about himself over the box about the members, and the
+  // reminder now lives in the note at the foot of the sheet instead — one line,
+  // not a row that looks like a person who is here.
+  // The list is then EXACTLY what every member sees, which is the honest thing
+  // for it to be: the heading already counted it that way.
+  // ⚠ So the list can now come out empty (hidden, and nobody else here). It has
+  // to say so — a heading over a blank list reads as a failed load.
+  const rows = [(me && !hidden) ? row(me, true) : "", ...others.map((n) => row(n, false))]
+    .filter(Boolean).join("")
+    || `<li class="at-p at-p-none">No one else is here right now.</li>`;
   const n = others.length + (hidden ? 0 : 1);
 
   const sheet = el(`<div class="at-sheet">
@@ -2659,7 +2778,9 @@ function openChatPresenceSheet(ctx) {
         <button class="at-sheet-x" type="button" aria-label="Close">✕</button>
       </div>
       <ul class="at-plist">${rows}</ul>
-      <div class="at-sheet-note">Members who are here right now — it changes as people come and go.</div>
+      <div class="at-sheet-note">${hidden
+        ? "Members who are here right now. You are hidden from this list — sending a message adds you to it."
+        : "Members who are here right now — it changes as people come and go."}</div>
     </div>
   </div>`);
   const close = armChatSheet(sheet);   // …so Android BACK closes it, not the room
@@ -4493,6 +4614,8 @@ async function renderModerator() {
   // to every member the moment they open a satsang, and unlike everything below
   // it takes effect with no round trip.
   wrap.appendChild(presenceHideCardEl());
+  // Directly under it: also device-local, also nothing to do with the server.
+  wrap.appendChild(resumeDiagCardEl());
 
   // Sign-up toggle
   const signup = el(`<div class="mod-card">
@@ -6365,6 +6488,16 @@ function anubhutiPreview(t) {
 async function loadAnubhutiTopic(id) {
   try {
     const { topic } = await WA.getAnubhutiTopic(id);
+    // ⚠ THE AUTHOR HAS TWO NAMES, and only one of them is `author`. The index
+    // comes from list_anubhuti_topics(), which aliases the column
+    // ('author', t.username); this reads the TABLE with select("*"), where it
+    // is `username` and there is no `author` at all. Every detail surface asks
+    // for topic.author, so the byline quietly rendered as the date alone — on
+    // the desktop page since the feature shipped, and on the phone until the
+    // cached (aliased) row was used as the offline fallback, which is the only
+    // reason it ever appeared. Normalise here, once, rather than in each
+    // surface: whoever started the sharing is the point of the byline.
+    if (topic && !topic.author) topic.author = topic.username || "";
     return topic;                       // null = removed, or hidden by RLS
   } catch (_) {
     const cached = (ANUBHUTI.known() || []).find((t) => String(t.id) === String(id));
@@ -12652,30 +12785,36 @@ async function mountDhyanDiary(node) {
         </div>` : `
         <div class="dd-sect-label">Sit now</div>
         <div class="dd-tiles">
-          <!-- ⚠ dd-tile-do is what carries the pink ground and the accent
-               title on these FOUR and nowhere else (operator, 2026-09-01). The
-               wide Aarti tile below is deliberately not one of them, and the
-               same .dd-tiles grid is reused by the japa chooser, Add / Remove
-               and Backup — which is why this is a class and not a CSS
-               :not() chain over the grid. -->
-          <button class="dd-tile dd-tile-do dd-tile-hero" data-start="guru">
+          <!-- ⚠ dd-tile-do is what carries the shape and the accent title on
+               these FOUR and nowhere else (operator, 2026-09-01). The wide
+               Aarti tile below is deliberately not one of them, and the same
+               .dd-tiles grid is reused by the japa chooser, Add / Remove and
+               Backup — which is why this is a class and not a CSS :not() chain
+               over the grid.
+               ⚠ dd-do-* is the GROUND, one per tile since 2026-09-03: each
+               takes the colour of the section it belongs to (Guru Mantra =
+               Daily, Maun = Letterhead, Naam Jaap = Samuhik Satsang, Granth
+               Pathan = Anubhuti Sharing). The pairing is the point, so if a
+               tile is ever renamed or moved, move its class with it rather
+               than leaving it wearing another section's colour. -->
+          <button class="dd-tile dd-tile-do dd-do-guru dd-tile-hero" data-start="guru">
             <span class="dd-tile-ico">🧘</span>
             <span class="dd-tile-t">Dhyan</span>
             <span class="dd-tile-q">(with Guru Mantra)</span>
             <span class="dd-tile-s">${st.targetMin} min</span>
           </button>
-          <button class="dd-tile dd-tile-do dd-tile-hero" data-start="maun">
+          <button class="dd-tile dd-tile-do dd-do-maun dd-tile-hero" data-start="maun">
             <span class="dd-tile-ico">🤍</span>
             <span class="dd-tile-t">Dhyan</span>
             <span class="dd-tile-q">(in Maun State)</span>
             <span class="dd-tile-s">${st.targetMin} min</span>
           </button>
-          <button class="dd-tile dd-tile-do" data-go="japa">
+          <button class="dd-tile dd-tile-do dd-do-japa" data-go="japa">
             <span class="dd-tile-ico">📿</span>
             <span class="dd-tile-t">Naam Jaap</span>
             <span class="dd-tile-s">mala or phone</span>
           </button>
-          <button class="dd-tile dd-tile-do" data-granth>
+          <button class="dd-tile dd-tile-do dd-do-granth" data-granth>
             <span class="dd-tile-ico">📖</span>
             <span class="dd-tile-t">Granth Pathan</span>
             <span class="dd-tile-s">${escapeHtml(granthLine())}</span>
@@ -14466,6 +14605,9 @@ const MOBILE_UI = (() => {
   if (_capApp && _capApp.addListener) {
     _capApp.addListener("appStateChange", (st) => {
       if (!st || !st.isActive) return;
+      // FIRST, and above every early return below: this must record the wake
+      // even on the wakes that do no syncing at all.
+      resumeDiagStart("appState");
       // Messages may have arrived while we were backgrounded, so the badge is
       // recounted on every wake (cheap, one query) regardless of the sync throttle.
       SATSANG.refresh(true).catch(() => {});
