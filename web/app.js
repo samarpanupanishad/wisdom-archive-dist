@@ -5787,6 +5787,31 @@ function wireCarousel(root, opts) {
 // ==========================================================================
 const SPECIAL = (() => {
   const CACHE_KEY = "wa:special:cache", SYNC_KEY = "wa:special:lastSync", SEEN_KEY = "wa:special:lastSeen";
+  const SCHEMA_KEY = "wa:special:schema";
+  // ⚠ BUMP THIS whenever _SPECIAL_COLS gains a column the UI renders.
+  //
+  // The delta sync asks only for rows with updated_at > lastSync, so a row
+  // already in the cache is never re-fetched just because the app now wants
+  // MORE columns from it. Shipping sign_hi/sign_en (2026-09-03) hit exactly
+  // that: the database repair bumped updated_at on 1141 rows, phones still
+  // running the old UI cached them WITHOUT the new columns and advanced
+  // lastSync past the repair — so when the new UI arrived its delta returned
+  // nothing, every cached message kept a missing sign-off, and all of them
+  // silently fell back to the old "signature · place · date" footer with no
+  // way to ever recover. Publishing the UI first would have avoided it, but
+  // the cache must not depend on getting that order right.
+  //
+  // Changing this value drops lastSync (NOT the cache — offline reading must
+  // keep working) so the next sync re-fetches every row in full and merges
+  // the complete columns over what is stored.
+  const CACHE_SCHEMA = "2-signoff";
+  function ensureSchema() {
+    try {
+      if (localStorage.getItem(SCHEMA_KEY) === CACHE_SCHEMA) return;
+      localStorage.removeItem(SYNC_KEY);
+      localStorage.setItem(SCHEMA_KEY, CACHE_SCHEMA);
+    } catch {}
+  }
   // Feed order: when the post appeared on Telegram (newest first) — NOT
   // msg_date, because the guru re-posts old teachings (signature date years
   // earlier) and a fresh re-post must appear at the top, as in the channel.
@@ -5851,6 +5876,10 @@ const SPECIAL = (() => {
       // Seed BEFORE the network call, and outside its failure path: an offline
       // wiped app must still end up with the bundled history in its cache.
       await seed();
+      // ...then, if this build wants columns the cache predates, forget
+      // lastSync so the fetch below is a FULL one. Must run after seed(): the
+      // APK snapshot sets lastSync itself, and that seed is equally stale.
+      ensureSchema();
       // Very first sync on this device (no seen-marker, empty cache): the
       // whole backfilled history arrives at once — don't greet a new install
       // with a "99+" unread badge. Start clean; badge only what arrives later.
