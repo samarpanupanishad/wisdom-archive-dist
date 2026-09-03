@@ -3662,17 +3662,18 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
 .sp-foot { margin-top: 10px; color: var(--muted); font-size: 13px; }
 /* The guru's sign-off, printed as he writes it: "आपका अपना", the 🌺 and his
    name, the ashram address, his own date — each on its own line.
-   ⚠ CENTRED rather than reproducing his leading spaces. He centres by hand
-   with 5–13 spaces tuned to Telegram's column width; replayed at phone width
-   those go ragged, and the English posts carry none at all, so the two halves
-   of a bilingual card would not even agree. Centring reproduces the intent at
-   every width. `pre-wrap` is what keeps his line breaks.
+   ⚠ LEFT-aligned, NOT centred — his own leading spaces do the positioning.
+   Measured over the channel: 91% of the Hindi sign-offs are indented 5-12
+   hand-typed spaces, 87% of the English ones are flush left. It was centred
+   when this shipped (9.115/9.116) and the operator was right that it read
+   wrong: he does not centre, he indents. `pre-wrap` is load-bearing twice
+   over here — it keeps his line breaks AND his leading spaces.
    ⚠ Font is INHERITED on purpose — .sp-body sets none either, and the mobile
    reader's text flow (.pc-track.pc-text) sets none either, so pinning a face
    here would sign a sans-serif message in serif on one surface and not the
    other. Telegram shows the sign-off in the message's own font; so do we. */
 .sp-sign {
-  margin-top: 16px; white-space: pre-wrap; text-align: center;
+  margin-top: 16px; white-space: pre-wrap; text-align: left;
   font-size: 15.5px; line-height: 1.65; color: var(--text);
 }
 /* Same block inside the mobile reader, where it sits in the paginated text
