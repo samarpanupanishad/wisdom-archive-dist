@@ -8600,6 +8600,41 @@ async function renderBroadcast() {
 // --------------------------------------------------------------------------
 const DHYAN_TITLE = "Personal Dhyan Diary";
 
+// ⚠ HOW THE DIARY WRITES A TIME — `5.10 am`, not `5:10 AM` (operator,
+// 2026-09-03). Dot, and lower case. Every clock inside the diary goes through
+// these three, so the report tables, the day rows, the reminder wheels, the
+// reminder list and the shareable picture can never drift apart; changing the
+// house style is changing these three lines and nothing else.
+//
+// ⚠ The scope is the DIARY. `gyanSlotLabel()` (Upanishad Gyan's hourly slots)
+// deliberately keeps `11 AM` — it is a different, live, Hindi-only feature with
+// its own voice, and it is not reached from here.
+const DD_TSEP = ".";
+const DD_AM = "am";
+const DD_PM = "pm";
+// "5 am" — an hour with no minutes, for the wheels and the usual-hour band.
+const ddHour = (h) => `${h % 12 || 12} ${h < 12 ? DD_AM : DD_PM}`;
+// "5.10 am" — an hour and its minutes.
+const ddClock = (h, m) =>
+  `${h % 12 || 12}${DD_TSEP}${m < 10 ? "0" + m : m} ${h < 12 ? DD_AM : DD_PM}`;
+// "5–6 am" for the hour a person usually sits — the meridiem said once when both
+// ends share it. Three characters shorter than "5 am–6 am", which is the
+// difference between one line and two inside the report's headline card.
+const ddHourSpan = (h) => {
+  if (h < 0) return "—";
+  const end = (h + 1) % 24;
+  return (h < 12) === (end < 12)
+    ? `${h % 12 || 12}–${end % 12 || 12} ${h < 12 ? DD_AM : DD_PM}`
+    : `${ddHour(h)}–${ddHour(end)}`;
+};
+
+// ⚠ A sitting must be STRICTLY LONGER than this to be named as the longest one
+// in a report. Thirty minutes is a normal sitting (operator, 2026-09-03), so an
+// exactly-30-minute one does not qualify — the `>` is deliberate, not an
+// off-by-one, and three 30-minute sittings showing no "longest" block is the
+// rule working.
+const DD_LONG_SEC = 30 * 60;
+
 // ---- generic rolling wheel -------------------------------------------------
 // A strip of all values translates inside a 5-row viewport; the band marks the
 // centred one. Drag with the finger, snap on release, haptic per value.
@@ -10531,7 +10566,7 @@ function dhyanProgressEl(fmtMins, dayLabel) {
   };
   const hourBand = (h) => {
     if (h < 0) return "—";
-    const to = (n) => { const ap = n < 12 ? "AM" : "PM"; return `${n % 12 || 12} ${ap}`; };
+    const to = (n) => ddHour(n);
     return `${to(h)}–${to((h + 1) % 24)}`;
   };
   const cells = sadhanaHeat(all, today, 91);
@@ -10820,8 +10855,8 @@ function openDhyanManual(onSaved, preset) {
     return new Date(baseMs - off * dayMs).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
   };
   const timeLabel = (qh) => {
-    const h = Math.floor(qh / 4), m = (qh % 4) * 15, ap = h < 12 ? "AM" : "PM";
-    return `${h % 12 || 12}:${m < 10 ? "0" + m : m} ${ap}`;
+    const h = Math.floor(qh / 4), m = (qh % 4) * 15;
+    return ddClock(h, m);
   };
   // The instant the sitting began, built in LOCAL time from the chosen day and
   // clock — the record's effective day is then derived from it like any other.
@@ -10972,7 +11007,7 @@ function openReminderEditor(existing, onSave) {
   const HOURS = Array.from({ length: 24 }, (_, i) => i);
   const MINS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
   const LEADS = [5, 10, 15, 20, 30, 45, 60];
-  const hLabel = (h) => `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`;
+  const hLabel = (h) => ddHour(h);
   const two = (n) => (n < 10 ? "0" + n : "" + n);
 
   const ov = el(`
@@ -11019,7 +11054,7 @@ function openReminderEditor(existing, onSave) {
 
 function ddRemindersEl(onChanged) {
   const two = (n) => (n < 10 ? "0" + n : "" + n);
-  const clock = (h, m) => `${h % 12 || 12}:${two(m)} ${h < 12 ? "AM" : "PM"}`;
+  const clock = (h, m) => ddClock(h, m);
   const rs = DHYAN_REMIND.list();
   const wrap = el(`
     <div class="dd-backup dd-rem">
@@ -11111,7 +11146,7 @@ function openAartiReminderEditor(existing, onSave) {
 
   const HOURS = Array.from({ length: 24 }, (_, i) => i);
   const MINS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
-  const hLabel = (h) => `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`;
+  const hLabel = (h) => ddHour(h);
   const two = (n) => (n < 10 ? "0" + n : "" + n);
   // ⚠ One initial per chip, in week order. Two of them are "T" and two are "S";
   // the summary line underneath spells the days out, which is what makes the
@@ -11197,7 +11232,7 @@ function openAartiReminderEditor(existing, onSave) {
 // line of days under each time.
 function aartiRemindersEl(onChanged) {
   const two = (n) => (n < 10 ? "0" + n : "" + n);
-  const clock = (h, m) => `${h % 12 || 12}:${two(m)} ${h < 12 ? "AM" : "PM"}`;
+  const clock = (h, m) => ddClock(h, m);
   const rs = AARTI_REMIND.list();
   const wrap = el(`
     <div class="dd-backup dd-rem">
@@ -11668,12 +11703,24 @@ const DD_REPORT_RANGES = [
   { key: "all",    label: "Everything" },
 ];
 
+// The three day-windows the Reports screen offers. They are NOT in
+// DD_REPORT_RANGES: seven chips in the sheet would not fit, and these only ever
+// arrive from a report page that is already showing that range. The one that
+// arrives is added to the chip row by openDhyanReport.
+const DD_DAY_RANGES = { d7: "7 days", d15: "15 days", d30: "30 days" };
+
 function ddRangeBounds(key, todayKey) {
   const dayMs = 86400000;
   const back = (n) => new Date(Date.parse(todayKey + "T00:00:00Z") - n * dayMs).toISOString().slice(0, 10);
   if (key === "month")   return { from: todayKey.slice(0, 8) + "01", to: todayKey };
   if (key === "quarter") return { from: back(90), to: todayKey };
   if (key === "year")    return { from: todayKey.slice(0, 4) + "-01-01", to: todayKey };
+  // ⚠ back(n - 1), not back(n) — the window INCLUDES today, exactly as
+  // rangeStats() counts it. Off by one here and the picture quietly reports a
+  // different week from the screen it was made from.
+  if (key === "d7")      return { from: back(6),  to: todayKey };
+  if (key === "d15")     return { from: back(14), to: todayKey };
+  if (key === "d30")     return { from: back(29), to: todayKey };
   return { from: "0000-00-00", to: todayKey };
 }
 
@@ -11731,9 +11778,13 @@ function drawDhyanReport(rangeKey) {
 
   const dhyan = inRange.filter((s) => s.kind === "dhyan");
   const japa = inRange.filter((s) => s.kind === "japa");
+  const granth = inRange.filter((s) => s.kind === "granth");
   const totalSec = dhyan.reduce((a, s) => a + (s.actualSec || 0), 0);
   const beads = japa.reduce((a, s) => a + (s.count || 0), 0);
   const daysPractised = new Set(dhyan.map((s) => s.day)).size;
+  // ⚠ Pages READ, derived from the step up in the absolute page — never
+  // `toPage`, which is a bookmark and would report the whole book (§10.9).
+  const pagesRead = granth.reduce((a, s) => a + SADHANA.granthDelta(s), 0);
 
   // ---- ground ----
   const g = ctx.createLinearGradient(0, 0, 0, H);
@@ -11760,11 +11811,16 @@ function drawDhyanReport(rangeKey) {
   ctx.fillText(ddRangeTitle(rangeKey, from, to), W / 2, y);
 
   // ---- the three figures ----
+  // ⚠ DHYAN · MALAS · PAGES, the same three the report screen's headline card
+  // leads with (operator, 2026-09-03). They used to be hours / sittings / days,
+  // so tapping "Make a picture of this report" produced a picture reporting
+  // something other than the report it was made from. Sittings and days were
+  // not dropped — they moved into the P R A C T I C E lines below.
   const hrs = Math.floor(totalSec / 3600), mns = Math.round((totalSec % 3600) / 60);
   const cards = [
-    { big: hrs ? `${hrs}h ${mns}m` : `${mns}m`, small: "IN DHYAN" },
-    { big: String(dhyan.length), small: dhyan.length === 1 ? "SITTING" : "SITTINGS" },
-    { big: String(daysPractised), small: daysPractised === 1 ? "DAY" : "DAYS" },
+    { big: hrs ? `${hrs}h ${mns}m` : `${mns}m`, small: "DHYAN" },
+    { big: String(Math.floor(beads / 108)), small: "MALAS" },
+    { big: String(pagesRead), small: "PAGES" },
   ];
   y += 56;
   const cw = 296, gap = 24, cx0 = (W - (cw * 3 + gap * 2)) / 2, ch = 168;
@@ -11793,9 +11849,15 @@ function drawDhyanReport(rangeKey) {
   // whatever these leave behind. Deciding the grid size first and discovering
   // the lines did not fit is how the drawing ran off the bottom of the canvas —
   // and nothing clips a canvas, so it fails silently.
-  const hourBand = (h) => { if (h < 0) return null; const t = (n) => `${n % 12 || 12} ${n < 12 ? "AM" : "PM"}`; return `${t(h)} – ${t((h + 1) % 24)}`; };
+  const hourBand = (h) => (h < 0 ? null : `${ddHour(h)} – ${ddHour((h + 1) % 24)}`);
   const lines = [];
-  if (beads) lines.push(["Naam reciting", `${Math.floor(beads / 108)} malas`]);
+  // ⚠ Sittings and days lead this list because they LEFT the three figures
+  // above — they are not new here, they moved down. Naam reciting no longer
+  // repeats itself: the malas are one of the three figures now.
+  if (dhyan.length) {
+    lines.push(["Sittings", `${dhyan.length} on ${daysPractised} day${
+      daysPractised === 1 ? "" : "s"}`]);
+  }
   if (life.dhyan.usualHour >= 0) lines.push(["You usually sit at", hourBand(life.dhyan.usualHour)]);
   if (life.dhyan.current) lines.push(["Current streak", `${life.dhyan.current} day${life.dhyan.current === 1 ? "" : "s"}`]);
   if (dhyan.length) lines.push(["Mantra / Maun", `${dhyan.filter((s) => s.mode !== "maun").length} / ${dhyan.filter((s) => s.mode === "maun").length}`]);
@@ -11907,13 +11969,21 @@ async function ddSaveReport(cv, filename) {
   return "downloaded";
 }
 
-function openDhyanReport() {
-  let range = "month";
+// `initial` is the range the picture opens on. The Backup door passes nothing
+// and gets "This month" as it always has; the report page passes its own tab,
+// so "Make a picture of this report" makes a picture of the report you are
+// looking at rather than of some other span.
+function openDhyanReport(initial) {
+  let range = initial && (DD_DAY_RANGES[initial] ||
+    DD_REPORT_RANGES.some((r) => r.key === initial)) ? initial : "month";
+  const chips = DD_DAY_RANGES[range]
+    ? [{ key: range, label: DD_DAY_RANGES[range] }].concat(DD_REPORT_RANGES)
+    : DD_REPORT_RANGES;
   const ov = el(`
     <div class="dd-sheet-ov">
       <div class="dd-sheet dd-rep" role="dialog" aria-label="Make a report">
         <div class="dd-sheet-h">Report</div>
-        <div class="dd-rep-chips">${DD_REPORT_RANGES.map((r) =>
+        <div class="dd-rep-chips">${chips.map((r) =>
           `<button class="dd-rep-chip" data-r="${r.key}">${escapeHtml(r.label)}</button>`).join("")}</div>
         <div class="dd-rep-prev"><canvas></canvas></div>
         <div class="dd-sheet-btns">
@@ -12147,6 +12217,11 @@ async function mountDhyanDiary(node) {
   let aartiTimer = null;       // paints the lamp, and the aarti line on the tile
   let view = "home";           // "home" | "japa" | "aarti" | "entries" | "reports" | "remind"
   let rtab = "d7";             // reports: "d7" | "d15" | "d30" | "progress" | "backup"
+  // Which of the five reports (or the full day list) is open on top of the
+  // report page. null = the report page itself. It deliberately SURVIVES a tab
+  // change — switching to 30 days inside Mantra Dhyan should widen that report,
+  // not throw you back out of it.
+  let rdetail = null;          // null | "guru" | "maun" | "japa" | "granth" | "aarti" | "days"
 
   const two = (n) => (n < 10 ? "0" + n : "" + n);
   function fmtClock(sec) {
@@ -12159,9 +12234,9 @@ async function mountDhyanDiary(node) {
   }
   const timeOf = (iso) => {
     const d = new Date(iso);
-    let h = d.getHours(); const ap = h < 12 ? "AM" : "PM";
+    let h = d.getHours(); const ap = h < 12 ? DD_AM : DD_PM;
     h = h % 12 || 12;
-    return `${h}:${two(d.getMinutes())} ${ap}`;
+    return `${h}${DD_TSEP}${two(d.getMinutes())} ${ap}`;
   };
   // The effective day spelled out. Parsed as UTC noon so the label can never
   // slip a day on a device behind Greenwich.
@@ -12483,25 +12558,295 @@ async function mountDhyanDiary(node) {
 
   // ⚠ Stacked per day, NOT four columns across. Four headers on a 360px screen
   // leave ~70px each and neither the words nor the numbers fit (status §10.3).
-  function daysHtml(n) {
+  //
+  // ⚠ `limit` is 3 on the report page and 0 (everything) on the See-all screen.
+  // The list is by far the longest thing on the page and three days is enough to
+  // show what it IS; the rest is a tap away rather than a scroll past the picture
+  // button. ⚠ NOTHING ELSE IS CAPPED — the five reports list every sitting in the
+  // range. A cap that leaked into them would silently under-report the diary.
+  //
+  // ⚠ A day with nothing says so, once, instead of drawing five grey dashes. The
+  // old row printed every pill whether or not it happened; a quiet week was then
+  // a wall of "—" with the real entries lost inside it.
+  function daysHtml(n, limit) {
     const rows = dayRows(n);
     const today = SADHANA.today();
-    const pill = (ico, val, on) =>
-      `<span class="dd-pill${on ? "" : " nil"}">${ico} ${on ? `<b>${val}</b>` : "—"}</span>`;
-    return `<div class="dd-days">${rows.map((r) => {
+    const shown = limit ? rows.slice(0, limit) : rows;
+    const pill = (ico, val) => `<span class="dd-pill">${ico} <b>${val}</b></span>`;
+    const body = shown.map((r) => {
       const label = r.key === today ? `Today · ${shortDay(r.key)}` : shortDay(r.key);
+      const pills = [];
+      // ⚠ Maun only. The right-hand figure is ALL dhyan, mantra included, so a
+      // guru pill beside it would print the same minutes twice on the one day
+      // in three that has no maun.
+      if (r.maun) pills.push(pill("🤍", fmtMins(r.maun)));
+      if (r.japas) pills.push(pill("📿", String(malasOf(r.beads) || "<1")));
+      if (r.granths) pills.push(pill("📖", `${r.pages}p`));
+      if (r.aartis) pills.push(`<span class="dd-pill">🪔${
+        r.aartis > 1 ? ` <b>${r.aartis}×</b>` : ""}</span>`);
+      const mins = Math.round((r.guru + r.maun) / 60);
       return `
       <div class="dd-day">
-        <div class="dd-day-h">${escapeHtml(label)}</div>
-        <div class="dd-day-l">
-          ${pill("🧘", fmtMins(r.guru), r.guru > 0)}
-          ${pill("🤍", fmtMins(r.maun), r.maun > 0)}
-          ${pill("📿", r.beads ? String(malasOf(r.beads) || "<1") : "?", r.japas > 0)}
-          ${pill("📖", `${r.pages}p`, r.granths > 0)}
-          ${pill("🪔", r.aartis > 1 ? `${r.aartis}×` : "✓", r.aartis > 0)}
+        <div class="dd-day-main">
+          <div class="dd-day-h">${escapeHtml(label)}</div>
+          ${pills.length ? `<div class="dd-day-l">${pills.join("")}</div>`
+            : mins ? "" : `<div class="dd-day-none">nothing recorded</div>`}
+        </div>
+        <div class="dd-day-tot${mins ? "" : " nil"}">
+          <b>${mins || "—"}</b>${mins ? "<i>min</i>" : ""}<span>Dhyan</span>
         </div>
       </div>`;
-    }).join("")}</div>`;
+    }).join("");
+    return `<div class="dd-days">${body}</div>${
+      limit && rows.length > limit
+        ? `<button class="dd-rmore" data-rgo="days">See all ${n} days</button>` : ""}`;
+  }
+
+  // ---- one range, every number the report needs ----------------------------
+  // ⚠ ONE pass, ONE definition. Every figure on the report page and inside the
+  // five sub-reports is read from here, so the headline card, a box and that
+  // box's own table can never disagree about what happened in the range.
+  function rangeStats(n) {
+    const today = SADHANA.today();
+    const base = Date.parse(today + "T00:00:00Z");
+    const days = [];
+    for (let i = n - 1; i >= 0; i--) {
+      days.push(new Date(base - i * 86400000).toISOString().slice(0, 10));
+    }
+    const inRange = new Set(days);
+    const mine = SADHANA.all().filter((s) => inRange.has(s.day));
+    const sum = (a, f) => a.reduce((t, s) => t + (f(s) || 0), 0);
+
+    const dh = mine.filter((s) => s.kind === "dhyan");
+    const guru = dh.filter(isGuru), maun = dh.filter(isMaun);
+    const japa = mine.filter((s) => s.kind === "japa");
+    const granth = mine.filter((s) => s.kind === "granth");
+    const aarti = mine.filter((s) => s.kind === "aarti");
+
+    // Local time on purpose: "I sit at five" is a fact about their morning.
+    const hours = new Array(24).fill(0);
+    dh.forEach((s) => { hours[new Date(s.startedAt).getHours()]++; });
+    let usualHour = -1, best = 0;
+    hours.forEach((c, h) => { if (c > best) { best = c; usualHour = h; } });
+
+    const beads = sum(japa, (s) => s.count);
+    const newest = (a) => a.slice().sort((x, y) => (x.startedAt < y.startedAt ? 1 : -1))[0];
+    return {
+      n, days, from: days[0], to: days[days.length - 1],
+      dhyanSec: sum(dh, (s) => s.actualSec), sittings: dh.length,
+      satDays: new Set(dh.map((s) => s.day)).size,
+      avgSec: dh.length ? Math.round(sum(dh, (s) => s.actualSec) / dh.length) : 0,
+      guru, maun, japa, granth, aarti,
+      guruSec: sum(guru, (s) => s.actualSec), maunSec: sum(maun, (s) => s.actualSec),
+      beads, malas: malasOf(beads),
+      pages: sum(granth, (s) => SADHANA.granthDelta(s)),
+      toPage: granth.length ? (newest(granth).toPage || 0) : 0,
+      aartiDays: new Set(aarti.map((s) => s.day)).size,
+      lastAarti: newest(aarti) || null,
+      usualHour,
+    };
+  }
+
+  const rangeOf = (k) => (k === "d7" ? 7 : k === "d15" ? 15 : 30);
+  // "27 August — 2 September". The range spelled out, so the numbers under it
+  // are never ambiguous about which days they cover.
+  const spanLabel = (st) => {
+    const nice = (d) => new Date(d + "T12:00:00Z").toLocaleDateString(undefined,
+      { day: "numeric", month: "long" });
+    return `${nice(st.from)} — ${nice(st.to)}`;
+  };
+  const slashDay = (day) => {
+    const p = day.split("-");
+    return `${p[2]}/${p[1]}/${p[0].slice(2)}`;
+  };
+  const weekdayOf = (day) => new Date(day + "T12:00:00Z").toLocaleDateString(undefined,
+    { weekday: "long" });
+  const endOf = (s) =>
+    new Date(Date.parse(s.startedAt) + (s.actualSec || 0) * 1000).toISOString();
+
+  // ---- ① the headline card -------------------------------------------------
+  function headHtml(st) {
+    const line = st.sittings
+      ? `Sat on <b>${st.satDays} of ${st.n} days</b>, ${st.sittings} sitting${
+          st.sittings === 1 ? "" : "s"}, ${fmtMins(st.avgSec)} on average`
+      : `No sitting recorded in these ${st.n} days.`;
+    // ⚠ The one line on the page that describes the PERSON rather than counting
+    // a total, and the only survivor of the old "This week" block — everything
+    // else it held is now said by the five boxes. It is drawn from mantra and
+    // maun together, which is why it belongs here and not in either report.
+    const pattern = st.usualHour >= 0
+      ? `<div class="dd-rhead-p">you usually sit at <b>${
+          escapeHtml(ddHourSpan(st.usualHour))}</b></div>` : "";
+    return `
+      <div class="dd-rhead">
+        <div class="dd-rhead-r">${escapeHtml(spanLabel(st))}</div>
+        <div class="dd-rhead-f">
+          <div><b>${st.dhyanSec ? fmtMins(st.dhyanSec) : "—"}</b><span>Dhyan</span></div>
+          <div><b>${st.malas || "—"}</b><span>Malas</span></div>
+          <div><b>${st.pages || "—"}</b><span>Pages</span></div>
+        </div>
+        <div class="dd-rhead-n">${line}</div>${pattern}
+      </div>`;
+  }
+
+  // ---- ② the five reports --------------------------------------------------
+  // ⚠ The four grounds are the SAME four the diary's front page gives these
+  // practices (.dd-do-*), so a box and the tile that records it are visibly the
+  // same thing. Change one and change the other.
+  function cardsHtml(st) {
+    const sits = (a) => `${a.length} sitting${a.length === 1 ? "" : "s"}`;
+    const cards = [
+      ["guru", "guru", "Mantra Dhyan", st.guruSec ? fmtMins(st.guruSec) : "—",
+        st.guruSec ? sits(st.guru) : "nothing recorded"],
+      ["maun", "maun", "Maun Dhyan", st.maunSec ? fmtMins(st.maunSec) : "—",
+        st.maunSec ? sits(st.maun) : "nothing recorded"],
+      ["japa", "japa", "Naam Jaap", st.malas ? String(st.malas) : "—",
+        st.malas ? `malas · ${sits(st.japa)}` : "nothing recorded"],
+      ["granth", "granth", "Granth Pathan", st.pages ? String(st.pages) : "—",
+        st.pages ? `pages · now on p. ${st.toPage}` : "nothing recorded"],
+    ];
+    // ⚠ The aarti is the FIFTH box and it spans the row, because it is not the
+    // same kind of thing as the four above it. Those are practices done for a
+    // length of time and each shows an amount; the aarti is one song of one
+    // length, sung on a day or not. Its honest unit is DAYS, and "4 days" in a
+    // row beside "2h 55m" invites a comparison that means nothing.
+    const last = st.lastAarti
+      ? `last sung ${st.lastAarti.day === SADHANA.today() ? "today" : shortDay(st.lastAarti.day)}, ${
+          timeOf(st.lastAarti.startedAt)}`
+      : `not sung in these ${st.n} days`;
+    return `
+      <div class="dd-sect-label">Open a report</div>
+      <div class="dd-rgrid">
+        ${cards.map(([k, tone, title, big, sub]) => `
+          <button class="dd-rcard dd-rc-${tone}${big === "—" ? " empty" : ""}" data-rgo="${k}">
+            <div class="dd-rcard-k">${escapeHtml(title)}</div>
+            <div class="dd-rcard-b">${escapeHtml(big)}</div>
+            <div class="dd-rcard-s">${escapeHtml(sub)}</div>
+            <div class="dd-rcard-go">›</div>
+          </button>`).join("")}
+        <button class="dd-rcard dd-rc-aarti${st.aartiDays ? "" : " empty"}" data-rgo="aarti">
+          <div class="dd-rcard-lamp" aria-hidden="true">🪔</div>
+          <div class="dd-rcard-k">Aarti</div>
+          <div class="dd-rcard-b">${st.aartiDays || "—"}</div>
+          <div class="dd-rcard-s">${st.aartiDays ? "days the lamp was lit" : "not sung"}</div>
+          <div class="dd-rcard-last">${escapeHtml(last)}</div>
+          <div class="dd-rcard-go">›</div>
+        </button>
+      </div>`;
+  }
+
+  // ---- ④ the picture, and the line that closes the page --------------------
+  // ⚠ The picture button lives HERE now, at the foot of the report it is a
+  // picture of, and it follows the range tab. Its twin is still on the Backup
+  // tab: that one is part of "keep a copy of your diary", this one is "send
+  // this". Same drawing, two doors, deliberately.
+  const tailHtml = () => `
+    <button class="dd-rpic" data-report>
+      <span class="dd-rpic-t">Make a picture of this report</span>
+      <span class="dd-rpic-s">an image you can keep or send</span>
+    </button>
+    <div class="dd-foot">Kept privately on this device.</div>`;
+
+  // ---- the five sub-reports ------------------------------------------------
+  // ⚠ Every sitting in the range, never a preview — see daysHtml's note.
+  function detailHtml(kind, st) {
+    const T = { guru: "Mantra Dhyan", maun: "Maun Dhyan", japa: "Naam Jaap",
+                granth: "Granth Pathan", aarti: "Aarti", days: "Day by day" };
+    if (kind === "days") {
+      return `
+        <div class="dd-rt-note">${escapeHtml(spanLabel(st))}</div>
+        ${daysHtml(st.n, 0)}${tailHtml()}`;
+    }
+
+    const newestFirst = (a) =>
+      a.slice().sort((x, y) => (x.startedAt < y.startedAt ? 1 : -1));
+    const cell = (c, v) => `<td class="${c}">${escapeHtml(v)}</td>`;
+    let head, rows, sumS, sumB, note, longest = null;
+
+    if (kind === "guru" || kind === "maun") {
+      const list = newestFirst(kind === "guru" ? st.guru : st.maun);
+      // ⚠ The longest OF THIS KIND. The longest maun is not the longest mantra,
+      // and one report must never quote the other's number.
+      longest = list.reduce((b, s) => (!b || s.actualSec > b.actualSec ? s : b), null);
+      head = `<tr><th>Date</th><th>From</th><th>To</th><th class="r">Minutes</th></tr>`;
+      rows = list.map((s) => `<tr>${cell("d", slashDay(s.day))}${
+        cell("t", timeOf(s.startedAt))}${cell("t", timeOf(endOf(s)))}<td class="n r">${
+        Math.round((s.actualSec || 0) / 60)}</td></tr>`).join("");
+      sumS = `${list.length} sitting${list.length === 1 ? "" : "s"}`;
+      sumB = fmtMins(kind === "guru" ? st.guruSec : st.maunSec);
+      note = kind === "guru"
+        ? "Every dhyan you sat with the Guru Mantra, newest first."
+        : "Every dhyan you sat in the Maun state, newest first.";
+
+    } else if (kind === "japa") {
+      const list = newestFirst(st.japa);
+      head = `<tr><th>Date</th><th>From</th><th>To</th><th class="r">Minutes</th><th class="r">Malas</th></tr>`;
+      rows = list.map((s) => {
+        // ⚠ 0 means "not recorded", not "zero minutes" — a japa added by hand
+        // without a stated length. Its malas still count; its clock is blank.
+        const timed = (s.actualSec || 0) > 0;
+        return `<tr>${cell("d", slashDay(s.day))}${cell("t", timeOf(s.startedAt))}${
+          timed ? cell("t", timeOf(endOf(s))) : `<td class="t"><i>not timed</i></td>`
+        }<td class="n r">${timed ? Math.round(s.actualSec / 60) : "—"}</td><td class="n r">${
+          s.count == null ? "—" : malasOf(s.count)}</td></tr>`;
+      }).join("");
+      sumS = `${list.length} sitting${list.length === 1 ? "" : "s"}`;
+      sumB = `${st.malas} mala${st.malas === 1 ? "" : "s"}`;
+      note = "A sitting added by hand may have no time recorded — the malas are still counted.";
+
+    } else if (kind === "granth") {
+      const list = newestFirst(st.granth);
+      // ⚠ NO from/to/minutes here, and that is not an omission. A granth entry
+      // records the PAGE you reached and carries actualSec 0 — there is no
+      // timer anywhere in this app for it — so those three columns would print
+      // an identical clock and a flat 0 on every row for ever.
+      head = `<tr><th>Date</th><th>Time</th><th class="r">Pages</th><th class="r">Reached</th></tr>`;
+      rows = list.map((s) => `<tr>${cell("d", slashDay(s.day))}${
+        cell("t", timeOf(s.startedAt))}<td class="n r">${SADHANA.granthDelta(s)}</td>${
+        cell("t r", `p. ${s.toPage || 0}`)}</tr>`).join("");
+      sumS = `${list.length} reading${list.length === 1 ? "" : "s"}`;
+      sumB = `${st.pages} page${st.pages === 1 ? "" : "s"}`;
+      note = "Granth Pathan records the page you reached, not a length of time — so this "
+           + "report counts pages instead of minutes.";
+
+    } else {
+      const list = newestFirst(st.aarti);
+      head = `<tr><th>Date</th><th>Day</th><th class="r">Time</th></tr>`;
+      rows = list.map((s) => `<tr>${cell("d", slashDay(s.day))}${
+        cell("t", weekdayOf(s.day))}<td class="n r">${escapeHtml(timeOf(s.startedAt))}</td></tr>`).join("");
+      sumS = `${list.length} time${list.length === 1 ? "" : "s"} in all`;
+      sumB = `${st.aartiDays} day${st.aartiDays === 1 ? "" : "s"}`;
+      // ⚠ No length column, deliberately. The stored seconds are the AARTI'S
+      // length, never how long anyone listened (see AARTI_AUDIO.record), so the
+      // column would print the same number on every row.
+      note = "Every time the lamp was lit, newest first. A day it was sung twice has two "
+           + `rows. There is no length column — the aarti has one length, ${
+             list.length ? fmtClock(Math.round(list[0].actualSec || 0)) : "4:50"}, every time.`;
+    }
+
+    // ⚠ Only ABOVE 30 minutes, and 30 itself does NOT count — thirty minutes is
+    // a normal sitting (operator, 2026-09-03). Do not "correct" the > to a >=;
+    // a longest of 15 minutes is the least short of a quiet week, and printing
+    // it as an achievement would be the diary flattering the user.
+    const longHtml = longest && longest.actualSec > DD_LONG_SEC ? `
+      <div class="dd-rlong">
+        <div class="dd-rlong-k">Longest sitting</div>
+        <div class="dd-rlong-d">${escapeHtml(slashDay(longest.day))} · ${
+          escapeHtml(weekdayOf(longest.day))}</div>
+        <div class="dd-rlong-r">
+          <span>${escapeHtml(timeOf(longest.startedAt))} → ${escapeHtml(timeOf(endOf(longest)))}</span>
+          <b>${Math.round(longest.actualSec / 60)} min</b>
+        </div>
+      </div>` : "";
+
+    return `
+      <div class="dd-rt-note">${escapeHtml(spanLabel(st))} · ${escapeHtml(note)}</div>
+      ${rows ? `
+        <div class="dd-rt-sum"><span>${escapeHtml(sumS)}</span><b>${escapeHtml(sumB)}</b></div>
+        <div class="dd-rt-scroll"><table class="dd-rt"><thead>${head}</thead><tbody>${rows}</tbody></table></div>
+        ${longHtml}`
+      : `<div class="dd-rt-empty">Nothing recorded in these ${st.n} days.<br>Try a longer range.</div>`}
+      <div class="dd-foot">Kept privately on this device.</div>`;
   }
 
   function backupHtml() {
@@ -12736,9 +13081,20 @@ async function mountDhyanDiary(node) {
       const backupBtn = `<button class="dd-rbackup${rtab === "backup" ? " on" : ""}${
         due ? " due" : ""}" data-rtab="backup" aria-label="Backup${
         due ? " — no copy kept recently" : ""}">Backup</button>`;
+      // ⚠ A sub-report keeps the range tabs and DROPS the Backup button: it is
+      // a report of these days, and the tabs are how you change which days.
+      // Its ‹ steps back to Reports, not out of the diary — see _ddBack.
+      const titles = { guru: "Mantra Dhyan", maun: "Maun Dhyan", japa: "Naam Jaap",
+                       granth: "Granth Pathan", aarti: "Aarti", days: "Day by day" };
+      const inDetail = !!rdetail;
       node.replaceChildren(el(`
         <div class="dd-wrap">
-          ${backHtml("Reports", backupBtn)}
+          ${inDetail
+            ? `<div class="dd-sub">
+                 <button class="dd-back" data-rback aria-label="Back to Reports">‹</button>
+                 <div class="dd-sub-t">${escapeHtml(titles[rdetail])}</div>
+               </div>`
+            : backHtml("Reports", backupBtn)}
           <div class="dd-rtabs" role="tablist">
             ${tabs.map(([k, t]) =>
               `<button class="dd-rtab${rtab === k ? " on" : ""}" data-rtab="${k}" role="tab">${t}</button>`).join("")}
@@ -12748,7 +13104,13 @@ async function mountDhyanDiary(node) {
       const body = node.querySelector(".dd-rbody");
       if (rtab === "progress")     body.replaceChildren(dhyanProgressEl(fmtMins, dayLabel));
       else if (rtab === "backup")  body.innerHTML = backupHtml();
-      else                         body.innerHTML = daysHtml(rtab === "d7" ? 7 : rtab === "d15" ? 15 : 30);
+      else {
+        const st = rangeStats(rangeOf(rtab));
+        body.innerHTML = inDetail
+          ? detailHtml(rdetail, st)
+          : headHtml(st) + cardsHtml(st) + `<div class="dd-sect-label">Day by day</div>`
+            + daysHtml(st.n, 3) + tailHtml();
+      }
       wire(); return;
     }
 
@@ -12886,7 +13248,11 @@ async function mountDhyanDiary(node) {
     }, 1000);
   }
 
-  const goTo = (v) => { cancelAartiCount(); view = v; hapticTickHook(); render(); };
+  // ⚠ Leaving a page closes any sub-report open on it. Without this, opening
+  // Mantra Dhyan, stepping back to the main menu and tapping Reports again
+  // lands you inside Mantra Dhyan rather than on the report page — a door that
+  // remembers where you last went is not what anyone expects of a menu.
+  const goTo = (v) => { cancelAartiCount(); view = v; rdetail = null; hapticTickHook(); render(); };
 
   function wire() {
     const home = node.querySelector("[data-home]");
@@ -12897,8 +13263,25 @@ async function mountDhyanDiary(node) {
 
     node.querySelectorAll("[data-rtab]").forEach((b) => b.addEventListener("click", () => {
       if (rtab === b.dataset.rtab) return;
-      rtab = b.dataset.rtab; hapticTickHook(); render();
+      // ⚠ Progress and Backup are not reports of a range, so a sub-report open
+      // over them has nothing to widen — it is closed. The three day ranges
+      // keep it open and simply re-ask for the wider window.
+      const k = b.dataset.rtab;
+      if (k === "progress" || k === "backup") rdetail = null;
+      rtab = k; hapticTickHook(); render();
     }));
+
+    // Opening one of the five reports, or the full day-by-day list.
+    node.querySelectorAll("[data-rgo]").forEach((b) => b.addEventListener("click", () => {
+      rdetail = b.dataset.rgo; hapticTickHook(); render();
+      // A sub-report is a new page, so it starts at ITS top rather than at the
+      // offset the report page happened to be scrolled to.
+      try { window.scrollTo({ top: 0, behavior: "auto" }); } catch (_) {}
+    }));
+    const rback = node.querySelector("[data-rback]");
+    if (rback) rback.addEventListener("click", () => {
+      rdetail = null; hapticTickHook(); render();
+    });
 
     // Both dhyan tiles open the SAME wheel; only the mode differs. Japa needs
     // no duration and no dhun, so it starts straight away (plan §1).
@@ -13022,7 +13405,8 @@ async function mountDhyanDiary(node) {
     }
 
     const rp = node.querySelector("[data-report]");
-    if (rp) rp.addEventListener("click", () => openDhyanReport());
+    if (rp) rp.addEventListener("click", () =>
+      openDhyanReport(DD_DAY_RANGES[rtab] ? rtab : null));
     const ex = node.querySelector("[data-export]");
     if (ex) ex.addEventListener("click", () => dhyanExport().then(render));
     const im = node.querySelector("[data-import]");
@@ -13116,6 +13500,11 @@ async function mountDhyanDiary(node) {
       if (!closeAartiAsk()) openAartiAsk();
       return true;
     }
+    // ⚠ A sub-report is a rung of its own, above Reports. Without this the
+    // Android back button walks straight from Mantra Dhyan to the diary's main
+    // menu, skipping the page it was opened from — the same fault the ladder
+    // was written to fix for Reports itself.
+    if (view === "reports" && rdetail) { rdetail = null; render(); return true; }
     if (view === "home") return false;
     goTo("home");
     return true;

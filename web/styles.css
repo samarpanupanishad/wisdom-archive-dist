@@ -4690,20 +4690,215 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
   border: 1px solid var(--border); background: var(--surface); color: var(--muted);
 }
 .dd-rtab.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
-/* ⚠ One row PER DAY, figures stacked under the date — not four columns
+/* ==========================================================================
+   THE REPORT PAGE (2026-09-03) — headline card, five reports, day by day,
+   the picture. The old page was the day list alone.
+
+   Order is the operator's and is fixed: ① the card ② the five boxes
+   ③ three days + "See all N days" ④ the picture, then one closing line.
+   ⚠ There is no "This week" strip between ② and ③ and there must not be one
+   again: four of its six lines were said over by the boxes, its square strip
+   is the Progress tab's heat grid at a shorter span, and the two lines worth
+   keeping moved — the usual hour into ①, the longest sitting into the two
+   dhyan reports (operator, 2026-09-03).
+   ========================================================================== */
+
+/* ---- ① the headline card. Same peach as the diary's own front page, so the
+   two read as one family. ---- */
+.dd-rhead {
+  background: var(--accent-soft); border: 1px solid var(--border-soft);
+  border-radius: 18px; padding: 15px 16px 13px; text-align: center; margin-top: 14px;
+}
+.dd-rhead-r { font-size: 13px; color: var(--accent); font-weight: 600; }
+.dd-rhead-f { display: flex; justify-content: space-around; margin-top: 11px; }
+.dd-rhead-f > div { display: flex; flex-direction: column; gap: 2px; min-width: 72px; }
+.dd-rhead-f b {
+  font-size: 22px; font-weight: 650; color: var(--text); line-height: 1.1;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+.dd-rhead-f span {
+  font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em;
+}
+.dd-rhead-n {
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid rgba(217,102,42,.19);
+  font-size: 12px; color: var(--muted); line-height: 1.45;
+}
+.dd-rhead-n b { color: var(--text); font-weight: 650; }
+/* The usual hour. Quieter than the line above it — the diary noticing
+   something, not reporting a total. */
+.dd-rhead-p { margin-top: 5px; font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+/* nowrap so a value never breaks across lines — "5–6" on one and "am" on the next. */
+.dd-rhead-p b { color: var(--accent); font-weight: 650; white-space: nowrap; }
+
+/* ---- ② the five reports ---- */
+.dd-rgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.dd-rcard {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  position: relative; text-align: left;
+  border: 1px solid var(--border); border-radius: 14px;
+  padding: 13px 13px 12px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 1px;
+  transition: transform var(--dur) var(--ease);
+}
+.dd-rcard:active { transform: scale(.985); box-shadow: none; }
+.dd-rcard-k {
+  font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--accent); font-weight: 700; margin-bottom: 5px;
+}
+.dd-rcard-b {
+  font-size: 21px; font-weight: 650; color: var(--text); line-height: 1.1;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+/* ⚠ Clear of the chevron, which is positioned over this line's right end.
+   Without it "now on p. 312" runs under the ›. */
+.dd-rcard-s { font-size: 11px; color: var(--muted); line-height: 1.35; padding-right: 15px; }
+.dd-rcard-go {
+  position: absolute; right: 11px; bottom: 10px;
+  font-size: 13px; color: var(--muted); line-height: 1; opacity: .5;
+}
+.dd-rcard.empty { opacity: .6; }
+.dd-rcard.empty .dd-rcard-b { color: var(--muted); }
+/* ⚠ The SAME four grounds the diary's front page gives these practices
+   (.dd-tile-do.dd-do-*), so a report and the tile that records it are visibly
+   the same thing. Change one and change the other. */
+.dd-rcard.dd-rc-guru   { background: #fbecd0; border-color: #f2dcb4; }
+.dd-rcard.dd-rc-maun   { background: #f3eae0; border-color: #e6d8c6; }
+.dd-rcard.dd-rc-japa   { background: #e9dffa; border-color: #d5c4ee; }
+.dd-rcard.dd-rc-granth { background: #ddf0e9; border-color: #c2e2d6; }
+/* ⚠ The fifth box spans the row on purpose. The four above it are practices
+   done for a length of time and each shows an amount; the aarti is one song of
+   one length, sung on a day or not, and its honest unit is DAYS. "4 days" in a
+   row beside "2h 55m" invites a comparison that means nothing. The lamp takes
+   its own column and spans every text row — the shape .dd-tile-aarti already
+   uses on the front page. */
+.dd-rcard.dd-rc-aarti {
+  grid-column: 1 / -1;
+  display: grid; grid-template-columns: auto 1fr; column-gap: 14px;
+  align-items: center; padding-right: 26px;
+  background: linear-gradient(180deg, #fffdf9, #fff7ec); border-color: #f0dcc4;
+}
+.dd-rcard-lamp {
+  grid-row: 1 / 5; font-size: 30px; line-height: 1;
+  width: 46px; height: 46px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; background: #fdf0dd;
+}
+/* The wide card already reserves 26px for its chevron, so its lines need none. */
+.dd-rc-aarti .dd-rcard-k { margin-bottom: 2px; }
+.dd-rc-aarti .dd-rcard-s { padding-right: 0; }
+.dd-rcard-last {
+  font-size: 11px; color: var(--muted); line-height: 1.35;
+  margin-top: 3px; padding-top: 5px; border-top: 1px solid #f4e6d3;
+}
+
+/* ---- ③ one row PER DAY, figures stacked under the date — not four columns
    across. Four headers on a 360px screen leave ~70px each and neither the
-   words nor the numbers fit. A day with nothing stays visible and greyed. */
-.dd-days { margin-top: 4px; }
-.dd-day { border-top: 1px solid var(--border); padding: 9px 2px 10px; }
+   words nor the numbers fit. ⚠ A day with nothing now SAYS so, once, instead
+   of drawing five grey dashes (the old .dd-pill.nil, gone). ---- */
+.dd-days { margin-top: 2px; }
+.dd-day {
+  border-top: 1px solid var(--border); padding: 10px 2px 11px;
+  display: flex; gap: 10px; align-items: flex-start;
+}
+.dd-day-main { flex: 1; min-width: 0; }
 .dd-day-h { font-size: 11.5px; font-weight: 700; color: var(--accent); }
-.dd-day-l { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.dd-day-l { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.dd-day-none { font-size: 11.5px; color: var(--muted); margin-top: 6px; font-style: italic; }
+.dd-day-tot { flex: none; text-align: right; padding-top: 1px; }
+.dd-day-tot b {
+  font-size: 19px; font-weight: 700; color: var(--text); line-height: 1;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+.dd-day-tot i { font-style: normal; font-size: 11px; color: var(--muted); margin-left: 2px; }
+.dd-day-tot span {
+  display: block; font-size: 9.5px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted); margin-top: 2px;
+}
+.dd-day-tot.nil b { color: var(--muted); font-weight: 600; }
 .dd-pill {
   font-size: 11px; padding: 4px 8px; border-radius: 8px;
   background: var(--surface); border: 1px solid var(--border-soft); color: var(--muted);
   font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
 }
 .dd-pill b { color: var(--text); font-weight: 700; }
-.dd-pill.nil { opacity: .42; }
+.dd-rmore {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  display: block; width: 100%; margin-top: 2px; padding: 13px 8px;
+  border: 0; border-top: 1px solid var(--border); background: none;
+  color: var(--accent); font-size: 13px; font-weight: 650; text-align: center;
+}
+
+/* ---- ④ the picture. Pink, like the diary's other "do a thing" tile, so it
+   reads as an action and not as one more number to look at. ---- */
+.dd-rpic {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  display: flex; flex-direction: column; gap: 3px; text-align: left;
+  width: 100%; margin-top: 18px; padding: 16px 18px;
+  border: 1px solid #f2cddb; border-radius: 16px; background: #fdeef2;
+  transition: transform var(--dur) var(--ease);
+}
+.dd-rpic:active { transform: scale(.99); }
+.dd-rpic-t { font-size: 15px; font-weight: 700; color: var(--accent); }
+.dd-rpic-s { font-size: 11.5px; color: var(--muted); }
+
+/* ---- inside one of the five reports ---- */
+.dd-rt-note { margin-top: 14px; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.dd-rt-sum {
+  margin-top: 12px; background: var(--accent-soft); border-radius: 13px;
+  padding: 11px 14px; display: flex; justify-content: space-between; align-items: baseline;
+}
+.dd-rt-sum b {
+  font-size: 18px; font-weight: 650;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+.dd-rt-sum span { font-size: 11.5px; color: var(--accent); font-weight: 600; }
+/* ⚠ The table scrolls inside ITS OWN box. Naam Jaap has five columns and on a
+   360px screen they can outrun the width; the page body must never scroll
+   sideways to reach them. */
+.dd-rt-scroll { overflow-x: auto; margin-top: 14px; }
+table.dd-rt {
+  width: 100%; border-collapse: collapse; font-size: 12.5px;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+.dd-rt th {
+  text-align: left; font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700; padding: 0 6px 7px 0; white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+.dd-rt th.r, .dd-rt td.r { text-align: right; padding-right: 0; }
+.dd-rt td {
+  padding: 9px 6px 9px 0; border-bottom: 1px solid var(--border-soft); white-space: nowrap;
+}
+.dd-rt td.d { color: var(--text); font-weight: 600; }
+.dd-rt td.t { color: var(--muted); }
+.dd-rt td.n { font-weight: 700; }
+.dd-rt td i { font-size: 11px; }
+.dd-rt tr:last-child td { border-bottom: 0; }
+.dd-rt-empty {
+  margin-top: 20px; padding: 26px 16px; text-align: center;
+  background: var(--surface); border: 1px dashed var(--border); border-radius: 14px;
+  color: var(--muted); font-size: 12.5px; line-height: 1.6;
+}
+/* ⚠ Shown only ABOVE 30 minutes, and never at exactly 30 — thirty is a normal
+   sitting. Below the mark this block is simply absent and nothing explains it;
+   that is the rule working, not a fault (operator, 2026-09-03). */
+.dd-rlong {
+  margin-top: 18px; padding: 13px 15px 14px;
+  background: var(--accent-soft); border-radius: 14px;
+}
+.dd-rlong-k {
+  font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--accent); font-weight: 700;
+}
+.dd-rlong-d {
+  margin-top: 5px; font-size: 13px; font-weight: 650; color: var(--text);
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+.dd-rlong-r {
+  margin-top: 3px; display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; font-size: 12.5px; color: var(--muted);
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+}
+.dd-rlong-r b { font-size: 17px; font-weight: 700; color: var(--text); white-space: nowrap; }
 .dd-backup-when { margin-top: 12px; font-size: 11.5px; font-weight: 650; color: var(--muted); text-align: center; }
 .dd-backup-when.warn { color: var(--accent); }
 
