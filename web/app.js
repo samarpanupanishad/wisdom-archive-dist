@@ -403,8 +403,8 @@ async function signOutToGate() {
   try { ADMINMSG.forget(); } catch {}
   // Which threads he had revealed himself in is session state belonging to the
   // account that just left. The PREFERENCE itself stays — it is a device
-  // setting, and it is inert for anyone who is not the sutradhar.
-  _presenceRevealed.clear();
+  // setting, and it is inert for anyone who is not an admin.
+  leaveChatPresence();
   refreshModNav();
   toast("Signed out");
   AUTH_GATE.reopen();
@@ -2456,40 +2456,62 @@ function chatUpdateLive(msgsEl, m, ctx) {
   node.replaceWith(buildChatMsgEl(m, ctx, prev));
 }
 
-// ---- "Hide me from the online list" — SUTRADHAR ONLY ----------------------
+// ---- "Hide me from the online list" — MODERATORS + SUTRADHAR ------------
 // A device preference, not an account one: presence means "this thread is open
-// on this phone", so the switch that governs it belongs to the phone. No column,
-// no migration, ships OTA.
+// on this phone", so the control that governs it belongs to the phone. No
+// column, no migration, ships OTA.
 //
-// ⚠ Sutradhar only, and the switch is not BUILT for anyone else rather than
-// built-and-hidden. Nothing here is a security boundary — presence has no RLS
-// and never could — which is exactly why the mechanism is "don't announce the
-// name at all" (see subscribeChat) and not a flag filtered on the client.
+// ⚠ ON BY DEFAULT (operator, 2026-09-02). An admin is invisible from first
+// launch without touching anything; members see only other members. The key
+// stores "0" for an explicit opt-OUT, so an admin who chose to be visible stays
+// visible and only untouched devices take the default — which is why this reads
+// `!== "0"` and NOT `=== "1"`.
+//
+// ⚠ Not a security boundary and never could be: presence is Realtime, which has
+// no RLS, and presenceState() is readable by anyone holding the anon key that
+// ships in wa-supabase.js. That is exactly why the mechanism is "never announce
+// the name" (see subscribeChat) and not a flag filtered on the client.
 const PRESENCE_HIDE_KEY = "wa:presence:hidden";
 function presenceHidePref() {
-  try { return localStorage.getItem(PRESENCE_HIDE_KEY) === "1"; } catch { return false; }
+  try { return localStorage.getItem(PRESENCE_HIDE_KEY) !== "0"; } catch { return true; }
 }
-// Threads he has already given himself away in, by wid. Module scope, NOT on
-// ctx, and deliberately: ctx dies on every re-render, so the ↻ refresh button
-// would have put him back in hiding mid-conversation — dropping him off the
-// list while his own message sat above it. Survives a refresh; does not survive
-// leaving the thread, a relaunch, or sign-out.
+// Threads he has POSTED in, by wid. Module scope, NOT on ctx, and deliberately:
+// ctx dies on every re-render, so the ↻ refresh button would otherwise have put
+// him back into hiding mid-conversation — dropping him off the list while his
+// own message sat above it. Survives a refresh; cleared by leaveChatPresence()
+// when he actually leaves the satsang, and on sign-out.
 const _presenceRevealed = new Set();
 function presenceHiddenFor(wid) {
-  return isSutradhar() && presenceHidePref() && !_presenceRevealed.has(wid);
+  // isModerator() is true for moderator AND sutradhar — both get this.
+  return isModerator() && presenceHidePref() && !_presenceRevealed.has(wid);
 }
-// He touched the composer, so he is about to speak — being listed is now the
-// honest state. ⚠ track() goes FIRST so he appears in the list a beat AHEAD of
-// "…is typing", never behind it; the whole point is that the typing line must
-// not be what announces him. Idempotent: the typing path calls this on every
-// throttled ping, and posting a message calls it too (a media-only message
-// reaches Send without a single keystroke).
+// ⚠ ONLY A SENT MESSAGE REVEALS HIM (operator, 2026-09-02). Typing does NOT,
+// and that reversed an earlier decision: a key pressed by accident while reading
+// must not out him. What makes it safe is that the typing PING is suppressed
+// while hidden too (see the composer's input handler) — revealing on send while
+// still broadcasting "…is typing" would have announced him BY NAME, a louder
+// leak than the list ever was.
+//
+// Once this has run, ctx.presenceHidden is false and the typing indicator works
+// normally again: his name is already on his message and in the list, so there
+// is nothing left for the suppression to protect, and a member waiting on his
+// reply should be able to see that one is coming.
 function revealPresence(ctx) {
   if (!ctx || !ctx.presenceHidden) return;
   ctx.presenceHidden = false;
   _presenceRevealed.add(ctx.wid);
   if (_chatStream && _chatStream.reveal) _chatStream.reveal(ctx.me);
   if (ctx.paintOnline) ctx.paintOnline();
+}
+// Leaving the satsang puts him back into hiding — "visible until he himself
+// exits the chat" (operator, 2026-09-02).
+//
+// ⚠ Called from the two places that mean LEAVING (the router, and the desktop
+// panel closing), NEVER from renderWisdomChat/openChatStream, which also run on
+// a ↻ refresh. That split is the whole reason the reveal is a module-scope Set
+// rather than a ctx flag; collapsing the two re-hides him mid-conversation.
+function leaveChatPresence() {
+  _presenceRevealed.clear();
 }
 
 // The Settings card for the switch above. ⚠ Mounted from renderInfo("settings"),
@@ -2503,35 +2525,56 @@ function revealPresence(ctx) {
 // hidden. Nothing here is a security boundary — presence has no RLS and never
 // could — which is why the mechanism is "never announce the name" (see
 // subscribeChat) rather than a flag filtered on the client.
-function mountPresenceSwitch(prose) {
-  if (!prose || !isSutradhar() || prose.querySelector("#wa-presence-box")) return;
-  const box = el(`<div class="sync-box" id="wa-presence-box">
-    <h3 style="margin-top:0">Samuhik Satsang</h3>
-    <label class="m-switchrow">Hide me from the online list
-      <span class="m-switch"><input type="checkbox" id="wa-presence-hide"><i></i></span></label>
-    <div class="m-hint" id="wa-presence-hint"></div>
-  </div>`);
-  prose.appendChild(box);
-  const sw = box.querySelector("#wa-presence-hide");
-  const hint = box.querySelector("#wa-presence-hint");
-  sw.checked = presenceHidePref();
-  // ⚠ The second sentence stays. It is the one place he is told that typing
-  // gives him away — before it happens, rather than after he has seen his own
-  // name appear in front of the whole satsang.
-  const paintHint = () => {
-    hint.textContent = sw.checked
-      ? "Members won't see your name when you open a Samuhik Satsang. If you start typing or send a message you join the list straight away, and stay in it until you leave that satsang."
-      : "Your name appears to other members while you have a Samuhik Satsang open, the same as everyone else.";
+// The card that governs it, at the TOP of the Moderator page (operator,
+// 2026-09-02 — it was in Settings for one release, 9.105, and moved here: the
+// feature belongs to admins, so it belongs on the admins' page).
+//
+// ⚠ renderModerator() runs on BOTH shells from one `#/moderator` route — the
+// desktop sidebar and the mobile More sheet — which is what keeps the desktop
+// covered. Don't move this into a mobile-only enhancer.
+//
+// ⚠ It is built AFTER WA.listUsers() has succeeded, so the SERVER has already
+// confirmed the caller is an admin; a non-admin never reaches this line. That is
+// a better gate than the isModerator() cache and the reason there is no role
+// test here.
+//
+// Shape follows the Public sign-ups card exactly — same .mod-card, same
+// .mod-row-between, same ON/OFF .btn — so the page reads as one thing.
+function presenceHideCardEl() {
+  const on = presenceHidePref();
+  const card = el(`<div class="mod-card">
+    <div class="mod-row-between">
+      <div><div class="mod-card-h">Hide me from the online list</div>
+      <div class="mod-card-sub mod-presence-sub"></div></div>
+      <button class="btn mod-presence-btn ${on ? "active" : ""}">${on ? "ON" : "OFF"}</button>
+    </div></div>`);
+  const btn = card.querySelector(".mod-presence-btn");
+  const sub = card.querySelector(".mod-presence-sub");
+  // ⚠ The second sentence stays. It is the only place an admin is told what
+  // does and does not give them away — before it happens, rather than after they
+  // have watched their own name appear in front of the whole satsang.
+  const paint = () => {
+    const hidden = btn.classList.contains("active");
+    sub.textContent = hidden
+      ? "Members won't see your name, and you won't show as typing. Sending a message puts you in the list, until you leave that satsang."
+      : "Your name appears to members while you have a Samuhik Satsang open, the same as everyone else.";
   };
-  paintHint();
-  sw.addEventListener("change", () => {
-    try { localStorage.setItem(PRESENCE_HIDE_KEY, sw.checked ? "1" : "0"); } catch (_) {}
-    // ⚠ Switching it back ON must forget the threads already revealed in, or it
-    // would appear to do nothing in whichever satsang he last spoke in.
-    if (sw.checked) _presenceRevealed.clear();
-    paintHint();
-    toast(sw.checked ? "You're hidden from the online list" : "You're visible in the online list");
+  paint();
+  btn.addEventListener("click", () => {
+    const next = !btn.classList.contains("active");
+    // ⚠ "0" is written explicitly for OFF. The default is ON, so an absent key
+    // means hidden — an admin who chose to be visible needs a stored opt-OUT or
+    // the next launch would quietly hide them again.
+    try { localStorage.setItem(PRESENCE_HIDE_KEY, next ? "1" : "0"); } catch (_) {}
+    // ⚠ Switching it back ON must forget the satsangs already revealed in, or it
+    // reads as doing nothing in whichever one they last posted to.
+    if (next) leaveChatPresence();
+    btn.classList.toggle("active", next);
+    btn.textContent = next ? "ON" : "OFF";
+    paint();
+    toast(next ? "You're hidden from the online list" : "You're visible in the online list");
   });
+  return card;
 }
 
 function openChatStream(wid, msgsEl, ctx) {
@@ -3105,12 +3148,16 @@ async function renderWisdomChat(body, wid, label, opts) {
       const now = Date.now();
       if (now - lastPing < TYPING_PING_MS) return;
       lastPing = now;
-      // ⚠ The reveal hangs off the THROTTLED TYPING PING, never off this
-      // listener directly. A restored draft sets ta.value without dispatching
-      // `input` (so it can't reveal him on open, which is right — he hasn't
-      // touched anything), while the Bold/Italic buttons DO dispatch one, and
-      // that is also right: tapping them is composing.
-      revealPresence(ctx);
+      // ⚠ While hidden, NO typing ping goes out at all — and this is what makes
+      // "only a sent message reveals him" safe. The ping carries his NAME on the
+      // same channel, so an admin who is absent from the online list but shows as
+      // "… is typing" would be announced more loudly than the list ever did, by
+      // exactly the accidental keypress the rule exists to survive.
+      // revealPresence() is deliberately NOT called here (it was, until
+      // 2026-09-02); posting is the only thing that lists him. Once it has run,
+      // ctx.presenceHidden is false and this gate opens by itself — no second
+      // flag to drift out of step with the list.
+      if (ctx.presenceHidden) return;
       if (_chatStream && _chatStream.sendTyping) _chatStream.sendTyping(ctx.me);
     });
 
@@ -4150,10 +4197,6 @@ function renderInfo(kind) {
     // (wa-native.js owns all of it; no-op on desktop).
     if (window.WA_NATIVE && WA_NATIVE.enhanceSettings) WA_NATIVE.enhanceSettings();
     if (MOBILE_UI.active && MOBILE_UI.enhanceSettings) MOBILE_UI.enhanceSettings();
-    // Sutradhar only, and on BOTH shells — hence here and not inside either
-    // enhancer. Called last so it is the final card on either surface: under
-    // Notifications/Display on the phone, under the sync box on the desktop.
-    mountPresenceSwitch($view.querySelector(".prose"));
   }
 }
 
@@ -4444,6 +4487,11 @@ async function renderModerator() {
   if (!current(nav)) return;
 
   const me = currentUser();
+
+  // Online-list visibility, first on the page: it governs how this admin appears
+  // to every member the moment they open a satsang, and unlike everything below
+  // it takes effect with no round trip.
+  wrap.appendChild(presenceHideCardEl());
 
   // Sign-up toggle
   const signup = el(`<div class="mod-card">
@@ -4869,6 +4917,7 @@ document.getElementById("latest-btn").addEventListener("click", () => go("#/?lat
 // --------------------------------------------------------------------------
 function closeCommunityPanel() {
   closeChatStream();   // stop listening for live messages when the panel closes
+  leaveChatPresence(); // … and an admin who revealed himself goes back into hiding
   const panel = document.getElementById("fab-panel");
   if (panel) panel.hidden = true;
   setCommSplit(false);   // leaving the panel always exits the split view
@@ -20173,6 +20222,10 @@ const MOBILE_UI = (() => {
       closeDrawer();
       exitZoom();
       closeChatStream();
+      // Navigating away IS leaving the satsang, so an admin who revealed himself
+      // by posting is hidden again next time. ↻ refresh does not come through
+      // here, which is why it keeps him listed.
+      leaveChatPresence();
       _pageLangHook = null;
       _pageBackHook = null;        // …the page we land on re-arms it if it wants one
       setEnglishAvailable(true);   // any per-message gating belongs to the page we're leaving

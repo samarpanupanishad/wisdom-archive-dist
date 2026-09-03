@@ -1597,7 +1597,11 @@ body {
 .mod-card-h { font-family: var(--serif); font-size: 17px; font-weight: 600; margin-bottom: 2px; }
 .mod-card-sub { font-size: 13px; color: var(--muted); }
 .mod-row-between { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.mod-signup-btn.active { background: var(--accent-grad); color: #fff; border: none; }
+/* ⚠ ONE rule for both toggles on this page. The bare `.btn.active` further up
+   is the PALE variant, so a new ON/OFF card that is not named here silently
+   comes out washed-out beside the one next to it. */
+.mod-signup-btn.active,
+.mod-presence-btn.active { background: var(--accent-grad); color: #fff; border: none; }
 .mod-users { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
 .mod-user { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; }
 .mod-user .mu-main { flex: 1; min-width: 0; }
