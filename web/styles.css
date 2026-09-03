@@ -4430,9 +4430,17 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 .dd-page { padding: 0; }
 .dd-wrap { max-width: 640px; margin: 0 auto; padding: 14px 14px 28px; font-family: var(--sans); }
 
-/* ---- today ---- */
+/* ---- today ----
+   ⚠ PINK, and a fixed hex rather than --accent-soft's peach. The operator
+   picked it off a screenshot of the report page (dhyan5.png, 2026-09-03) --
+   what is in that shot is .dd-rpic's "Make a picture of this report" card, so
+   this is the diary's one pink, #fdeef2 / #f2cddb, already worn by .dd-rpic.
+   ⚠ This card and .dd-rhead on the report page must stay the same colour as
+   each other: they are the same three figures over two different spans, and
+   changing one alone is what makes the report page look like a different app.
+   ---- */
 .dd-today {
-  background: var(--accent-soft); border: 1px solid var(--border-soft);
+  background: #fdeef2; border: 1px solid #f2cddb;
   border-radius: 18px; padding: 14px 16px 12px; text-align: center;
 }
 .dd-today-day { font-size: 13px; color: var(--accent); font-weight: 600; letter-spacing: .01em; }
@@ -4608,21 +4616,25 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
    wears Anubhuti Sharing's. The four grounds above (one pink for all of them,
    2026-09-01) are what this replaces; .dd-tile-do is now shape and type only.
 
-   ⚠ These are the section hues DEEPENED, not the Menu page's literal hexes,
-   and that was a decision rather than a slip. The Menu tints are about 1.08:1
-   against white -- deliberately almost invisible there, because on that page a
-   coloured GLYPH tells the tiles apart and the tint only has to whisper. Here
-   the two Dhyan tiles sit side by side, and at Menu strength Daily's cream and
-   Letterhead's stone were indistinguishable from each other and from the page.
-   The operator saw exactly that in a mock-up ("in mockup colo is not getting
-   clear") and chose the deeper set. Same four hues, roughly twice the strength.
+   ⚠ These are the Menu page's LITERAL hexes -- the section tints at their own
+   strength, about 1.08:1 against white. They were briefly shipped DEEPENED to
+   roughly twice that (earlier the same day, from a mock-up where "in mockup
+   colo is not getting clear"), and the operator then saw them on the phone and
+   asked for the lighter set: "now it is little dark", once for each of the four.
+   ⚠ The cost is known and was accepted, so don't rediscover it as a bug: at
+   this weight Daily's cream and Letterhead's stone are nearly the same colour,
+   and the two Dhyan tiles sit side by side. The Menu page gets away with it
+   because a coloured GLYPH tells its tiles apart and the tint only whispers;
+   this grid has no glyph. If those two ever need separating again, the answer
+   is a mark of their own, NOT a deeper ground -- that road has been walked
+   twice now, and both times it came back as "dark".
    ⚠ Each pair must be written .dd-tile-do.dd-do-* at (0,2,0) and stay AFTER
    the hero rule above, or the two Dhyan tiles keep the accent's orange border
    over their new grounds -- which is the one combination none of this wants. */
-.dd-tile-do.dd-do-guru   { background: #fbecd0; border-color: #f2dcb4; }   /* Daily */
-.dd-tile-do.dd-do-maun   { background: #f3eae0; border-color: #e6d8c6; }   /* Letterhead */
-.dd-tile-do.dd-do-japa   { background: #e9dffa; border-color: #d5c4ee; }   /* Samuhik Satsang */
-.dd-tile-do.dd-do-granth { background: #ddf0e9; border-color: #c2e2d6; }   /* Anubhuti Sharing */
+.dd-tile-do.dd-do-guru   { background: #fdf5e6; border-color: #f4ead2; }   /* Daily */
+.dd-tile-do.dd-do-maun   { background: #faf6f2; border-color: #f0e9df; }   /* Letterhead */
+.dd-tile-do.dd-do-japa   { background: #f2ecfa; border-color: #e4daf5; }   /* Samuhik Satsang */
+.dd-tile-do.dd-do-granth { background: #eef7f4; border-color: #dfeee9; }   /* Anubhuti Sharing */
 .dd-tile-flat { min-height: 58px; background: var(--bg); box-shadow: none; }
 .dd-tile-choice { min-height: 108px; }
 
@@ -4703,10 +4715,11 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
    dhyan reports (operator, 2026-09-03).
    ========================================================================== */
 
-/* ---- ① the headline card. Same peach as the diary's own front page, so the
-   two read as one family. ---- */
+/* ---- ① the headline card. The same pink as the diary's own front page card,
+   so the two read as one family -- see the note on .dd-today, which is where
+   this colour is explained and which must be changed in step with it. ---- */
 .dd-rhead {
-  background: var(--accent-soft); border: 1px solid var(--border-soft);
+  background: #fdeef2; border: 1px solid #f2cddb;
   border-radius: 18px; padding: 15px 16px 13px; text-align: center; margin-top: 14px;
 }
 .dd-rhead-r { font-size: 13px; color: var(--accent); font-weight: 600; }
@@ -4720,7 +4733,9 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
   font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em;
 }
 .dd-rhead-n {
-  margin-top: 12px; padding-top: 11px; border-top: 1px solid rgba(217,102,42,.19);
+  /* The rule follows the card's own pink edge. It was an accent-orange rgba,
+     which over #fdeef2 read as an orange line drawn across a pink ground. */
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid #f2cddb;
   font-size: 12px; color: var(--muted); line-height: 1.45;
 }
 .dd-rhead-n b { color: var(--text); font-weight: 650; }
@@ -4760,11 +4775,12 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 .dd-rcard.empty .dd-rcard-b { color: var(--muted); }
 /* ⚠ The SAME four grounds the diary's front page gives these practices
    (.dd-tile-do.dd-do-*), so a report and the tile that records it are visibly
-   the same thing. Change one and change the other. */
-.dd-rcard.dd-rc-guru   { background: #fbecd0; border-color: #f2dcb4; }
-.dd-rcard.dd-rc-maun   { background: #f3eae0; border-color: #e6d8c6; }
-.dd-rcard.dd-rc-japa   { background: #e9dffa; border-color: #d5c4ee; }
-.dd-rcard.dd-rc-granth { background: #ddf0e9; border-color: #c2e2d6; }
+   the same thing. Change one and change the other -- which is why these went
+   light with the tiles on 2026-09-03; read the note there before touching them. */
+.dd-rcard.dd-rc-guru   { background: #fdf5e6; border-color: #f4ead2; }
+.dd-rcard.dd-rc-maun   { background: #faf6f2; border-color: #f0e9df; }
+.dd-rcard.dd-rc-japa   { background: #f2ecfa; border-color: #e4daf5; }
+.dd-rcard.dd-rc-granth { background: #eef7f4; border-color: #dfeee9; }
 /* ⚠ The fifth box spans the row on purpose. The four above it are practices
    done for a length of time and each shows an amount; the aarti is one song of
    one length, sung on a day or not, and its honest unit is DAYS. "4 days" in a
