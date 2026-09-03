@@ -2922,18 +2922,19 @@ async function renderWisdomChat(body, wid, label, opts) {
     // On mobile the whole .wc-hdr is hidden (styles.css), so the chip has to be
     // lifted out of it. TWO homes, and the caller picks:
     //
-    //  · opts.headRow — Samuhik Satsang. A 62px square TILE beside the subject
-    //    card, in its own bordered box (operator, 2026-09-02: the old chip "is
-    //    not easy catchable" — a 40×22 pill in the gutter with no word on it).
+    //  · opts.headRow — Samuhik Satsang AND Anubhuti Sharing, identically since
+    //    2026-09-03: a TILE beside the two-line subject card, in its own
+    //    bordered box (operator, 2026-09-02: the old chip "is not easy
+    //    catchable" — a 40×22 pill in the gutter with no word on it). Both
+    //    callers pass the same .m-headrow holding the same .m-chat-head.
     //    ⚠ A SIBLING of .m-chat-head and never a child: that card is a <button>
-    //    that opens the Guru's msg, and a button inside a button is an
-    //    ambiguous tap — Android will either swallow the inner one or fire both.
-    //  · opts.headRow — Anubhuti Sharing too, but INSIDE the sharing's card
-    //    rather than beside it (.an-headtop). That card is the sharing's own
-    //    text and it scrolls internally, so a tile beside it would leave a 70px
-    //    dead gutter down its whole height AND narrow the paragraph; a tile
-    //    inside it would scroll away. The card's non-scrolling top strip is the
-    //    one place that is neither.
+    //    that opens the Guru's msg (or the sharing's own text), and a button
+    //    inside a button is an ambiguous tap — Android will either swallow the
+    //    inner one or fire both.
+    //    ⚠ Anubhuti used to nest it inside the sharing card's top strip,
+    //    because that card held the whole sharing and scrolled. The card holds
+    //    two lines now, so there is nothing to scroll away from and nothing to
+    //    narrow — don't put it back inside.
     //  · no headRow — the fallback, and nothing on mobile takes it today: a thin
     //    right-aligned strip above the messages. Kept because renderWisdomChat
     //    is generic — a future surface that supplies no row still gets the
@@ -6435,6 +6436,70 @@ function openAnubhutiCompose() {
       btn.disabled = false;
     }
   });
+}
+
+// The whole sharing, on demand — what the two-line head on the chat screen
+// opens (anubhutiChatPage). Until 2026-09-03 this text sat on the chat screen
+// itself in a 22vh scroller; here it can run as long as the member wrote it.
+//
+// ⚠ Shares _axSheetClose with the compose dialog, so Android BACK and Escape
+// close the reader instead of leaving the chat behind it. Only one of the two
+// is ever open: "+" is refused while this is up, and vice versa.
+//
+// ⚠ The moderators' "Remove sharing" came in here with the text. It has to
+// live wherever the sharing is being read — on a two-line card there is no
+// honest place for a destructive button, and it must not be the thing a thumb
+// finds while reaching for Close (see .an-read .an-del: far left).
+function openAnubhutiReader(topic, id) {
+  if (_axSheetClose) return;
+  const when = String((topic && topic.created_at) || "").slice(0, 10);
+  const sheet = el(`<div class="an-sheet an-read" role="dialog" aria-modal="true" aria-label="This sharing">
+    <div class="an-sheet-card">
+      <div class="an-head-title">${escapeHtml(topic.title || "—")}</div>
+      <div class="an-head-by">${escapeHtml(topic.author || "")}${when ? " · " + escapeHtml(fmtDate(when)) : ""}</div>
+      <div class="an-read-body">
+        ${topic.body
+          ? `<div class="an-head-body">${renderMarkdown(topic.body)}</div>`
+          : `<div class="an-partial">This sharing has only its title — the conversation below it is where it is being shared.</div>`}
+        ${topic.partial ? `<div class="an-partial">Showing a shortened offline copy — reconnect to read the whole sharing.</div>` : ""}
+      </div>
+      <div class="an-sheet-btns">
+        <button class="btn primary" id="an-read-x" type="button">Close</button>
+      </div>
+    </div>
+  </div>`);
+  document.body.appendChild(sheet);
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  function close() {
+    if (!sheet.parentNode) return;
+    sheet.remove();
+    document.removeEventListener("keydown", onKey);
+    _axSheetClose = null;
+  }
+  _axSheetClose = () => { close(); return true; };
+  document.addEventListener("keydown", onKey);
+  sheet.querySelector("#an-read-x").addEventListener("click", close);
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+
+  // Moderators + sutradhar may remove a whole sharing (operator's call). The
+  // server takes its messages with it — see add_anubhuti.sql.
+  if (isModerator()) {
+    const del = el(`<button class="an-del" type="button" title="Remove this sharing">Remove sharing</button>`);
+    del.addEventListener("click", async () => {
+      if (!confirm("Remove this sharing and its whole conversation? This cannot be undone.")) return;
+      del.disabled = true;
+      try {
+        await WA.deleteAnubhutiTopic(id);
+        await ANUBHUTI.refresh(true).catch(() => {});
+        close();
+        toast("Sharing removed.");
+        // Same base-by-surface rule as anubhutiHref(): the reader is built once
+        // and both surfaces may reach it.
+        go((typeof MOBILE_UI !== "undefined" && MOBILE_UI.active) ? "#/m/anubhuti" : "#/anubhuti");
+      } catch (e) { toast(e.message || "Could not remove this sharing."); del.disabled = false; }
+    });
+    sheet.querySelector(".an-sheet-btns").insertBefore(del, sheet.querySelector("#an-read-x"));
+  }
 }
 
 // One special-message card. mode = "dual" (desktop: Hindi LEFT · English
@@ -17196,9 +17261,18 @@ const MOBILE_UI = (() => {
     // Header: which message is under discussion. Tapping it opens THAT MESSAGE —
     // now for every section, daily included. Daily used to open the pick-a-msg
     // search from here ("Change ▾"); that moved to the top bar's "+", so the
-    // header has one consistent meaning and no trailing affordance.
+    // header has one consistent meaning.
+    // ⚠ TWO LINES: dd/mm/yyyy, then the subject (operator, 2026-09-03 — "such
+    // a big header is eating the space heavily"). The date line carried
+    // CHAT_NS_LABEL as well — "Special Telegram Msg · 2 September 2026" — which
+    // beside the tile has ~230px to sit in and WRAPPED, so a two-line design
+    // was painting an 85px card. The label costs nothing to lose: you arrived
+    // from that section and the row you tapped said which one. Anything added
+    // back to this line must survive being long (the CSS clips it), or the
+    // height comes back with it.
     const head = el(`<button class="m-chat-head" title="Open the message">
         <div class="m-ch-text"><div class="m-ch-date">Loading…</div><div class="m-ch-topic"></div></div>
+        <span class="m-ch-more" aria-hidden="true">›</span>
       </button>`);
     // The card shares its row with the "who is here" tile, which renderWisdomChat
     // appends (see there for why it is a sibling and not a child of the card).
@@ -17215,15 +17289,18 @@ const MOBILE_UI = (() => {
       const row = (sec.cached() || []).find((r) => sec.idOf(r) === ns[2]);
       const v = row ? sec.norm(row, prefLang) : null;
       label = (v && v.title) || sec.title;
+      // No date on the cached row (an offline first open, say) — then the
+      // section label is better than an empty line, and it cannot wrap: it is
+      // the shorter half of what used to be here.
       head.querySelector(".m-ch-date").textContent =
-        CHAT_NS_LABEL[ns[1]] + (v && v.date ? " · " + fmtHumanDate(v.date) : "");
+        (v && v.date) ? fmtDate(v.date) : CHAT_NS_LABEL[ns[1]];
       head.querySelector(".m-ch-topic").textContent = label;
       const back = (_chatCtx && _chatCtx.back) || ("#/m/" + ns[1] + "/" + encodeURIComponent(ns[2]));
       head.addEventListener("click", () => go(back));
     } else {
       head.addEventListener("click", () => go("#/entry/" + encodeURIComponent(wid)));
       api("/api/entry/" + encodeURIComponent(wid)).then((e) => {
-        head.querySelector(".m-ch-date").textContent = fmtHumanDate(e.date) + (e.weekday ? " · " + e.weekday : "");
+        head.querySelector(".m-ch-date").textContent = fmtDate(e.date);
         head.querySelector(".m-ch-topic").textContent = e.topic_hi || e.topic_en || "";
       }).catch(() => { head.querySelector(".m-ch-date").textContent = "Guru's msg #" + wid; });
     }
@@ -17356,51 +17433,33 @@ const MOBILE_UI = (() => {
     }
 
     const when = String(topic.created_at || "").slice(0, 10);
-    // ⚠ Two parts, and the split is the whole point. `.an-headtop` does NOT
-    // scroll: it holds the title, the byline and the "who is here" tile, which
-    // would otherwise slide out of sight the moment somebody read the sharing.
-    // Everything that can be long goes in `.an-head-scroll` below it, at FULL
-    // width — narrowing the sharing's own paragraph to make room for a 62px
-    // tile is what this shape exists to avoid.
-    // ⚠ The DESKTOP sharing page (an-topic, above) keeps the old flat markup on
-    // purpose: it overrides both the height cap and the overflow, so it has
-    // nothing to scroll and no tile to hold.
-    const head = el(`<div class="an-head">
-        <div class="an-headtop">
-          <div class="an-headtop-text">
-            <div class="an-head-title">${escapeHtml(topic.title || "—")}</div>
-            <div class="an-head-by">${escapeHtml(topic.author || "")}${when ? " · " + escapeHtml(fmtDate(when)) : ""}</div>
-          </div>
+    // ⚠ THE SAME TWO-LINE CARD Samuhik Satsang uses — .m-chat-head inside a
+    // .m-headrow — and deliberately not a shape of its own (operator,
+    // 2026-09-03: the subject "is written in very big red font, eating heavy
+    // space"). What stood here until then was the sharing's whole text in a
+    // 22vh internal scroller, so a member who wrote more than about seven lines
+    // got a scrollbox in the middle of a chat screen: "no scroll of members
+    // text msg ... should be smooth like WhatsApp". The text is one tap away in
+    // openAnubhutiReader() instead, which is the one place it can be as long as
+    // the member meant it to be without costing the conversation a pixel.
+    // ⚠ The DESKTOP sharing page (renderAnubhutiTopic) still lays the whole
+    // sharing out on the page. It has the room; a phone in a chat does not.
+    const head = el(`<div class="m-headrow"></div>`);
+    const card = el(`<button class="m-chat-head" title="Read the whole sharing">
+        <div class="m-ch-text">
+          <div class="m-ch-date">${when ? escapeHtml(fmtDate(when)) : ""}${topic.author ? `<span class="m-ch-by"> · ${escapeHtml(topic.author)}</span>` : ""}</div>
+          <div class="m-ch-topic">${escapeHtml(topic.title || "—")}</div>
         </div>
-        <div class="an-head-scroll">
-          ${topic.body ? `<div class="an-head-body">${renderMarkdown(topic.body)}</div>` : ""}
-          ${topic.partial ? `<div class="an-partial">Showing a shortened offline copy — reconnect to read the whole sharing.</div>` : ""}
-        </div>
-      </div>`);
-    // Moderators + sutradhar may remove a whole sharing (operator's call). The
-    // server takes its messages with it — see add_anubhuti.sql.
-    if (isModerator()) {
-      const del = el(`<button class="an-del" type="button" title="Remove this sharing">Remove sharing</button>`);
-      del.addEventListener("click", async () => {
-        if (!confirm("Remove this sharing and its whole conversation? This cannot be undone.")) return;
-        del.disabled = true;
-        try {
-          await WA.deleteAnubhutiTopic(id);
-          await ANUBHUTI.refresh(true).catch(() => {});
-          toast("Sharing removed.");
-          go("#/m/anubhuti");
-        } catch (e) { toast(e.message || "Could not remove this sharing."); del.disabled = false; }
-      });
-      // Into the SCROLLER, not the card: appended to the card it would sit
-      // between the byline and the sharing, above the text it removes.
-      head.querySelector(".an-head-scroll").appendChild(del);
-    }
+        <span class="m-ch-more" aria-hidden="true">›</span>
+      </button>`);
+    card.addEventListener("click", () => openAnubhutiReader(topic, id));
+    head.appendChild(card);
 
     const body = el(`<div class="m-chatbody"></div>`);
     node.appendChild(head);
     node.appendChild(body);
     await renderWisdomChat(body, wid, topic.title || "Anubhuti Sharing",
-                           { headRow: head.querySelector(".an-headtop") });
+                           { headRow: head });
     // WhatsApp reading order: open at the latest message (bottom).
     const msgs = body.querySelector("#wc-msgs");
     if (msgs) msgs.scrollTop = msgs.scrollHeight;

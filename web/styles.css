@@ -13,6 +13,11 @@
   --accent-2: #e8863f;
   --accent-soft: #fdeee0;
   --accent-grad: linear-gradient(135deg, #d9662a 0%, #f0924f 100%);
+  /* The date stamp on the Samuhik Satsang / Anubhuti chat heads. Purple, so
+     "when" separates from "what" at a glance instead of a second orange
+     competing with the subject beside it. The same purple as .mm-r-satsang
+     .mm-name in the More menu, which is where the eye has already met it. */
+  --stamp: #6b3fa0;
   --highlight: #fde68a;
   --shadow: 0 1px 2px rgba(38,28,60,.04), 0 4px 16px rgba(38,28,60,.055);
   --shadow-lg: 0 8px 18px rgba(38,28,60,.09), 0 22px 48px rgba(38,28,60,.11);
@@ -753,30 +758,31 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
    the tile below); it is kept so a future surface loses the control silently. */
 .wc-online-m { align-self: flex-end; flex: 0 0 auto; margin: 2px 14px 4px; }
 
-/* Samuhik Satsang: the chip becomes a 62px SQUARE TILE beside the subject card,
-   in a bordered box of its own, so it reads as a second thing to tap rather
-   than a badge stuck on the first (operator, 2026-09-02). The dot is 14px and
-   carries the meaning on its own — green means people, grey means nobody; the
-   9px word underneath is only there to say what the dot is about the first time
-   somebody looks.
+/* Samuhik Satsang and Anubhuti Sharing: the chip becomes a TILE beside the
+   subject card, in a bordered box of its own, so it reads as a second thing to
+   tap rather than a badge stuck on the first (operator, 2026-09-02). The dot is
+   14px and carries the meaning on its own — green means people, grey means
+   nobody; the 9px word underneath is only there to say what the dot is about
+   the first time somebody looks.
    ⚠ Height comes from align-items: stretch, so the tile always matches whatever
    the card computes to. A fixed height here would drift apart from it the
-   moment the date or topic line changed size. */
+   moment the date or topic line changed size — as it would have on 2026-09-03,
+   when the card went from ~63px to two tight lines. */
 .m-headrow { display: flex; align-items: stretch; gap: 8px; margin-bottom: 8px; flex: 0 0 auto; }
 .m-headrow .m-chat-head { flex: 1; min-width: 0; width: auto; margin-bottom: 0; }
-/* ⚠ min-height, because the two hosts are different sizes. Beside the satsang
-   subject card the row is already 63px and this does nothing; inside an
-   Anubhuti card the strip is a title and a byline, about 40px, and without a
-   floor the tile would come out under Android's 48dp minimum. */
+/* ⚠ min-height 48px is ANDROID'S MINIMUM TAP TARGET, and since 2026-09-03 it
+   is the thing that sets this row's height: both hosts are the same two-line
+   card now (~46px), so the tile is what stops the row shrinking under a thumb.
+   Do not lower it to match the card exactly — the 2px of slack is the point. */
 .wc-online-tile {
-  flex: 0 0 62px; width: 62px; min-height: 62px; flex-direction: column;
-  justify-content: center; gap: 4px; padding: 0; border-radius: 14px;
+  flex: 0 0 58px; width: 58px; min-height: 48px; flex-direction: column;
+  justify-content: center; gap: 2px; padding: 0; border-radius: 14px;
 }
 .wc-online-tile .wc-online-top { gap: 4px; }
 .wc-online-tile .wc-online-dot { width: 14px; height: 14px; }
 .wc-online-tile .wc-online-n { font-size: 15px; }
 .wc-online-tile .wc-online-lb {
-  display: block; font: 600 9px var(--sans); letter-spacing: .04em;
+  display: block; font: 600 8.5px var(--sans); letter-spacing: .04em;
   text-transform: uppercase; color: var(--muted);
 }
 /* :hover never fires on a phone — the press has to say something itself. */
@@ -3206,15 +3212,34 @@ body.m-mode .page-head { padding-top: 4px; }
    divider hides and shows with the button and cannot drift out of sync. */
 .m-adminsec { margin-top: 6px; border-top: 1px solid var(--border); padding-top: 15px; }
 
-/* community chat header: human date + subject, tap to change */
+/* community chat header: the date, the subject, and a tap that opens what is
+   behind them.
+   ⚠ TWO LINES, and nothing may make it a third (operator, 2026-09-03: "such
+   a big header is eating the space heavily"). BOTH lines are nowrap+ellipsis
+   for exactly that reason — the date line used to read "Special Telegram Msg
+   · 2 September 2026" at bold 14.5px, and beside the tile it has only ~230px
+   to sit in, so a two-line design was painting an 85px card. Any line put back
+   here must survive being long, or the height comes back with it.
+   ⚠ Anubhuti Sharing uses this SAME card now (its own head was a 22vh internal
+   scroller). One header implementation, so the two chats cannot drift apart
+   again — do not fork it. */
 .m-chat-head {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 12px 14px; margin-bottom: 8px; cursor: pointer; text-align: left;
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 12px; margin-bottom: 8px; cursor: pointer; text-align: left;
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
 }
+/* :hover never fires on a phone — the press has to say something itself. */
+.m-chat-head:active { background: var(--accent-soft); border-color: var(--accent-2); }
 .m-ch-text { flex: 1; min-width: 0; }
-.m-ch-date { font: 700 14.5px var(--sans); color: var(--text); }
+.m-ch-date { font: 600 11.5px var(--sans); color: var(--stamp); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The author, on the date line, in an Anubhuti head. Muted rather than purple:
+   the stamp is the date, and a name in the same colour reads as part of it. */
+.m-ch-by { color: var(--muted); font-weight: 500; }
 .m-ch-topic { font: 500 13px var(--sans); color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The card hides something now — the Guru's msg behind a satsang, the whole
+   sharing behind an anubhuti — so it has to look like a door. Muted, never the
+   accent: it must not compete with the subject line it sits beside. */
+.m-ch-more { flex: 0 0 auto; font-size: 18px; line-height: 1; color: var(--muted); }
 /* (.m-ch-change removed: the chat header's trailing "Change ▾"/"Back ›" is gone
    — starting a new satsang moved to the top bar's "+", and the header itself now
    simply opens the message.) */
@@ -4037,47 +4062,30 @@ body.gated { overflow: hidden; }
 .an-by { margin-top: 3px; font: 500 11.5px var(--sans); color: var(--accent-2); }
 .an-row .mx-thumb-txt .mx-ico { animation: none; }   /* no Lucky-msg sparkle in a list */
 
-/* ---- one sharing: its own text, pinned above the discussion --------------
-   Not a .m-chat-head: that is a button that opens the message behind a chat,
-   and here there is no message behind it. This card IS the content, so it
-   scrolls internally rather than pushing the conversation off screen. */
-/* ⚠ NOT display:flex. The strip and the scroller are plain blocks and lay out
-   correctly as blocks — and the DESKTOP sharing page reuses this same class
-   with flat markup, where a column flex container stretches the moderators'
-   "Remove sharing" button to the full width of the card. */
+/* ---- one sharing's own text ---------------------------------------------
+   ⚠ NOT the mobile chat head any more (2026-09-03). On a phone the sharing is
+   now two lines of .m-chat-head with the whole text one tap away in .an-read
+   below; this card is the DESKTOP page and the inside of that popup, and both
+   want the text laid out in full. See .an-read for why it moved. */
+/* ⚠ NOT display:flex: a column flex container stretches the moderators'
+   "Remove sharing" button to the full width of the card. Plain blocks are also
+   what the title/byline/body want. DESKTOP ONLY since 2026-09-03 — the phone's
+   sharing head is .m-chat-head and the popup lays its parts out itself. */
 .an-head {
   flex: 0 0 auto;
   padding: 14px 16px; margin-bottom: 8px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
 }
-/* ⚠ The height cap and the scrolling moved OFF the card and onto .an-head-scroll
-   (2026-09-02), so the title, the byline and the presence tile can stay put
-   while the sharing itself scrolls under them.
-   ⚠ 22vh, and the number is MEASURED, not guessed. The strip now sits outside
-   the capped area, so the cap is no longer the card's height: at 26vh the card
-   came out 305px against the old cap's 309px — a wash, and a two-line title
-   would have made it TALLER than before. 22vh puts a one-line-title card at
-   ~273px, which is the ~36px the conversation actually gets back (operator:
-   "below 30vh will also be ok..since the conversation should be visible").
-   It still shows about seven lines of Devanagari before it scrolls.
-   The desktop sharing page overrides both properties below, so it is unmoved —
-   and that override is what lets it keep the old flat markup with no
-   .an-head-scroll in it at all. */
-.an-head-scroll { max-height: 22vh; overflow-y: auto; min-height: 0; }
-/* The rule belongs to the STRIP, not to the body that scrolls under it: with
-   the sharing scrolled, its text was being cut mid-line directly below the
-   byline with no edge at all, which reads as a rendering fault rather than as
-   content sliding under a header. .an-head-body keeps its own border on the
-   desktop page, which has no scroller and needs the separator itself. */
-.an-headtop {
-  display: flex; align-items: stretch; gap: 10px; flex: 0 0 auto;
-  padding-bottom: 10px; border-bottom: 1px solid var(--border-soft);
-}
-.an-head-scroll .an-head-body { margin-top: 10px; padding-top: 0; border-top: 0; }
-.an-headtop-text { flex: 1; min-width: 0; }
-/* Nested inside the card, not sitting beside it, so it takes the inner radius —
-   concentric with the card's 14px rather than competing with it. */
-.an-headtop .wc-online-tile { border-radius: 10px; }
+/* ⚠ .an-head-scroll / .an-headtop / .an-headtop-text are GONE (2026-09-03) and
+   should not come back. They were the 2026-09-02 shape: a non-scrolling strip
+   holding the title, the byline and the presence tile, over a 22vh scroller
+   holding the sharing. It was the best a card that must show a whole anubhuti
+   could do, and it still meant a member who wrote more than about seven lines
+   got a scrollbox in the middle of a chat screen — which is what the operator
+   reported ("no scroll of members text msg ... should be smooth like
+   WhatsApp"). Capping it lower only trades scroll for less text. So the text
+   left the screen entirely for .an-read, and the card became the same two
+   lines Samuhik Satsang has. Nothing here scrolls now. */
 .an-head-title { font: 700 17px var(--serif); color: var(--accent); }
 .an-head-by { margin-top: 2px; font: 500 12.5px var(--sans); color: var(--muted); }
 .an-head-body {
@@ -4122,6 +4130,33 @@ body.gated { overflow: hidden; }
 .an-err { margin-top: 10px; color: #c0392b; font-size: 13px; line-height: 1.45; }
 .an-sheet-btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 
+/* ---- the reader: the whole sharing, on demand ---------------------------
+   Where a sharing's text lives since 2026-09-03. On the chat screen it cost
+   22vh and still scrolled; here it can be as long as the member meant it to be
+   and costs the conversation nothing. Reuses .an-sheet, so it is the same
+   card, the same scrim, the same Escape and the same Android BACK as the
+   compose dialog — and it is reached by tapping the two-line head, which wears
+   a › for the purpose.
+   ⚠ The BODY scrolls, not the card: .an-sheet-card's own overflow-y would take
+   the scroll and carry the title and the buttons off with it, so a long
+   sharing would hide both the byline and the way out. */
+.an-read .an-sheet-card { display: flex; flex-direction: column; overflow: hidden; }
+.an-read .an-head-title { font: 700 19px var(--serif); color: var(--accent); }
+/* ⚠ An edge on BOTH sides, and the bottom one is the load-bearing half: a
+   scrolled sharing is cut mid-line just above the buttons, and a cut with no
+   rule under it reads as a rendering fault rather than as text sliding under a
+   footer. (The same reason .an-headtop carried one in the 2026-09-02 shape.) */
+.an-read-body {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  margin-top: 12px; padding: 12px 0;
+  border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft);
+}
+/* The border above is the separator now — the body's own would double it. */
+.an-read-body .an-head-body { margin-top: 0; padding-top: 0; border-top: 0; }
+/* Far LEFT, away from Close: Remove came off the sharing card with the text,
+   and it must never be the button under a thumb reaching for "done". */
+.an-read .an-del { margin-top: 0; margin-right: auto; }
+
 /* ---- desktop page -------------------------------------------------------
    A full page like Letterpad, NOT the Samuhik Satsang fab panel: that panel
    exists to discuss the message on screen behind it, and a sharing has none. */
@@ -4145,11 +4180,10 @@ body.gated { overflow: hidden; }
 }
 .an-back { display: inline-block; margin-bottom: 12px; color: var(--accent); text-decoration: none; font: 600 13.5px var(--sans); }
 .an-back:hover { text-decoration: underline; }
-/* On desktop the sharing card is content, not a fixed header — let it grow. */
-/* ⚠ The first two are now belt-and-braces: since 2026-09-02 the cap and the
-   scrolling live on .an-head-scroll, which this page's flat markup does not
-   have. Kept because they are what makes that flat markup safe here. */
-.an-topic .an-head { max-height: none; overflow: visible; margin-bottom: 14px; }
+/* On desktop the sharing card is content, not a fixed header — let it grow.
+   (The max-height/overflow reset that stood here until 2026-09-03 is gone with
+   the cap it was guarding against; .an-head has never been capped since.) */
+.an-topic .an-head { margin-bottom: 14px; }
 .an-chat {
   height: min(62vh, 620px);
   background: var(--surface); border: 1px solid var(--border);
