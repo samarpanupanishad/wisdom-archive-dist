@@ -795,6 +795,13 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 /* Alone in the satsang: hollow grey dot, no count, "You". The BOX stays — see
    paintOnline for why it must never hide. */
 .wc-online-solo .wc-online-n { display: none; }
+/* ⚠ …which is why the PILL has to show its word when it is alone: the count is
+   hidden just above, and off-mobile .wc-online-lb is display:none, so a solo
+   pill with neither would render as an empty box. The tile is excluded because
+   it sets its own `display: block` on the label a few rules up, and these two
+   selectors have equal specificity — leaving it in would decide that by source
+   order, which is exactly the kind of thing that breaks when rules move. */
+.wc-online-solo:not(.wc-online-tile) .wc-online-lb { display: inline; }
 .wc-online-solo .wc-online-dot { background: none; box-shadow: inset 0 0 0 2px var(--muted); }
 /* ⚠ overflow-anchor: none is load-bearing. A chat holds only its newest page
    and prepends older ones as the reader scrolls up (ctx.loadEarlier), which

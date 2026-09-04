@@ -3143,14 +3143,26 @@ async function renderWisdomChat(body, wid, label, opts) {
       // read something into.
       const n = others + (ctx.presenceHidden ? 0 : 1);
       const solo = others < 1;
-      // ⚠ The TILE never hides. It is a column in the head row, so hiding it
+      // ⚠ IT NEVER HIDES — on either shell (operator, 2026-09-04).
+      //
+      // The TILE never could: it is a column in the head row, so hiding it
       // would snap the subject card wider and narrower every time somebody
-      // joined or left — a jump at the top of the screen. Alone, it goes quiet
+      // joined or left — a jump at the top of the screen. Alone it goes quiet
       // instead: hollow grey dot, no count, "You". That is also the only way
       // most members ever meet the control at all, a satsang being empty far
-      // more often than it is busy. The header pill still hides (a chip in a
-      // header row costs nothing when it goes).
-      onlineBtn.hidden = tile ? false : solo;
+      // more often than it is busy.
+      //
+      // The header PILL used to hide when `solo`, on the argument that a chip
+      // in a header row costs nothing when it goes. What that actually cost was
+      // the whole feature on the desktop: `solo` counts OTHERS, so the pill
+      // appeared only while somebody else had that exact thread open — and an
+      // admin, hidden by default (presenceHidePref), never counts himself. The
+      // operator looked at Samuhik Satsang and Anubhuti Sharing in the browser
+      // and reasonably concluded presence had never been built there.
+      // ⚠ Alone, the desktop pill has no count to show (.wc-online-solo hides
+      // it), so styles.css un-hides the "You" label for the non-tile shape —
+      // without that rule this reads as an empty box. Change the two together.
+      onlineBtn.hidden = false;
       onlineBtn.classList.toggle("wc-online-solo", solo);
       onlineBtn.classList.toggle("wc-online-off", !!ctx.presenceHidden);
       onlineBtn.querySelector(".wc-online-n").textContent = String(n);
