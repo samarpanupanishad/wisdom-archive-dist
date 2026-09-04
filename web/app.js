@@ -2153,15 +2153,25 @@ function reactSummary(ctx, mid) {
 function reactsRowHtml(ctx, mid) {
   const rows = reactSummary(ctx, mid);
   if (!rows.length) return "";
+  // The `title` is a desktop-hover nicety and nothing more — it is invisible on
+  // a phone, which is where the names were actually wanted. openReactSheet is
+  // the real answer; the aria-label says so for a screen reader.
   return rows.map((r) =>
     `<button class="wc-react${r.mine ? " wc-react-mine" : ""}" data-emoji="${escapeHtml(r.emoji)}"
-       title="${escapeHtml(r.users.join(", "))}">${escapeHtml(r.emoji)} ${r.count}</button>`).join("");
+       aria-label="${escapeHtml(`${r.emoji} ${r.count} — see who reacted`)}"
+       title="${escapeHtml(r.users.filter(Boolean).join(", "))}">${escapeHtml(r.emoji)} ${r.count}</button>`).join("");
 }
 
 // Repaint ONE message's pills. Live reactions must not rebuild the bubble —
 // that would drop the reader's text selection and re-run the markdown render
 // for a change of one digit.
 function paintReacts(ctx, mid, msgsEl) {
+  // ⚠ BEFORE the node lookup below, which returns early when the bubble isn't
+  // on screen: the open sheet is about this message's reactions, not about its
+  // bubble, and it has to follow a removal made from inside itself.
+  if (_reactSheetLive && _reactSheetLive.mid === mid) {
+    try { _reactSheetLive.render(); } catch (_) {}
+  }
   const node = msgsEl && msgsEl.querySelector(`[data-mid="${mid}"]`);
   if (!node) return;
   let row = node.querySelector(".wc-reacts");
@@ -2174,8 +2184,12 @@ function paintReacts(ctx, mid, msgsEl) {
     bubble.appendChild(row);
   }
   row.innerHTML = html;
+  // ⚠ A pill OPENS THE LIST; it does not toggle (operator, 2026-09-04: "clicking
+  // on emoji added to msg should show which member have add which emoji like
+  // whatsapp, instead of it add or remove emoji by member who clicked").
+  // Removing is still one tap — it moved into the sheet, onto your own row.
   row.querySelectorAll(".wc-react").forEach((b) => {
-    b.addEventListener("click", (e) => { e.stopPropagation(); toggleReact(ctx, mid, b.dataset.emoji, msgsEl); });
+    b.addEventListener("click", (e) => { e.stopPropagation(); openReactSheet(ctx, mid, msgsEl); });
   });
 }
 
@@ -2213,6 +2227,133 @@ function applyReactEvent(ctx, msgsEl, r, adding) {
   if (adding) list.push({ user: r.user, emoji: r.emoji });
   ctx.reacts.set(r.mid, list);
   paintReacts(ctx, r.mid, msgsEl);
+}
+
+// ---- who reacted (the pill sheet) -----------------------------------------
+// Tapping a pill used to toggle your own reaction; it now opens this list —
+// who reacted, and with what — the way WhatsApp does (operator, 2026-09-04).
+//
+// ⚠ Every name is ALREADY on the phone. message_reactions carries `username`,
+// listReactions() returns it, and add_satsang_chat.sql sets REPLICA IDENTITY
+// FULL so even a live DELETE arrives with it. So this needs no SQL, no Edge
+// Function and no APK — it ships as one OTA publish. Don't reach for an RPC.
+//
+// ⚠ Two affordances had to be preserved, and both live in here now:
+//   · REMOVING. Tapping the pill was the way; your own row takes it over
+//     ("Tap to remove"). Long-pressing the message and tapping the same emoji
+//     in the action sheet still works too — that path is untouched.
+//   · ADDING. It was only ever reachable through a 450 ms long-press on the
+//     message, which nothing on screen hinted at. The strip at the top of this
+//     sheet is the discoverable way in, on a surface people now tap anyway.
+//
+// ⚠ Live, NOT a snapshot — the opposite of openChatPresenceSheet, which
+// documents its own choice. It has to be: a removal made from inside this sheet
+// must show here, and paintReacts is already the single repaint point.
+//
+// A read-only member (no ctx.canReply) still gets the names. Their taps used to
+// do nothing at all; seeing who reacted asks for no write permission.
+let _reactSheetLive = null;
+
+function openReactSheet(ctx, mid, msgsEl) {
+  if (!reactSummary(ctx, mid).length) return;
+  const me = (ctx && ctx.me) || "";
+  const canReact = !!(ctx && ctx.canReply);
+  let filter = "";                       // "" = all of them
+
+  const sheet = el(`<div class="at-sheet wr-sheet">
+    <div class="at-sheet-card" role="dialog" aria-label="Reactions">
+      <div class="at-sheet-top">
+        <span class="at-sheet-h">Reactions</span>
+        <button class="at-sheet-x" type="button" aria-label="Close">✕</button>
+      </div>
+      ${canReact ? `<div class="wr-strip">${REACT_EMOJIS.map((e) =>
+        `<button class="wc-sr-btn" type="button" data-add="${escapeHtml(e)}">${e}</button>`).join("")}</div>` : ""}
+      <div class="wr-seg" role="group" aria-label="Which reaction"></div>
+      <ul class="at-plist wr-list"></ul>
+    </div>
+  </div>`);
+
+  // armChatSheet is what makes Android BACK close this instead of leaving the
+  // room; the wrapper only adds letting go of the live handle.
+  const closeSheet = armChatSheet(sheet);
+  const close = () => {
+    if (_reactSheetLive && _reactSheetLive.sheet === sheet) _reactSheetLive = null;
+    closeSheet();
+  };
+
+  const segEl = sheet.querySelector(".wr-seg");
+  const listEl = sheet.querySelector(".wr-list");
+
+  const render = () => {
+    const rows = reactSummary(ctx, mid);
+    // The last reaction was just taken off — there is nothing left to be a list
+    // OF, and the pill that opened this is gone from the bubble too.
+    if (!rows.length) { close(); return; }
+    if (filter && !rows.some((r) => r.emoji === filter)) filter = "";
+
+    const total = rows.reduce((n, r) => n + r.count, 0);
+    segEl.innerHTML =
+      `<button type="button" data-f="" class="${filter ? "" : "active"}">All ${total}</button>` +
+      rows.map((r) => `<button type="button" data-f="${escapeHtml(r.emoji)}"` +
+        ` class="${filter === r.emoji ? "active" : ""}">${escapeHtml(r.emoji)} ${r.count}</button>`).join("");
+
+    // Says what you have already given, so tapping that one reads as taking it
+    // off rather than as a tap that did nothing.
+    const mineSet = new Set(rows.filter((r) => r.mine).map((r) => r.emoji));
+    sheet.querySelectorAll("button[data-add]").forEach((b) => {
+      b.classList.toggle("on", mineSet.has(b.dataset.add));
+    });
+
+    // Flattened back to one person per row, walking the pills in their own
+    // order — so the "All" list reads down the way the pills read across.
+    const people = [];
+    rows.forEach((r) => {
+      if (filter && r.emoji !== filter) return;
+      r.users.forEach((u) => people.push({ user: u, emoji: r.emoji }));
+    });
+    // Yourself first: it is the only row that does anything when tapped.
+    people.sort((a, b) => (a.user === me ? -1 : 0) - (b.user === me ? -1 : 0));
+
+    listEl.innerHTML = people.map((p) => {
+      const isMe = !!me && p.user === me;
+      const drop = isMe && canReact;
+      const name = p.user || "Someone";
+      return `<li class="at-p wr-p${drop ? " wr-mine" : ""}"` +
+        (drop ? ` data-drop="${escapeHtml(p.emoji)}" role="button" tabindex="0"` : "") + `>
+        <span class="at-p-av">${escapeHtml((name[0] || "?").toUpperCase())}</span>
+        <span class="at-p-body">
+          <span class="at-p-name">${escapeHtml(name)}${isMe ? ` <em class="at-p-you">You</em>` : ""}</span>
+          ${drop ? `<span class="at-p-meta">Tap to remove</span>` : ""}
+        </span>
+        <span class="wr-p-e">${escapeHtml(p.emoji)}</span>
+      </li>`;
+    }).join("");
+  };
+
+  sheet.querySelector(".at-sheet-x").addEventListener("click", close);
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+  segEl.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-f]");
+    if (!b) return;
+    filter = b.dataset.f || "";
+    render();
+  });
+  // Delegated, because render() rebuilds these rows after every change.
+  listEl.addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-drop]");
+    if (!li) return;
+    toggleReact(ctx, mid, li.dataset.drop, msgsEl);   // ours, so this removes it
+  });
+  sheet.querySelectorAll("button[data-add]").forEach((b) => {
+    // toggleReact, not add: tapping the one you already gave takes it off, which
+    // is what a highlighted emoji in a strip means everywhere else.
+    b.addEventListener("click", () => toggleReact(ctx, mid, b.dataset.add, msgsEl));
+  });
+
+  _reactSheetLive = { mid, sheet, render };
+  render();
+  document.body.appendChild(sheet);
+  hapticTickHook();
 }
 
 // Long-press opens the sheet; a short drag to the RIGHT is reply, the way every
