@@ -15440,6 +15440,38 @@ const MOBILE_UI = (() => {
     if (data.kind === "broadcast" && data.msg_id && /^#\/m\/broadcast\/?$/.test(route)) {
       route = "#/m/broadcast/" + encodeURIComponent(data.msg_id);
     }
+    // An admin's decision — accepted, or returned with a reason — lands on the
+    // member's OWN quotes, on the tab that decision belongs to, with that quote
+    // picked out of the list.
+    //
+    // ⚠ REPAIRED HERE AND NOT CHANGED IN `send-push`, deliberately. Those
+    // payloads say `#/m/gyan?mine=1` and three things follow from leaving that
+    // alone:
+    //   · no Edge Function deploy is needed for any of this (the operator
+    //     deploys those by hand, and a redeploy is the step most likely to be
+    //     skipped or half-done);
+    //   · it works on notifications ALREADY SITTING IN THE TRAY, which a route
+    //     change never can;
+    //   · an older shell that has not taken UI 9.120 yet still understands
+    //     `#/m/gyan` and lands on the Upanishad Ganga screen exactly as it does
+    //     today. Had `send-push` been changed to say `#/m/gyanmine`, that phone
+    //     would fall through the router to the daily home view instead — the
+    //     "a route in a payload must be understood by the shell" trap, which is
+    //     the whole reason `?mine=1` was left in those payloads when the old
+    //     "Your thoughts" list was removed on 2026-08-21.
+    // `?mine=1` has been inert since that removal; this makes it mean something
+    // again, and the thing it now means is the page it always pointed at.
+    //
+    // ⚠ `ganga_sent` is NOT here and must not be. It carries the guru's words
+    // and says they have just gone out to everybody — its destination is the
+    // Upanishad Ganga screen, where that thought is on screen marked
+    // "Your Suggestion". It also has no `suggestion_id`, only a `thought_id`.
+    if ((data.kind === "ganga_approved" || data.kind === "ganga_declined")
+        && /^#\/m\/gyan(\?|$)/.test(route)) {
+      route = "#/m/gyanmine?tab=" +
+        (data.kind === "ganga_approved" ? "approved" : "pending") +
+        (data.suggestion_id ? "&s=" + encodeURIComponent(data.suggestion_id) : "");
+    }
     try {
       if (data.kind === "daily" || AT_HOME_RE.test(route)) goFresh(route, data.cv || "");
       // Special/Letterpad, landing on a specific message: sync first so the
@@ -19892,11 +19924,18 @@ const MOBILE_UI = (() => {
       return;
     }
 
+    // ⚠ Which tab opens is NOT always Pending: a notification tap carries the
+    // decision it is about (see the repair in openFromPush), and an approval
+    // that dropped somebody on a Pending list showing a DIFFERENT quote would be
+    // worse than no link at all. `?s=` is the quote itself, picked out below.
+    const wantTab = params && params.get("tab");
+    const focusId = (params && params.get("s")) || "";
+
     node.innerHTML =
       `<div class="m-seg-row">` +
         `<div class="m-langseg m-msgseg" id="gm-seg" role="group" aria-label="Which quotes">` +
-          GM_TABS.map((t, i) =>
-            `<button data-want="${t.key}" class="${i === 0 ? "active" : ""}" type="button">` +
+          GM_TABS.map((t) =>
+            `<button data-want="${t.key}" class="${t.key === (wantTab === "approved" ? "approved" : "pending") ? "active" : ""}" type="button">` +
             `${escapeHtml(t.label)}</button>`).join("") +
         `</div>` +
       `</div>` +
@@ -19906,7 +19945,7 @@ const MOBILE_UI = (() => {
     const segEl = node.querySelector("#gm-seg");
     const listEl = node.querySelector("#gm-list");
     const quotaEl = node.querySelector("#gm-quota");
-    let want = "pending";
+    let want = wantTab === "approved" ? "approved" : "pending";
     let rows = [];
     // The character cap for the resend box. Seeded from the same cached copy the
     // compose box on #/m/gyan uses, so the editor is usable before the network
@@ -19984,7 +20023,7 @@ const MOBILE_UI = (() => {
           // that says so.
           const fixed = (r.approved_text && r.text && r.approved_text !== r.text)
             ? `<div class="gm-orig">${escapeHtml("You wrote: " + r.text)}</div>` : "";
-          return `<div class="gm-row ok">` +
+          return `<div class="gm-row ok" data-id="${escapeHtml(String(r.id))}">` +
             `<div class="gm-top"><span class="gm-chip ok">Approved</span>${again}` +
               `<span class="gm-when">${escapeHtml(timeAgo(r.decided_at || r.created_at))}</span></div>` +
             `<div class="gm-t">${escapeHtml(words)}</div>` +
@@ -20020,13 +20059,26 @@ const MOBILE_UI = (() => {
           `</div>`;
         }
 
-        return `<div class="gm-row wait">` +
+        return `<div class="gm-row wait" data-id="${escapeHtml(String(r.id))}">` +
           `<div class="gm-top"><span class="gm-chip wait">Waiting</span>${again}` +
             `<span class="gm-when">${escapeHtml(timeAgo(r.created_at))}</span></div>` +
           `<div class="gm-t">${escapeHtml(r.text || "")}</div>` +
           `<div class="gm-sent">${escapeHtml("With the admins.")}</div>` +
         `</div>`;
       }).join("");
+    };
+
+    // The quote the notification was about. Marked and scrolled to, ONCE —
+    // `_focusDone` is what stops a later repaint (a resend, a tab switch)
+    // dragging the reader back to a row they have moved on from.
+    let _focusDone = false;
+    const focusRow = () => {
+      if (!focusId || _focusDone) return;
+      const row = listEl.querySelector(`.gm-row[data-id="${CSS.escape(focusId)}"]`);
+      if (!row) return;              // on the other tab, or scrolled off the 100
+      _focusDone = true;
+      row.classList.add("focus");
+      try { row.scrollIntoView({ block: "center" }); } catch (_) { row.scrollIntoView(); }
     };
 
     const load = async () => {
@@ -20037,6 +20089,7 @@ const MOBILE_UI = (() => {
         return;
       }
       render();
+      focusRow();
     };
 
     segEl.addEventListener("click", (e) => {

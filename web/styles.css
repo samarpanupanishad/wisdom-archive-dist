@@ -3225,6 +3225,13 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
 /* A returned quote is the only row with something to do, so it is the only one
    that wears a colour. */
 .gm-row.ret { border-color: #e9a8a8; background: #fffafa; }
+/* The quote a notification tap was ABOUT. Arriving on a list of ten and being
+   left to work out which one the tray was talking about is the thing this
+   closes, so it is a ring rather than a tint — .ret already owns the tint, and
+   a returned quote is exactly what is most often tapped through to.
+   ⚠ Applied ONCE per visit (`_focusDone` in app.js): a later repaint must not
+   drag the reader back to a row they have scrolled away from. */
+.gm-row.focus { border-color: var(--accent); box-shadow: var(--ring); }
 .gm-top { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; flex-wrap: wrap; }
 .gm-chip {
   font: 700 10.5px var(--sans); text-transform: uppercase; letter-spacing: .04em;
