@@ -244,10 +244,22 @@ function _broadcastMissing(error) {
 // several of these RPCs (wa_recent_thoughts) are not named for the feature and a
 // genuine constraint violation mentioning "ganga_declined_has_reason" must be
 // shown to the admin as itself, not rewritten into "run the SQL".
+//
+// ⚠ TWO files can be missing now, and they name different ones. Part four
+// (add_ganga_member_view.sql — the member's own list, the resend, the pool) can
+// be absent on a server where part three ran perfectly well, and telling that
+// operator to run add_ganga_suggestions.sql sends them to a file that is already
+// in place. `_GANGA_P4` is matched FIRST for that reason.
+const _GANGA_P4 = /resubmit_ganga|my_ganga_quota|ganga_daily_limit|list_ganga_thoughts|set_thought_active/i;
 function _gangaErr(error) {
   const m = (error && error.message) || "";
+  const gone = /does not exist|not find|schema cache/i.test(m);
+  if (gone && _GANGA_P4.test(m)) {
+    return "This part of Upanishad Ganga isn't set up on the server yet. " +
+           "(Admin: run supabase/add_ganga_member_view.sql.)";
+  }
   const missing = /submit_ganga|approve_ganga|decline_ganga|add_ganga|list_ganga|my_ganga|ganga_char_limit|ganga_similar/i.test(m)
-    && /does not exist|not find|schema cache/i.test(m);
+    && gone;
   return missing
     ? "Upanishad Ganga suggestions aren't set up on the server yet. (Admin: run supabase/add_ganga_suggestions.sql.)"
     : m;
@@ -1768,11 +1780,79 @@ const WA = {
 
   // The member's own record: pending / accepted / returned-with-a-reason, and
   // once it has gone out, the hour it went.
+  //
+  // ⚠ TWO CALLERS, TWO DIFFERENT QUESTIONS. The Upanishad Ganga screen asks it
+  // for `first_slot_date`/`first_slot` only — which of the thoughts on screen
+  // are this member's — and paints no list at all. #/m/gyanmine asks it for
+  // everything and IS a list. Neither may be simplified into the other: see the
+  // long note at loadMine() in app.js.
   async myGangaSuggestions(limit) {
     const { data, error } = await _sb.rpc("my_ganga_suggestions",
-      { n: Math.min(Math.max(limit || 20, 1), 100) });
+      { n: Math.min(Math.max(limit || 50, 1), 200) });
     if (error) throw new Error(_gangaErr(error));
     return data || [];
+  },
+
+  // ---- part four: the member can look, and can send a returned line back --
+  // supabase/add_ganga_member_view.sql. Everything below fails soft where a
+  // failure would only cost a decoration, and throws where it would cost the
+  // member their words.
+
+  // How many of today's allowance are gone, and the two limits, in one call.
+  // ⚠ Fails SOFT to a usable answer: this only draws "2 of 3 left today", and
+  // a member on a bad connection must still be able to write. The cap is
+  // enforced by Postgres at Send either way.
+  async myGangaQuota() {
+    const { data, error } = await _sb.rpc("my_ganga_quota");
+    if (error || !data) return null;
+    const n = (v, d) => { const x = parseInt(v, 10); return x >= 0 ? x : d; };
+    return { limit: n(data.limit, 3), used: n(data.used, 0), chars: n(data.chars, 100) };
+  },
+
+  // A returned line, edited and sent back for approval. Makes a NEW pending row
+  // and marks the returned one as replaced, so neither side reads the same words
+  // twice. ⚠ It spends one of the day's allowance, exactly like a fresh send
+  // (operator, 2026-09-04).
+  async resubmitGangaSuggestion(id, text) {
+    const { data, error } = await _sb.rpc("resubmit_ganga_suggestion",
+      { sid: id, t: text });
+    if (error) throw new Error(_gangaErr(error));
+    return data || {};
+  },
+
+  async gangaDailyLimit() {
+    const { data, error } = await _sb.rpc("ganga_daily_limit");
+    if (error) return 3;                 // a missing RPC must not disable the box
+    const n = parseInt(data, 10);
+    return n >= 1 ? n : 3;
+  },
+  async setGangaDailyLimit(n) {
+    const { error } = await _sb.rpc("set_ganga_daily_limit", { n: n });
+    if (error) throw new Error(_gangaErr(error));
+    return { ok: true, limit: n };
+  },
+
+  // The POOL — every thought that exists, admin-written and member-approved
+  // together, with the suggester's name on the member ones.
+  //
+  // ⚠ An RPC and not a select on `thoughts`, for the name: `thoughts` is
+  // world-readable and the name is deliberately not on it, so the join has to
+  // happen somewhere that asks Postgres who is calling. A member calling this
+  // gets an empty array — wa_is_mod() is in the function's WHERE, so it is not
+  // an error to handle, it is simply no rows.
+  async listGangaThoughts(limit) {
+    const { data, error } = await _sb.rpc("list_ganga_thoughts",
+      { n: Math.min(Math.max(limit || 500, 1), 5000) });
+    if (error) throw new Error(_gangaErr(error));
+    return data || [];
+  },
+  // Take a line out of the rotation, or put it back. The words are never edited
+  // — a line already sent to every phone cannot be un-sent.
+  async setThoughtActive(id, on) {
+    const { data, error } = await _sb.rpc("set_thought_active",
+      { tid: id, on_off: !!on });
+    if (error) throw new Error(_gangaErr(error));
+    return data || {};
   },
 
   // ---- the admins' side -------------------------------------------------

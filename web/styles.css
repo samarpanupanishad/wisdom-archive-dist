@@ -3119,39 +3119,248 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
   padding: 1px 8px; font: 700 12px var(--sans);
 }
 .gr-box { margin: 22px 0; }
-.gr-row {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-  padding: 12px 14px; margin-bottom: 12px;
-}
-.gr-who { font: 700 13.5px var(--sans); color: var(--accent); margin-bottom: 6px; }
-.gr-when { font: 400 12px var(--sans); color: var(--muted); margin-left: 8px; }
-.gr-text, .gr-box textarea {
+.gr-box textarea {
   width: 100%; padding: 10px 12px; font: 15px var(--sans); resize: vertical;
   border: 1px solid var(--border); border-radius: 10px;
   background: var(--surface); color: var(--text);
 }
 .gr-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
-.gr-why { display: flex; gap: 8px; margin-top: 10px; }
-.gr-why input {
-  flex: 1; min-width: 0; padding: 10px 12px; font: 14.5px var(--sans);
-  border: 1px solid var(--border); border-radius: 10px;
-  background: var(--surface); color: var(--text);
-}
-/* The duplicate warning is ADVISORY — it offers "Add anyway" and never blocks.
-   Styled as a note rather than an error for exactly that reason. */
+/* ⚠ GONE with the flat queue screen (2026-09-04): .gr-row / .gr-who / .gr-when /
+   .gr-text / .gr-count / .gr-why / .gr-log-*. The queue is a LIST page now
+   (.gl-*) and a decision is made on its own page (.go-*), so nothing rendered
+   those any more. .gr-who and .gr-when came back as .gl-who / .gl-when with the
+   same job — don't restore the old pair beside them. */
+
+/* The duplicate warning is ADVISORY — it offers "Approve anyway" and never
+   blocks. Styled as a note rather than an error for exactly that reason.
+   ⚠ Since 2026-09-04 it also ranks by THEME, not just identical text, so a hit
+   is no longer proof of anything: the band and the percentage are there to be
+   argued with, and every row offers "Return as duplicate" as the alternative to
+   approving rather than as a verdict. */
 .gr-dupe {
   margin-top: 10px; padding: 10px 12px; border-radius: 10px;
   background: var(--accent-soft); border: 1px solid var(--accent-2);
 }
-.gr-dupe-h { font: 700 12.5px var(--sans); color: var(--text); margin-bottom: 6px; }
-.gr-dupe-row { font: 400 13.5px var(--sans); color: var(--text); margin-bottom: 4px; }
-.gr-dupe-n { font: 400 11.5px var(--sans); color: var(--muted); margin-left: 8px; }
-.gr-dupe-a { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
-.gr-log-row { padding: 10px 0; border-bottom: 1px solid var(--border-soft); }
-.gr-log-row:last-child { border-bottom: 0; }
-.gr-log-t { font: 400 14px var(--sans); color: var(--text); white-space: pre-wrap; }
-.gr-log-s { margin-top: 4px; font: 700 12px var(--sans); color: var(--muted); }
-.gr-log-why { margin-top: 2px; font: 400 12.5px var(--sans); color: var(--muted); }
+/* Nothing found: the same panel, in the calm colours, because "this looks new"
+   is an answer the admin asked for and not the absence of one. */
+.gr-dupe.ok { background: var(--bg); border-color: var(--border); }
+.gr-dupe-h { font: 700 12.5px var(--sans); color: var(--text); margin-bottom: 8px; }
+.gr-dupe-row {
+  padding: 8px 0; border-top: 1px solid rgba(0, 0, 0, .07);
+}
+.gr-dupe-row:first-of-type { border-top: 0; }
+/* The band, not the number, is what an admin reads at a glance — three colours,
+   strongest first. The percentage rides along in the muted weight because it is
+   a tie-breaker, not a verdict. */
+.gr-dupe-b {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 700 10.5px var(--sans); text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px; margin-bottom: 5px;
+}
+.gr-dupe-b.same  { background: #c62828; color: #fff; }
+.gr-dupe-b.close { background: var(--accent); color: #fff; }
+.gr-dupe-b.theme { background: #ede7f6; color: #6b3fa0; }
+.gr-dupe-pc { font-weight: 400; opacity: .85; }
+.gr-dupe-t {
+  font: 400 14px/1.5 var(--sans); color: var(--text); white-space: pre-wrap;
+}
+/* The shared words, bolded inside the existing line by gangaHighlight(). This
+   is the only reason the ranking is believable: it shows its working. */
+.gr-dupe-t b { color: #c62828; font-weight: 700; }
+.gr-dupe-n { display: block; margin-top: 3px; font: 400 11.5px var(--sans); color: var(--muted); }
+.gr-dupe-ret { margin-top: 6px; font-size: 12px; padding: 5px 10px; }
+.gr-dupe-a { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+
+/* ---- the link to a member's own quotes, on #/m/gyan ---------------------
+   "Click to see your U. Ganga quotes send to admin" — the operator's wording,
+   verbatim (2026-09-04), grammar included.
+
+   ⚠ PURPLE ON THE OPERATOR'S INSTRUCTION, and it is var(--stamp) — the app's
+   one existing purple (the Samuhik Satsang date stamp, .mm-r-satsang .mm-name).
+   Not a fourth new colour, and deliberately not the #523f86 ink of the नम्र
+   विनंती directly above it: this is a control and that is prose, so they must
+   not read as the same thing.
+
+   ⚠ THE NAME .m-ganga-mine EXISTED BEFORE AND MEANT SOMETHING ELSE. Until
+   2026-08-21 it styled the "Your thoughts" LIST that sat under the compose box,
+   which the operator had removed. This is a link to a separate page, not that
+   list coming back — see the note at gangaMinePage() in app.js before moving
+   anything from #/m/gyanmine onto this screen. */
+.m-ganga-mine {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: 4px 2px 2px; padding: 10px 12px;
+  border: 1px solid #d9cdf0; border-radius: 12px;
+  background: #f4effb;
+  font: 700 13.5px/1.4 var(--sans); color: var(--stamp);
+  text-decoration: none;
+}
+.m-ganga-mine-t { text-decoration: underline; text-underline-offset: 3px; }
+/* The count of quotes sent back for a change. Only drawn when there ARE some —
+   it is the one thing behind this link a member has to act on, and before this
+   page existed there was no way to discover it once the notification was gone. */
+.m-ganga-mine-n {
+  flex: 0 0 auto; background: var(--stamp); color: #fff;
+  border-radius: 999px; padding: 2px 9px; font: 700 11.5px var(--sans);
+}
+/* "2 of 3 left today", under the compose row. ⚠ Drawn only from the server's
+   answer, never a guess: the cap went 8 -> 3 on 2026-09-04 and a resend spends
+   one, so a member can reach the end of their day without writing anything new
+   — and the Send button is the wrong place to learn that. */
+.m-ganga-quota { margin-top: 6px; font: 400 11.5px var(--sans); color: var(--muted); }
+.m-ganga-quota.none { color: #c62828; font-weight: 700; }
+
+/* ---- Your U. Ganga Quotes (#/m/gyanmine) — the member's own list --------- */
+.m-gm { min-height: 40vh; }
+.gm-quota { margin: 2px 0 12px; }
+.gm-quota-in {
+  padding: 8px 12px; border-radius: 10px;
+  background: var(--accent-soft); border: 1px solid var(--accent-2);
+  font: 400 12.5px/1.45 var(--sans); color: var(--text);
+}
+.gm-quota-in.none { background: #fdecec; border-color: #e9a8a8; color: #c62828; font-weight: 700; }
+.gm-row {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 12px;
+}
+/* A returned quote is the only row with something to do, so it is the only one
+   that wears a colour. */
+.gm-row.ret { border-color: #e9a8a8; background: #fffafa; }
+.gm-top { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; flex-wrap: wrap; }
+.gm-chip {
+  font: 700 10.5px var(--sans); text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px;
+}
+.gm-chip.wait { background: var(--accent-soft); color: var(--accent); }
+.gm-chip.ret  { background: #fdecec; color: #c62828; }
+.gm-chip.ok   { background: #e6f4ea; color: #1e7a3c; }
+.gm-again { font: 400 11px var(--sans); color: var(--muted); font-style: italic; }
+.gm-when { margin-left: auto; font: 400 11.5px var(--sans); color: var(--muted); }
+/* The guru's words are the guru's words wherever they appear — the serif, the
+   same as the thought cards on the screen this page is reached from. */
+.gm-t {
+  font: 400 16px/1.6 var(--serif); color: var(--text); white-space: pre-wrap;
+}
+.gm-why {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: #fdecec; font: 400 13px/1.5 var(--sans); color: #a33;
+}
+/* What the admin changed, when they changed anything. Small and set apart: the
+   approved wording is the row's headline, this is the footnote that keeps the
+   member from wondering whether they misremembered their own line. */
+.gm-orig {
+  margin-top: 6px; font: 400 12px/1.5 var(--sans); color: var(--muted); font-style: italic;
+}
+.gm-sent { margin-top: 7px; font: 700 12px var(--sans); color: var(--accent); }
+.gm-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.gm-edit { margin-top: 10px; }
+.gm-edit-h { font: 700 12.5px var(--sans); color: var(--text); margin-bottom: 6px; }
+.gm-ta {
+  width: 100%; padding: 10px 12px; font: 15px var(--sans); resize: vertical;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+}
+.gm-erow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.gm-espacer { flex: 1; }
+.gm-count { font: 400 12px var(--sans); color: var(--muted); }
+.gm-count.full { color: var(--accent); font-weight: 700; }
+
+/* ---- the admins' hub (#/m/gyanreview) — three options ------------------- */
+.gh-tiles { margin: 4px 0 6px; }
+.gh-tile {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 14px; margin-bottom: 10px;
+  border: 1px solid var(--border); border-radius: 14px;
+  background: var(--surface); box-shadow: var(--shadow);
+  text-decoration: none; color: var(--text);
+}
+.gh-ico { flex: 0 0 auto; font-size: 22px; line-height: 1; }
+.gh-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gh-name { font: 700 14.5px var(--sans); color: var(--text); }
+.gh-sub { font: 400 12px var(--sans); color: var(--muted); }
+/* Empty until its count arrives, and empty for ever if the count fails — a
+   tile works without it. ⚠ :empty is what keeps a bare pill from being drawn
+   around nothing while the three requests are in flight. */
+.gh-n {
+  margin-left: auto; flex: 0 0 auto;
+  background: var(--accent); color: #fff; border-radius: 999px;
+  padding: 2px 10px; font: 700 12.5px var(--sans);
+}
+.gh-n:empty { display: none; }
+.gh-t-pend .gh-ico { filter: none; }
+
+/* ---- the three lists ---------------------------------------------------- */
+.gl-tools { margin-bottom: 12px; }
+.gl-q {
+  width: 100%; padding: 10px 12px; font: 14.5px var(--sans);
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+}
+.gl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.gl-chip {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 999px; padding: 5px 11px; font: 600 12px var(--sans);
+}
+.gl-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.gl-n { font: 700 12.5px var(--sans); color: var(--muted); margin: 2px 2px 10px; }
+.gl-row {
+  display: block; text-decoration: none; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 10px;
+}
+/* A withdrawn line is still readable — it is history, not an error — but it must
+   not look like something that is going out tonight. */
+.gl-row.off { opacity: .62; }
+.gl-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.gl-who { font: 700 13px var(--sans); color: var(--accent); }
+.gl-again { font: 400 11px var(--sans); color: var(--muted); font-style: italic; }
+.gl-when { margin-left: auto; font: 400 11.5px var(--sans); color: var(--muted); }
+.gl-src {
+  font: 700 10.5px var(--sans); text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px;
+}
+.gl-src.mem { background: #ede7f6; color: #6b3fa0; }
+.gl-src.adm { background: var(--accent-soft); color: var(--accent); }
+.gl-off {
+  font: 700 10.5px var(--sans); text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px; background: #eee; color: #666;
+}
+.gl-t { font: 400 15.5px/1.6 var(--serif); color: var(--text); white-space: pre-wrap; }
+.gl-meta { margin-top: 6px; font: 400 11.5px var(--sans); color: var(--muted); }
+.gl-go { display: inline-block; margin-top: 8px; font: 700 12px var(--sans); color: var(--accent); }
+.gl-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+
+/* ---- ONE quote, the whole page to it (#/m/gyanreview?id=) --------------- */
+.m-go { min-height: 40vh; }
+.go-head { margin-bottom: 10px; }
+.go-who { font: 700 14.5px var(--sans); color: var(--accent); }
+.go-when { font: 400 12px var(--sans); color: var(--muted); margin-left: 8px; }
+.go-again { margin-top: 4px; font: 700 12px var(--sans); color: var(--stamp); }
+.go-left { margin-top: 4px; font: 400 11.5px var(--sans); color: var(--muted); }
+/* ⚠ A TEXTAREA, not static text: an admin may correct a word before approving,
+   and the alternative is returning a hundred-character line and asking somebody
+   to retype it. The serif is deliberate — it is the guru's words being read
+   here, not a form field being filled. */
+.go-text {
+  width: 100%; padding: 14px; font: 400 17px/1.65 var(--serif); resize: vertical;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); color: var(--text);
+}
+.go-note { margin-top: 6px; font: 400 11.5px/1.5 var(--sans); color: var(--muted); }
+.go-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap; }
+/* The return box gets the whole page, at the operator's request (2026-09-04) —
+   it was a one-line <input> squeezed into a queue row, and a reason a member is
+   shown word for word deserves more room than a search field. */
+.go-why {
+  margin-top: 16px; padding: 14px; border-radius: 12px;
+  background: #fffafa; border: 1px solid #e9a8a8;
+}
+.go-why-h { font: 700 13px/1.45 var(--sans); color: #a33; margin-bottom: 10px; }
+.go-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.go-reason {
+  width: 100%; padding: 12px; font: 15px/1.6 var(--sans); resize: vertical;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text);
+}
 
 .m-acc-card { display: flex; align-items: center; gap: 16px; padding: 18px 4px; margin-bottom: 14px; }
 .m-community { min-height: 60vh; }

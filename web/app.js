@@ -19456,11 +19456,27 @@ const MOBILE_UI = (() => {
       `<div class="m-ganga-head">` +
         `<div id="m-ganga-compose"></div>` +
         `<div class="m-ganga-instr" id="m-ganga-instr"></div>` +
+        // ⚠ The link to their own quotes goes HERE — below the नम्र विनंती and
+        // above "Latest Notification" (operator, 2026-09-04) — which means
+        // inside the PINNED pane, not at the top of the scrolling list. Two
+        // reasons, and the second is the one that matters:
+        //   · pinned, it is on screen whenever this screen is, and the member
+        //     never has to scroll past three thoughts to find out what became
+        //     of their own;
+        //   · the list is repainted every minute by the timer at the bottom of
+        //     this function. A link inside it would be fine, but the RESEND
+        //     count on it comes from a network call that lands whenever it
+        //     lands — and the one rule of this screen is that nothing painted
+        //     on a timer may share a parent with something a member is
+        //     mid-way through. Its own div, painted twice, is the cheap way to
+        //     never think about that again.
+        `<div id="m-ganga-mine"></div>` +
       `</div>` +
       `<div id="m-gyan-list" class="m-gyan-list"></div>`;
     const listEl = node.querySelector("#m-gyan-list");
     const instrEl = node.querySelector("#m-ganga-instr");
     const composeEl = node.querySelector("#m-ganga-compose");
+    const mineEl = node.querySelector("#m-ganga-mine");
 
     // Which of the shown thoughts (if any) came from THIS member's own
     // "date:slot" keys. Filled by loadMine() below; see the two places it is
@@ -19646,6 +19662,13 @@ const MOBILE_UI = (() => {
             `<span class="m-ganga-count" id="m-ganga-count">0 / ${limit}</span>` +
             `<button class="btn primary m-ganga-sendbtn" id="m-ganga-send" disabled>Send to Admin for Quote Approval</button>` +
           `</div>` +
+          // How much of today's allowance is left. ⚠ It is drawn EMPTY and
+          // filled by the quota fetch below — never a guessed number. The cap
+          // went from eight a day to THREE on 2026-09-04 and a resend spends
+          // one of them, so a member can now reach the end of their day in a
+          // way they never could before; being told at the Send button, after
+          // composing, is exactly the moment not to find out.
+          `<div class="m-ganga-quota" id="m-ganga-quota"></div>` +
         `</div>`;
 
       const ta = composeEl.querySelector("#m-ganga-ta");
@@ -19679,6 +19702,9 @@ const MOBILE_UI = (() => {
           sync();
           toast("Sent to the admins 🙏");
           loadMine();
+          // One fewer left today. Silent on failure — the line is sent either
+          // way, and a stale counter is better than an error over a success.
+          WA.myGangaQuota().then(paintQuota).catch(() => {});
         } catch (e) {
           toast((e && e.message) || "Couldn't send that just now.");
         } finally {
@@ -19689,23 +19715,45 @@ const MOBILE_UI = (() => {
     };
     paintCompose();
 
-    // The authoritative limit, fetched after the box is already usable. Repainting
-    // is safe here and only here: it happens once, within a second of opening,
-    // before anybody has finished a sentence — and only when the number actually
-    // moved, which is almost never.
+    // The authoritative limit AND today's allowance, in one call, after the box
+    // is already usable. Repainting is safe here and only here: it happens once,
+    // within a second of opening, before anybody has finished a sentence — and
+    // only when the number actually moved, which is almost never.
+    //
+    // ⚠ my_ganga_quota() carries the character limit too, so this is one round
+    // trip and not two. It fails soft to gangaCharLimit() on a server that has
+    // not run part four — the box must work there exactly as it did before, just
+    // without the "2 of 3 left today" line.
+    const paintQuota = (q) => {
+      const slot = composeEl.querySelector("#m-ganga-quota");
+      if (!slot || !q) return;
+      const left = Math.max(0, (q.limit || 0) - (q.used || 0));
+      slot.textContent = left === 0
+        ? "You have sent today's quotes. Please send more tomorrow."
+        : `${left} of ${q.limit} left today`;
+      slot.classList.toggle("none", left === 0);
+    };
     if (isSignedIn()) {
       (async () => {
+        let n = 0;
         try {
-          const n = await WA.gangaCharLimit();
-          if (n && n !== limit) {
-            limit = n;
-            try { localStorage.setItem(GANGA_LIMIT_KEY, String(n)); } catch (_) {}
-            const ta = composeEl.querySelector("#m-ganga-ta");
-            // Don't destroy a half-typed line to widen a box. If they have
-            // started, the new limit applies to their NEXT one.
-            if (!ta || !ta.value) paintCompose();
-          }
+          const q = await WA.myGangaQuota();
+          if (q) { paintQuota(q); n = q.chars; }
         } catch (_) {}
+        if (!n) { try { n = await WA.gangaCharLimit(); } catch (_) { return; } }
+        if (n && n !== limit) {
+          limit = n;
+          try { localStorage.setItem(GANGA_LIMIT_KEY, String(n)); } catch (_) {}
+          const ta = composeEl.querySelector("#m-ganga-ta");
+          // Don't destroy a half-typed line to widen a box. If they have
+          // started, the new limit applies to their NEXT one.
+          // ⚠ paintCompose() rebuilds the quota slot as empty, so the number
+          // has to be put back — the repaint is what wipes it, not a race.
+          if (!ta || !ta.value) {
+            paintCompose();
+            try { paintQuota(await WA.myGangaQuota()); } catch (_) {}
+          }
+        }
       })();
     }
 
@@ -19729,11 +19777,44 @@ const MOBILE_UI = (() => {
     //
     // Silent on every failure, including "not signed in": it decorates and
     // widens the list, it is not the list.
+    // ---- 4a. the way in to their own quotes -------------------------------
+    // ⚠ THE LABEL IS THE OPERATOR'S, VERBATIM (2026-09-04), grammar and all —
+    // house rule for operator copy. Don't tidy "send" to "sent".
+    //
+    // ⚠ Signed-in only. A visitor has no quotes by definition, and the pane
+    // above them is already a sign-in form; a second call to action beside it
+    // would send them to a page that could only say "nothing here".
+    //
+    // The badge is the only reason this is drawn twice. A returned quote is the
+    // one thing on the far side of this link that a member must ACT on, and
+    // before part four there was no way to discover it at all once the
+    // notification was swiped away — so it is counted on the link itself
+    // rather than waiting to be found.
+    const paintMineLink = (returned) => {
+      if (!isSignedIn()) { mineEl.innerHTML = ""; return; }
+      mineEl.innerHTML =
+        `<a class="m-ganga-mine" href="#/m/gyanmine">` +
+          `<span class="m-ganga-mine-t">${escapeHtml(
+            "Click to see your U. Ganga quotes send to admin")}</span>` +
+          (returned
+            ? `<span class="m-ganga-mine-n">${escapeHtml(
+                returned === 1 ? "1 returned" : `${returned} returned`)}</span>`
+            : "") +
+        `</a>`;
+    };
+    paintMineLink(0);
+
     const loadMine = async () => {
       if (!isSignedIn()) return;
       let rows;
-      try { rows = await WA.myGangaSuggestions(20); }
+      try { rows = await WA.myGangaSuggestions(50); }
       catch (_) { return; }
+      // Returned, and not already dealt with. `resubmitted_at` is the test and
+      // not `resubmitted_as`, for the reason given in add_ganga_member_view.sql
+      // section 2 — the link is `on delete set null`, so a deleted row would
+      // otherwise put a badge back on a quote the member has already resent.
+      paintMineLink(rows.filter(
+        (r) => r.status === "declined" && !r.resubmitted_at).length);
       const next = new Set();
       rows.forEach((r) => {
         if (r.first_sent && r.first_slot_date != null && r.first_slot != null) {
@@ -19765,36 +19846,536 @@ const MOBILE_UI = (() => {
     }, 60000);
   }
 
-  // ---- Upanishad Ganga Review — the admins' side (2026-08-20) --------------
-  // Under Sutradhar in the drawer. Four things, in the order an admin uses them:
+  // ---- Your U. Ganga Quotes (#/m/gyanmine) — the member's own record -------
+  // Reached ONLY from the purple link on #/m/gyan (see paintMineLink there).
   //
-  //   1. the queue of member suggestions, each with Approve / Return-with-a-reason;
-  //   2. the admin's own box — a line straight into the pool, tagged as having
-  //      come from a member (jumps the queue) or from the admin (joins the
-  //      rotation). NO Clear button, the same as the member's box;
-  //   3. how long a member's line may be, which the operator may move at will;
-  //   4. what has been decided lately, so a decision can be re-read.
+  // ⚠ THIS IS NOT "Your thoughts" COMING BACK. That list lived UNDER the
+  // compose box on the Upanishad Ganga screen and was removed on 2026-08-21
+  // because the operator wanted that screen clean — and it stays clean: this is
+  // a separate page behind one link. Read the Revision section of
+  // GANGA_SUGGESTIONS_PLAN.md before moving any of it back onto #/m/gyan.
+  //
+  // ⚠ It DOES reverse the other half of that decision (operator, 2026-09-04).
+  // The plan says in as many words that a decline reason is delivered once, in
+  // the notification, and is not re-readable afterwards. It is re-readable now,
+  // and — the part that actually matters — it can be ACTED on: a returned quote
+  // is edited here and sent back for approval. Before this, a returned line was
+  // simply lost the moment the notification was swiped away.
+  //
+  // Two tabs, and the split is not by status but by WHAT IS STILL LIVE:
+  //   Pending  — waiting, AND returned-but-not-yet-resent (operator: "pending
+  //              should contain return thought also"). Both are quotes with
+  //              something still to happen to them.
+  //   Approved — accepted, and if it has gone out, the hour everybody read it.
+  //
+  // A returned quote that HAS been resent is in neither: it is finished, and its
+  // words are in the new pending row instead. That is what `resubmitted_at` is
+  // for — see add_ganga_member_view.sql section 2.
+  const GM_TABS = [
+    { key: "pending",  label: "Pending" },
+    { key: "approved", label: "Approved" },
+  ];
+
+  // The operator's words, verbatim (2026-09-04), for the one case that is
+  // neither tab being empty but the member never having sent anything at all.
+  const GM_NONE = "No U. Ganga quotes sent by you";
+
+  async function gangaMinePage(params) {
+    const node = el(`<div class="m-gm"></div>`);
+    pageFrame("Your U. Ganga Quotes", node);
+
+    if (!isSignedIn()) {
+      node.innerHTML = `<div class="m-hint" style="margin-bottom:12px">${escapeHtml(
+        "Sign in to see the quotes you have sent to the admins.")}</div>`;
+      node.insertAdjacentHTML("beforeend", modSignInHtml());
+      wireModSignIn(node, () => gangaMinePage(params));
+      return;
+    }
+
+    node.innerHTML =
+      `<div class="m-seg-row">` +
+        `<div class="m-langseg m-msgseg" id="gm-seg" role="group" aria-label="Which quotes">` +
+          GM_TABS.map((t, i) =>
+            `<button data-want="${t.key}" class="${i === 0 ? "active" : ""}" type="button">` +
+            `${escapeHtml(t.label)}</button>`).join("") +
+        `</div>` +
+      `</div>` +
+      `<div class="gm-quota" id="gm-quota"></div>` +
+      `<div id="gm-list"><div class="loading">Loading…</div></div>`;
+
+    const segEl = node.querySelector("#gm-seg");
+    const listEl = node.querySelector("#gm-list");
+    const quotaEl = node.querySelector("#gm-quota");
+    let want = "pending";
+    let rows = [];
+    // The character cap for the resend box. Seeded from the same cached copy the
+    // compose box on #/m/gyan uses, so the editor is usable before the network
+    // answers, and corrected by the quota call below.
+    let limit = gangaLimitCached();
+
+    // How many times these words have been sent, counted by walking BACK along
+    // resubmit_of. ⚠ Done here and NOT in SQL on purpose: the phone already
+    // holds every one of this member's rows, so it is a map lookup, where in
+    // Postgres it would be a correlated recursive subquery inside the list
+    // function (see the note in add_ganga_member_view.sql section 4).
+    const attemptOf = (r, byId) => {
+      let n = 1, cur = r, guard = 0;
+      while (cur && cur.resubmit_of != null && guard++ < 20) {
+        cur = byId.get(Number(cur.resubmit_of));
+        if (cur) n++;
+      }
+      return n;
+    };
+
+    // "Shared with everyone at 11 AM · today", or what is still to come.
+    // ⚠ first_sent is the hour it FIRST went out, and it is the whole reward the
+    // feature is built around — a member who contributes hears their line read
+    // by everybody within the hour. Say when, not just that.
+    const sharedLine = (r) => {
+      if (r.first_sent && r.first_slot_date != null && r.first_slot != null) {
+        const when = gyanWhen({ slot: r.first_slot, date: r.first_slot_date });
+        const again = r.sent_count > 1 ? ` · sent ${r.sent_count}×` : "";
+        return `Shared with everyone at ${when}${again}`;
+      }
+      return "Waiting its turn — it goes out at the top of an hour soon.";
+    };
+
+    const render = () => {
+      const byId = new Map(rows.map((r) => [Number(r.id), r]));
+      // ⚠ The operator's empty state is for having sent NOTHING, ever — not for
+      // a tab that happens to be empty. A member with two approved quotes and an
+      // empty Pending tab has plainly sent something, and telling them otherwise
+      // reads as data loss.
+      if (!rows.length) {
+        listEl.innerHTML = `<div class="m-hint">${escapeHtml(GM_NONE)}</div>`;
+        return;
+      }
+
+      let show;
+      if (want === "approved") {
+        show = rows.filter((r) => r.status === "approved");
+      } else {
+        // Returned-and-not-yet-resent FIRST: it is the only thing on this page
+        // with something for the member to do.
+        const ret = rows.filter((r) => r.status === "declined" && !r.resubmitted_at);
+        const pend = rows.filter((r) => r.status === "pending");
+        show = ret.concat(pend);
+      }
+
+      if (!show.length) {
+        listEl.innerHTML = `<div class="m-hint">${escapeHtml(want === "approved"
+          ? "None of your quotes have been approved yet."
+          : "Nothing of yours is waiting just now.")}</div>`;
+        return;
+      }
+
+      listEl.innerHTML = show.map((r) => {
+        const attempt = attemptOf(r, byId);
+        const again = attempt > 1
+          ? `<span class="gm-again">${escapeHtml(
+              attempt === 2 ? "sent again" : `sent again ×${attempt - 1}`)}</span>`
+          : "";
+
+        if (r.status === "approved") {
+          const words = r.approved_text || r.text || "";
+          // Shown only when the admin actually changed something. The member's
+          // own words are kept on the row for exactly this — an approval that
+          // quietly reads differently from what somebody wrote is worse than one
+          // that says so.
+          const fixed = (r.approved_text && r.text && r.approved_text !== r.text)
+            ? `<div class="gm-orig">${escapeHtml("You wrote: " + r.text)}</div>` : "";
+          return `<div class="gm-row ok">` +
+            `<div class="gm-top"><span class="gm-chip ok">Approved</span>${again}` +
+              `<span class="gm-when">${escapeHtml(timeAgo(r.decided_at || r.created_at))}</span></div>` +
+            `<div class="gm-t">${escapeHtml(words)}</div>` +
+            fixed +
+            `<div class="gm-sent">${escapeHtml(sharedLine(r))}</div>` +
+          `</div>`;
+        }
+
+        if (r.status === "declined") {
+          return `<div class="gm-row ret" data-id="${escapeHtml(String(r.id))}">` +
+            `<div class="gm-top"><span class="gm-chip ret">Returned</span>${again}` +
+              `<span class="gm-when">${escapeHtml(timeAgo(r.decided_at || r.created_at))}</span></div>` +
+            `<div class="gm-t">${escapeHtml(r.text || "")}</div>` +
+            `<div class="gm-why">${escapeHtml("Reason: " + (r.decline_reason || ""))}</div>` +
+            `<div class="gm-acts">` +
+              `<button class="btn primary" data-act="edit" type="button">Send back</button>` +
+            `</div>` +
+            // ⚠ Built with the row, not on demand, so that opening it is a
+            // `hidden` toggle and never a repaint. A repaint here would throw
+            // away whatever the member had already typed into it — the same trap
+            // the compose box on #/m/gyan is shaped around.
+            `<div class="gm-edit" hidden>` +
+              `<div class="gm-edit-h">${escapeHtml(
+                "Change it and send it back for approval.")}</div>` +
+              `<textarea class="gm-ta" rows="4" maxlength="${limit}">${escapeHtml(r.text || "")}</textarea>` +
+              `<div class="gm-erow">` +
+                `<span class="gm-count">0 / ${limit}</span>` +
+                `<span class="gm-espacer"></span>` +
+                `<button class="btn" data-act="edit-cancel" type="button">Cancel</button>` +
+                `<button class="btn primary" data-act="resend" type="button">Send for approval</button>` +
+              `</div>` +
+            `</div>` +
+          `</div>`;
+        }
+
+        return `<div class="gm-row wait">` +
+          `<div class="gm-top"><span class="gm-chip wait">Waiting</span>${again}` +
+            `<span class="gm-when">${escapeHtml(timeAgo(r.created_at))}</span></div>` +
+          `<div class="gm-t">${escapeHtml(r.text || "")}</div>` +
+          `<div class="gm-sent">${escapeHtml("With the admins.")}</div>` +
+        `</div>`;
+      }).join("");
+    };
+
+    const load = async () => {
+      try { rows = await WA.myGangaSuggestions(100); }
+      catch (e) {
+        listEl.innerHTML = `<div class="m-hint">${escapeHtml(
+          (e && e.message) || "Couldn't reach the server just now.")}</div>`;
+        return;
+      }
+      render();
+    };
+
+    segEl.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-want]");
+      if (!b || b.dataset.want === want) return;
+      want = b.dataset.want;
+      segEl.querySelectorAll("button").forEach((x) =>
+        x.classList.toggle("active", x.dataset.want === want));
+      render();
+    });
+
+    // One delegated handler, because the list is rebuilt after every resend.
+    listEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const row = btn.closest(".gm-row");
+      if (!row) return;
+      const box = row.querySelector(".gm-edit");
+      const act = btn.dataset.act;
+
+      if (act === "edit" || act === "edit-cancel") {
+        box.hidden = act !== "edit";
+        if (!box.hidden) {
+          const ta = box.querySelector(".gm-ta");
+          const count = box.querySelector(".gm-count");
+          const sync = () => {
+            count.textContent = `${ta.value.length} / ${limit}`;
+            count.classList.toggle("full", ta.value.length >= limit);
+          };
+          // Wired on OPEN rather than at build time: most rows are never
+          // opened, and this way each is wired at most once per paint.
+          if (!ta.dataset.wired) { ta.dataset.wired = "1"; ta.addEventListener("input", sync); }
+          sync();
+          ta.focus();
+        }
+        return;
+      }
+
+      if (act === "resend") {
+        const id = Number(row.dataset.id);
+        const ta = box.querySelector(".gm-ta");
+        const text = (ta.value || "").trim();
+        if (!text) { toast("Write something first."); return; }
+        row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+        try {
+          const res = await WA.resubmitGangaSuggestion(id, text);
+          // The admins are told exactly as they are for a fresh send — a resend
+          // is a new row in their queue and rides the push that already exists.
+          // Fire-and-forget: the row is in the queue either way.
+          if (res && res.id) WA.notifyGangaPending(res.id);
+          toast("Sent to the admins 🙏");
+          await load();
+          WA.myGangaQuota().then(paintQuota).catch(() => {});
+        } catch (err) {
+          toast((err && err.message) || "Couldn't send that just now.");
+          row.querySelectorAll("button").forEach((b) => (b.disabled = false));
+        }
+      }
+    });
+
+    // ⚠ The same "n of 3 left today" line as the compose box, and it belongs
+    // here MORE than there: a resend spends one of the day's allowance
+    // (operator, 2026-09-04), so this is the screen where somebody can run out
+    // without having written anything new at all.
+    const paintQuota = (q) => {
+      if (!q) { quotaEl.innerHTML = ""; return; }
+      const left = Math.max(0, (q.limit || 0) - (q.used || 0));
+      // ⚠ The rows may ALREADY be painted by the time this lands, and they carry
+      // the resend box's `maxlength` and its counter — drawn from the CACHED
+      // limit, which is whatever the compose box on #/m/gyan last saw. If the
+      // admins have moved it since, a member would be held to the old number on
+      // this screen alone. Repaint when it actually moved, and NEVER while an
+      // editor is open: that would throw away a half-typed resend, which is the
+      // one thing every pane in this feature is shaped to avoid.
+      if (q.chars && q.chars !== limit) {
+        limit = q.chars;
+        if (rows.length && !listEl.querySelector(".gm-edit:not([hidden])")) render();
+      }
+      quotaEl.innerHTML = `<div class="gm-quota-in${left ? "" : " none"}">` +
+        escapeHtml(left === 0
+          ? "You have sent today's quotes. Sending one back also counts, so please try again tomorrow."
+          : `${left} of ${q.limit} left today — sending a returned quote back counts as one.`) +
+        `</div>`;
+    };
+    WA.myGangaQuota().then(paintQuota).catch(() => {});
+
+    await load();
+  }
+
+  // ---- Upanishad Ganga Review — the admins' side (2026-08-20) --------------
+  // Under Sutradhar in the drawer, and where the `ganga_pending` notification
+  // lands. FOUR SCREENS behind ONE route since 2026-09-04, chosen by query
+  // string so that route stays exactly what the FCM payloads already on phones
+  // carry:
+  //
+  //   #/m/gyanreview                 → the hub: three options, then the admin's
+  //                                    own box and the two limits
+  //   #/m/gyanreview?list=pending    → the queue, one row per member quote
+  //   #/m/gyanreview?list=approved   → what has been accepted
+  //   #/m/gyanreview?list=all        → the POOL — every thought there is
+  //   #/m/gyanreview?id=<n>          → ONE pending quote, the whole page to it
+  //
+  // ⚠ A `ganga_pending` push therefore lands on the HUB, not on the queue, and
+  // that is one extra tap on the one journey that matters most. It is deliberate:
+  // the alternative is a second route inside live notification payloads, and a
+  // route that only some phones understand is how a notification becomes a blank
+  // screen. The Pending option carries a count, so the tap is aimed.
   //
   // ⚠ Approving INSERTS INTO THE POOL. That is the entire point of this screen —
   // before it existed, a thought could only be added by opening the Supabase
   // dashboard. It also means an approval is a publication: the line goes out to
   // every phone at the top of the next hour, ahead of everything else.
   //
-  // ⚠ Hiding this route from members is COURTESY, not security. Every RPC it
-  // calls re-checks wa_is_mod() in Postgres, and the anon key ships in
+  // ⚠ Hiding these routes from members is COURTESY, not security. Every RPC they
+  // call re-checks wa_is_mod() in Postgres, and the anon key ships in
   // wa-supabase.js — so the queue is shut by the database, not by the drawer.
+  // ==========================================================================
+  // THE DUPLICATE CHECK (2026-09-04) — themes, not just identical strings
   //
-  // ⚠ The duplicate check is ADVISORY and must stay that way. It compares
-  // punctuation-stripped text (ganga_norm), which will both miss real duplicates
-  // and flag lines that merely share a phrase. Blocking on it would put the admin
-  // in an argument with a regex about the guru's words.
-  const GR_STATUS = {
-    pending:  { icon: "⏳", label: "Waiting" },
-    approved: { icon: "🌸", label: "Approved" },
-    declined: { icon: "↩️", label: "Returned" },
-  };
+  // ⚠ IT IS ADVISORY AND MUST STAY THAT WAY. Everything below is a ranking, not
+  // a verdict: it will flag lines that merely share a subject and miss real
+  // duplicates that share no vocabulary. Every path out of it offers "Approve
+  // anyway", and blocking on it would put an admin in an argument with a regex
+  // about the guru's words.
+  //
+  // WHY IT MOVED OFF THE SERVER. ganga_similar_thoughts() (part three, still
+  // there, still used as the fallback) matches punctuation-stripped text either
+  // exactly or by containment. That answers "is this the same line?" and cannot
+  // answer the question the operator actually asked (2026-09-04): a member sends
+  // something about डर एक विचार and the admin wants to see what is already in
+  // the pool ON THAT THEME, so they can decide between approving it and
+  // returning it as a duplicate. Containment finds nothing there.
+  //
+  // So the pool — which this screen downloads anyway for the All list — is
+  // scored on the phone:
+  //   · split into words, drop the words that carry no subject (है, का, में, एक…);
+  //   · a shared word counts 1, a shared 4-character STEM counts 0.6, which is
+  //     what makes विचार / विचारों / विचारों-में one word;
+  //   · Dice over those, plus a bonus for shared adjacent PAIRS, because two
+  //     lines that both say डर and विचार next to each other are far more alike
+  //     than two that happen to use both words apart;
+  //   · identical or contained text short-circuits to the top.
+  //
+  // ⚠ Being in JS is the point, not an accident: the operator will want to tune
+  // what counts as "the same theme", and here that is an OTA publish rather than
+  // a migration. It also runs offline and instantly, on a pool already in hand.
+  //
+  // ⚠ The stopword list is deliberately SHORT. Every word removed is a word two
+  // unrelated lines can no longer be judged by — but it is also a word that can
+  // no longer make them look alike. Grammar goes; anything that could be a
+  // subject stays. "एक" is in it (it is a number, not a theme) and that is what
+  // makes डर एक विचार reduce to डर + विचार, which is the operator's example.
+  const GANGA_STOP = new Set((
+    "है हैं हूँ हूं था थे थी थीं हो होना होता होती होते होगा होगी करना करने करता " +
+    "करती करते किया किये किए की गई गए गया जाता जाती जाते रहा रही रहे रहना लिया " +
+    "दिया का की के को में से पर तक और या भी ही तो कि जो यह वह ये वो इस उस इन उन " +
+    "अपना अपनी अपने मैं मुझे मेरा मेरी मेरे हम हमें हमारा हमारी आप आपका आपकी आपके " +
+    "नहीं ना मत कोई कुछ सब सभी जब तब अगर लेकिन क्योंकि लिए द्वारा साथ बाद पहले " +
+    "एक दो कर बहुत ऐसा ऐसे जैसे वहाँ यहाँ अब फिर " +
+    "the a an is are was were be been am of to in on at for and or but if it its " +
+    "this that these those with as by from we you your our i my me not no yes do " +
+    "does did so then than there here very can will would should"
+  ).split(/\s+/).filter(Boolean));
 
-  async function gangaReviewPage() {
+  // Devanagari block + word characters; everything else (spaces, ASCII
+  // punctuation, quotes) is a separator.
+  // ⚠ An explicit range rather than a \p{...} property escape: those need the
+  // `u` flag and a WebView new enough for Unicode property escapes, and this
+  // file runs inside whatever WebView the installed APK happens to carry.
+  const GANGA_SPLIT = /[^ऀ-ॿ0-9A-Za-z]+/;
+  // ⚠ THE DANDA IS INSIDE THAT RANGE AND MUST BE STRIPPED FIRST. । and ॥ are
+  // Devanagari code points (U+0964/U+0965), so the class above treats them as
+  // LETTERS — which silently made "है।" a different word from "है", kept it out of
+  // GANGA_STOP, and gave every sentence ending in a danda a content word in
+  // common with every other. Measured before the fix: an exact-match query
+  // dragged five unrelated lines up as "Same theme" purely on "है।". That is
+  // precisely the crying-wolf this check must not do.
+  // ॰/ॱ are the abbreviation signs, here for the same reason.
+  // SQL's ganga_norm() names ।॥ explicitly too, and for the same reason
+  // ([[:punct:]] does not cover them) — the two must agree.
+  const GANGA_PUNCT = /[।॥॰ॱ]+/g;
+
+  function gangaPrep(text) {
+    const words = String(text || "").toLowerCase()
+      .replace(GANGA_PUNCT, " ").split(GANGA_SPLIT).filter(Boolean);
+    const content = words.filter((w) => !GANGA_STOP.has(w));
+    const stem = (w) => (w.length > 4 ? w.slice(0, 4) : w);
+    const bi = [];
+    for (let i = 1; i < content.length; i++) bi.push(stem(content[i - 1]) + " " + stem(content[i]));
+    return {
+      norm: words.join(""),                     // the same idea as SQL's ganga_norm()
+      set: new Set(content),
+      stems: new Set(content.map(stem)),
+      bigrams: new Set(bi),
+      n: content.length,
+    };
+  }
+
+  // 0..1, with the words that made the case. `shared` drives the highlighting —
+  // an admin should be able to see WHY two lines were called alike, or the
+  // ranking is just a number to be distrusted.
+  function gangaMatch(a, b) {
+    if (!a.norm || !b.norm) return { score: 0, shared: [] };
+    if (a.norm === b.norm) return { score: 1, shared: [...a.set] };
+    const contained = a.norm.length > 6 && b.norm.length > 6 &&
+      (a.norm.indexOf(b.norm) >= 0 || b.norm.indexOf(a.norm) >= 0);
+
+    const shared = [];
+    let weight = 0;
+    a.set.forEach((w) => { if (b.set.has(w)) { shared.push(w); weight += 1; } });
+    // Stems only for words that did NOT already match whole, or a word would be
+    // paid for twice.
+    a.stems.forEach((s) => {
+      if (b.stems.has(s) && !shared.some((w) => (w.length > 4 ? w.slice(0, 4) : w) === s)) {
+        weight += 0.6;
+      }
+    });
+    let score = (a.n + b.n) ? (2 * weight) / (a.n + b.n) : 0;
+
+    let pairs = 0;
+    a.bigrams.forEach((g) => { if (b.bigrams.has(g)) pairs++; });
+    if (pairs) score += Math.min(0.3, 0.15 * pairs);
+
+    if (contained) score = Math.max(score, 0.92);
+    return { score: Math.min(0.99, score), shared: shared };
+  }
+
+  // The bands the admin actually reads. Below GANGA_DUP_MIN nothing is shown at
+  // all — a single shared word between two long lines is noise, and a warning
+  // that cries wolf is one an admin learns to tap through.
+  const GANGA_DUP_MIN = 0.22;
+  const gangaBand = (s) => (s >= 0.85 ? { k: "same", label: "Same line" }
+                          : s >= 0.5  ? { k: "close", label: "Very close" }
+                          :             { k: "theme", label: "Same theme" });
+
+  // The pool, held for the life of the screen. Five minutes is long enough that
+  // working through a queue does not re-download it per quote, and short enough
+  // that a line approved two quotes ago is found by the next check.
+  let _gangaPool = null, _gangaPoolAt = 0;
+  async function gangaPool(force) {
+    if (!force && _gangaPool && Date.now() - _gangaPoolAt < 300000) return _gangaPool;
+    const rows = await WA.listGangaThoughts(3000);
+    rows.forEach((r) => { r._p = gangaPrep(r.text_hi); });
+    _gangaPool = rows;
+    _gangaPoolAt = Date.now();
+    return _gangaPool;
+  }
+
+  // Returns [{ row, score, shared, band }], best first. Falls back to part
+  // three's server check when the pool cannot be read — a server that has not
+  // run add_ganga_member_view.sql still gets the old exact/containment warning
+  // rather than nothing at all.
+  async function gangaDuplicates(text) {
+    const p = gangaPrep(text);
+    if (!p.n) return [];
+    let pool;
+    try { pool = await gangaPool(false); }
+    catch (_) {
+      let hits = [];
+      try { hits = await WA.gangaSimilarThoughts(text); } catch (__) { return []; }
+      return hits.map((h) => ({ row: h, score: 0.9, shared: [], band: gangaBand(0.9) }));
+    }
+    const out = [];
+    pool.forEach((r) => {
+      const m = gangaMatch(p, r._p);
+      if (m.score >= GANGA_DUP_MIN) {
+        out.push({ row: r, score: m.score, shared: m.shared, band: gangaBand(m.score) });
+      }
+    });
+    out.sort((x, y) => y.score - x.score);
+    return out.slice(0, 8);
+  }
+
+  // The hit's own words, with the words it shares with the quote under review
+  // in bold. ⚠ Escaped FIRST, then wrapped — the bold is a wrapper this function
+  // adds, never markup coming out of a thought.
+  function gangaHighlight(text, shared) {
+    const esc = escapeHtml(String(text || ""));
+    if (!shared || !shared.length) return esc;
+    // Longest first, so डरना is marked before डर and the shorter match cannot
+    // eat the inside of the longer one.
+    const words = [...new Set(shared)].filter((w) => w.length > 1)
+      .sort((a, b) => b.length - a.length)
+      .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    if (!words.length) return esc;
+    return esc.replace(new RegExp("(" + words.join("|") + ")", "gi"), "<b>$1</b>");
+  }
+
+  // The panel itself, shared by the queue's detail page and the admin's own box.
+  // `onGo` is what "Approve anyway" / "Add anyway" does; `onDupe` (optional) is
+  // offered per hit and is how a quote is returned AS a duplicate, with the line
+  // it duplicates already written into the reason.
+  function gangaDupeHtml(hits) {
+    if (!hits.length) {
+      return `<div class="gr-dupe ok">` +
+        `<div class="gr-dupe-h">${escapeHtml(
+          "Nothing like it in the pool. This looks new.")}</div>` +
+        `<div class="gr-dupe-a"><button class="btn" data-dupe="cancel" type="button">Close</button></div>` +
+      `</div>`;
+    }
+    return `<div class="gr-dupe">` +
+      `<div class="gr-dupe-h">${escapeHtml(hits.length === 1
+        ? "One line in the pool is like this one:"
+        : `${hits.length} lines in the pool are like this one:`)}</div>` +
+      hits.map((h, i) =>
+        `<div class="gr-dupe-row">` +
+          `<div class="gr-dupe-b ${h.band.k}">${escapeHtml(h.band.label)}` +
+            `<span class="gr-dupe-pc">${Math.round(h.score * 100)}%</span></div>` +
+          `<div class="gr-dupe-t">${gangaHighlight(h.row.text_hi, h.shared)}</div>` +
+          `<div class="gr-dupe-n">${escapeHtml(
+            (h.row.active === false ? "withdrawn" : "in the pool") +
+            (h.row.sent_count ? ` · sent ${h.row.sent_count}×` : " · not sent yet") +
+            (h.row.suggested_name ? ` · from ${h.row.suggested_name}` : ""))}</div>` +
+          `<button class="btn gr-dupe-ret" data-dupe="return" data-hit="${i}" type="button">` +
+            `Return as duplicate</button>` +
+        `</div>`).join("") +
+      `<div class="gr-dupe-a">` +
+        `<button class="btn" data-dupe="cancel" type="button">Look again</button>` +
+        `<button class="btn primary" data-dupe="go" type="button">Approve anyway</button>` +
+      `</div>` +
+    `</div>`;
+  }
+
+  // ---- the route ----------------------------------------------------------
+  async function gangaReviewRoute(params) {
+    const id = params && params.get("id");
+    if (id) return gangaOnePage(Number(id));
+    const list = params && params.get("list");
+    if (list === "pending" || list === "approved" || list === "all") {
+      return gangaListPage(list);
+    }
+    return gangaHubPage();
+  }
+
+  // ---- 1. the hub ---------------------------------------------------------
+  // The three options the operator asked for, then the two things that were
+  // already on this screen and had nowhere better to go: the admin's own box,
+  // and the limits members are held to.
+  async function gangaHubPage() {
     const node = el(`<div class="m-gr"></div>`);
     pageFrame("Upanishad Ganga Review", node);
 
@@ -19804,151 +20385,53 @@ const MOBILE_UI = (() => {
       return;
     }
 
+    const tile = (href, cls, icon, name, sub, id) =>
+      `<a class="gh-tile ${cls}" href="${href}">` +
+        `<span class="gh-ico">${icon}</span>` +
+        `<span class="gh-txt"><span class="gh-name">${escapeHtml(name)}</span>` +
+          `<span class="gh-sub">${escapeHtml(sub)}</span></span>` +
+        `<span class="gh-n" id="${id}"></span>` +
+      `</a>`;
+
     node.innerHTML =
-      `<div id="gr-queue"><div class="loading">Loading…</div></div>` +
+      `<div class="gh-tiles">` +
+        tile("#/m/gyanreview?list=pending", "gh-t-pend", "⏳",
+             "Pending U. Ganga quotes", "Waiting for your decision", "gh-n-pend") +
+        tile("#/m/gyanreview?list=approved", "gh-t-ok", "🌸",
+             "Approved U. Ganga quotes", "What you have accepted", "gh-n-ok") +
+        tile("#/m/gyanreview?list=all", "gh-t-all", "📿",
+             "All U. Ganga Quotes", "Every quote in the pool, admin and member", "gh-n-all") +
+      `</div>` +
       `<div id="gr-compose"></div>` +
-      `<div id="gr-limit"></div>` +
-      `<div id="gr-log"></div>`;
-    const queueEl = node.querySelector("#gr-queue");
+      `<div id="gr-limit"></div>`;
+
     const composeEl = node.querySelector("#gr-compose");
     const limitEl = node.querySelector("#gr-limit");
-    const logEl = node.querySelector("#gr-log");
 
-    // Shown under a row or under the admin's box when a similar line already
-    // exists. Returns true if the caller should stop and let the admin look.
-    const warnDuplicates = async (host, text) => {
-      let hits = [];
-      try { hits = await WA.gangaSimilarThoughts(text); } catch (_) { return false; }
-      if (!hits.length) return false;
-      host.innerHTML =
-        `<div class="gr-dupe">` +
-          `<div class="gr-dupe-h">${escapeHtml(
-            hits.length === 1 ? "A similar line is already in the pool:"
-                              : "Similar lines are already in the pool:")}</div>` +
-          hits.map((h) => `<div class="gr-dupe-row">${escapeHtml(h.text_hi)}` +
-            `<span class="gr-dupe-n">${escapeHtml(
-              h.active ? `sent ${h.sent_count}×` : "withdrawn")}</span></div>`).join("") +
-          `<div class="gr-dupe-a">` +
-            `<button class="btn" data-dupe="cancel">Look again</button>` +
-            `<button class="btn primary" data-dupe="go">Add anyway</button>` +
-          `</div>` +
-        `</div>`;
-      return true;
-    };
+    // The three counts, in parallel and each silent on failure: a count is a
+    // convenience on a tile that works without it.
+    const setN = (id, v) => { const s = node.querySelector("#" + id); if (s) s.textContent = v; };
+    WA.listGangaSuggestions("pending", 500)
+      .then((r) => setN("gh-n-pend", r.filter((x) => !x.superseded).length || ""))
+      .catch(() => {});
+    WA.listGangaSuggestions("approved", 500)
+      .then((r) => setN("gh-n-ok", r.length || "")).catch(() => {});
+    gangaPool(true).then((r) => setN("gh-n-all", r.length || "")).catch(() => {});
 
-    // ---- 1. the queue -----------------------------------------------------
-    const loadQueue = async () => {
-      let rows;
-      try { rows = await WA.listGangaSuggestions("pending", 100); }
-      catch (e) { queueEl.innerHTML = `<div class="m-hint">${escapeHtml(e.message)}</div>`; return; }
-
-      if (!rows.length) {
-        queueEl.innerHTML = `<div class="gr-h">Waiting for you</div>` +
-          `<div class="m-hint">${escapeHtml("Nothing is waiting right now.")}</div>`;
-        return;
-      }
-
-      queueEl.innerHTML = `<div class="gr-h">Waiting for you` +
-        `<span class="gr-count">${rows.length}</span></div>` +
-        rows.map((r) =>
-          `<div class="gr-row" data-id="${escapeHtml(String(r.id))}">` +
-            `<div class="gr-who">${escapeHtml(r.username || "A member")}` +
-              `<span class="gr-when">${escapeHtml(timeAgo(r.created_at))}</span></div>` +
-            // ⚠ A TEXTAREA, not static text: the admin may fix a typo before
-            // approving, and the alternative is returning a hundred-character
-            // line and asking somebody to retype the whole thing. What is sent
-            // is whatever is in this box; what the member wrote is kept
-            // untouched in the row (approve_ganga_suggestion keeps both).
-            `<textarea class="gr-text" rows="2">${escapeHtml(r.text || "")}</textarea>` +
-            `<div class="gr-warn"></div>` +
-            `<div class="gr-acts">` +
-              `<button class="btn" data-act="decline">Return…</button>` +
-              `<button class="btn primary" data-act="approve">Approve</button>` +
-            `</div>` +
-            `<div class="gr-why" hidden>` +
-              `<input class="gr-reason" type="text" maxlength="200" ` +
-                `placeholder="${escapeHtml("Why are you returning it? The member is shown this.")}">` +
-              `<button class="btn" data-act="decline-send">Send back</button>` +
-            `</div>` +
-          `</div>`).join("");
-    };
-
-    // One delegated handler for the whole queue — the rows are rebuilt after
-    // every decision, so per-row listeners would have to be rewired each time.
-    queueEl.addEventListener("click", async (e) => {
-      const btn = e.target.closest("button[data-act], button[data-dupe]");
-      if (!btn) return;
-      const row = btn.closest(".gr-row");
-      if (!row) return;
-      const id = Number(row.dataset.id);
-      const ta = row.querySelector(".gr-text");
-      const warn = row.querySelector(".gr-warn");
-      const why = row.querySelector(".gr-why");
-      const text = (ta.value || "").trim();
-
-      const approve = async () => {
-        if (!text) { toast("There is nothing to approve."); return; }
-        row.querySelectorAll("button").forEach((b) => (b.disabled = true));
-        try {
-          await WA.approveGangaSuggestion(id, text);
-          // Tell the member. Fire-and-forget: the approval is written either way.
-          WA.notifyGangaDecision(id, true);
-          toast("Approved — it goes out at the top of the next hour 🌸");
-          await loadQueue();
-          loadLog();
-        } catch (err) {
-          toast((err && err.message) || "Couldn't approve that.");
-          row.querySelectorAll("button").forEach((b) => (b.disabled = false));
-        }
-      };
-
-      if (btn.dataset.dupe === "cancel") { warn.innerHTML = ""; return; }
-      if (btn.dataset.dupe === "go") { warn.innerHTML = ""; return approve(); }
-
-      if (btn.dataset.act === "approve") {
-        // Advisory only — if something similar is already in the pool, say so and
-        // let the admin decide. "Add anyway" comes straight back here.
-        if (await warnDuplicates(warn, text)) return;
-        return approve();
-      }
-
-      if (btn.dataset.act === "decline") {
-        why.hidden = !why.hidden;
-        if (!why.hidden) why.querySelector(".gr-reason").focus();
-        return;
-      }
-
-      if (btn.dataset.act === "decline-send") {
-        const reason = (why.querySelector(".gr-reason").value || "").trim();
-        // Postgres refuses a blank reason too (ganga_declined_has_reason), but
-        // saying so here saves a round trip and names the field.
-        if (!reason) { toast("Please give a reason — the member is shown it."); return; }
-        row.querySelectorAll("button").forEach((b) => (b.disabled = true));
-        try {
-          await WA.declineGangaSuggestion(id, reason);
-          WA.notifyGangaDecision(id, false);
-          toast("Sent back with your reason.");
-          await loadQueue();
-          loadLog();
-        } catch (err) {
-          toast((err && err.message) || "Couldn't return that.");
-          row.querySelectorAll("button").forEach((b) => (b.disabled = false));
-        }
-      }
-    });
-
-    // ---- 2. the admin's own box -------------------------------------------
+    // ---- the admin's own box ----------------------------------------------
+    // Unchanged from part three except that its duplicate warning now goes
+    // through the same themed check as the queue's.
     composeEl.innerHTML =
       `<div class="gr-box">` +
-        `<div class="gr-h">Add a thought yourself</div>` +
+        `<div class="gr-h">Add a quote yourself</div>` +
         `<div class="m-hint" style="margin-bottom:10px">${escapeHtml(
           "Goes straight into the pool. “From a member” jumps the queue and is sent " +
           "at the top of the next hour; “From admin” joins the ordinary rotation.")}</div>` +
         `<textarea id="gr-new" rows="3" placeholder="${escapeHtml("विचार लिखें…")}"></textarea>` +
         `<div class="gr-warn" id="gr-new-warn"></div>` +
         `<div class="gr-acts">` +
-          `<button class="btn" id="gr-add-member">Send by member</button>` +
-          `<button class="btn primary" id="gr-add-admin">Send by admin</button>` +
+          `<button class="btn" id="gr-add-member" type="button">Send by member</button>` +
+          `<button class="btn primary" id="gr-add-admin" type="button">Send by admin</button>` +
         `</div>` +
       `</div>`;
     const newTa = composeEl.querySelector("#gr-new");
@@ -19966,6 +20449,8 @@ const MOBILE_UI = (() => {
         await WA.addGangaThought(text, origin);
         newTa.value = "";
         newWarn.innerHTML = "";
+        // The pool just grew, and the next duplicate check must know.
+        _gangaPool = null;
         toast(origin === "member"
           ? "Added — it goes out at the top of the next hour 🌸"
           : "Added to the pool.");
@@ -19983,33 +20468,59 @@ const MOBILE_UI = (() => {
         const o = pendingOrigin; newWarn.innerHTML = ""; pendingOrigin = null;
         return doAdd(o || "admin");
       }
+      // "Return as duplicate" means nothing here — there is no member to return
+      // anything to, an admin is typing this line themselves.
+      if (btn.dataset.dupe === "return") return;
       const origin = btn.id === "gr-add-member" ? "member"
                    : btn.id === "gr-add-admin" ? "admin" : null;
       if (!origin) return;
       const text = (newTa.value || "").trim();
       if (!text) { toast("Write something first."); return; }
       pendingOrigin = origin;
-      if (await warnDuplicates(newWarn, text)) return;
+      const hits = await gangaDuplicates(text);
+      if (hits.length) {
+        // The one panel serves both callers, and the only thing that differs is
+        // the verb: there is no member here whose quote is being approved, an
+        // admin is typing this line themselves. Relabelled rather than given a
+        // parameter, so the two can never drift into two panels.
+        newWarn.innerHTML = gangaDupeHtml(hits)
+          .replace(">Approve anyway<", ">Add anyway<");
+        return;
+      }
       pendingOrigin = null;
       return doAdd(origin);
     });
 
-    // ---- 3. how long a member's line may be -------------------------------
-    // "No minimum and maximum" was the operator's instruction; the 1..5000 the
-    // RPC enforces is the column's own cap, not a policy.
-    const paintLimit = (n) => {
+    // ---- the two limits members are held to -------------------------------
+    // ⚠ TWO numbers now, not one. The daily cap was a literal 8 inside
+    // submit_ganga_suggestion() until 2026-09-04; the operator moved it to 3 and
+    // it became a setting on the way, because a number that has moved once will
+    // move again and the alternative is another SQL migration each time.
+    const paintLimits = (chars, daily) => {
       limitEl.innerHTML =
         `<div class="gr-box">` +
-          `<div class="gr-h">How long a member's thought may be</div>` +
+          `<div class="gr-h">How long a member's quote may be</div>` +
           `<div class="m-hint" style="margin-bottom:10px">${escapeHtml(
             "The box on the Upanishad Ganga screen stops at this many characters, " +
             "and the counter under it counts against it.")}</div>` +
           `<div class="m-inputrow">` +
             `<input id="gr-lim" type="number" inputmode="numeric" min="1" max="5000" ` +
-              `value="${escapeHtml(String(n))}">` +
-            `<button class="btn primary" id="gr-lim-save">Save</button>` +
+              `value="${escapeHtml(String(chars))}">` +
+            `<button class="btn primary" id="gr-lim-save" type="button">Save</button>` +
+          `</div>` +
+        `</div>` +
+        `<div class="gr-box">` +
+          `<div class="gr-h">How many a member may send in a day</div>` +
+          `<div class="m-hint" style="margin-bottom:10px">${escapeHtml(
+            "Counted over the last 24 hours. Sending a returned quote back again " +
+            "counts as one of these.")}</div>` +
+          `<div class="m-inputrow">` +
+            `<input id="gr-day" type="number" inputmode="numeric" min="1" max="50" ` +
+              `value="${escapeHtml(String(daily))}">` +
+            `<button class="btn primary" id="gr-day-save" type="button">Save</button>` +
           `</div>` +
         `</div>`;
+
       limitEl.querySelector("#gr-lim-save").addEventListener("click", async () => {
         const v = parseInt(limitEl.querySelector("#gr-lim").value, 10);
         if (!(v >= 1 && v <= 5000)) { toast("Give a number between 1 and 5000."); return; }
@@ -20025,45 +20536,416 @@ const MOBILE_UI = (() => {
           toast((err && err.message) || "Couldn't save that.");
         } finally { b.disabled = false; }
       });
+
+      limitEl.querySelector("#gr-day-save").addEventListener("click", async () => {
+        const v = parseInt(limitEl.querySelector("#gr-day").value, 10);
+        if (!(v >= 1 && v <= 50)) { toast("Give a number between 1 and 50."); return; }
+        const b = limitEl.querySelector("#gr-day-save");
+        b.disabled = true;
+        try {
+          await WA.setGangaDailyLimit(v);
+          toast(`Members may now send ${v} a day.`);
+        } catch (err) {
+          toast((err && err.message) || "Couldn't save that.");
+        } finally { b.disabled = false; }
+      });
     };
     (async () => {
-      let n = 100;
-      try { n = await WA.gangaCharLimit(); } catch (_) {}
-      paintLimit(n);
+      let chars = 100, daily = 3;
+      try { chars = await WA.gangaCharLimit(); } catch (_) {}
+      try { daily = await WA.gangaDailyLimit(); } catch (_) {}
+      paintLimits(chars, daily);
     })();
+  }
 
-    // ---- 4. what was decided lately ---------------------------------------
-    // Not a queue — a record. Without it a decision made last week is only
-    // visible to the member it was made about.
-    const loadLog = async () => {
-      let rows;
-      try { rows = await WA.listGangaSuggestions("all", 40); }
-      catch (_) { logEl.innerHTML = ""; return; }
-      const done = rows.filter((r) => r.status !== "pending");
-      if (!done.length) { logEl.innerHTML = ""; return; }
-      logEl.innerHTML =
-        `<div class="gr-box">` +
-          `<div class="gr-h">Decided lately</div>` +
-          done.map((r) => {
-            const st = GR_STATUS[r.status] || GR_STATUS.pending;
-            const words = r.approved_text || r.text || "";
-            const tail = r.status === "declined"
-              ? `<div class="gr-log-why">${escapeHtml("Reason: " + (r.decline_reason || ""))}</div>`
-              : `<div class="gr-log-why">${escapeHtml(
-                  r.sent_count ? `Sent ${r.sent_count}×` : "Waiting its turn")}</div>`;
-            return `<div class="gr-log-row">` +
-              `<div class="gr-log-t">${escapeHtml(words)}</div>` +
-              `<div class="gr-log-s">${st.icon} ${escapeHtml(st.label)} · ` +
-                escapeHtml((r.username || "A member") +
-                  (r.decider_name ? ` → ${r.decider_name}` : "")) +
-              `</div>` + tail +
-            `</div>`;
-          }).join("") +
-        `</div>`;
+  // ---- 2. the three lists -------------------------------------------------
+  const GL_TITLE = {
+    pending:  "Pending U. Ganga quotes",
+    approved: "Approved U. Ganga quotes",
+    all:      "All U. Ganga Quotes",
+  };
+
+  async function gangaListPage(kind) {
+    const node = el(`<div class="m-gr"></div>`);
+    pageFrame(GL_TITLE[kind] || "U. Ganga quotes", node);
+
+    if (!isModerator()) {
+      node.innerHTML = `<div class="m-hint">${escapeHtml(
+        "This screen is for the sutradhar and the moderators.")}</div>`;
+      return;
+    }
+
+    // The pool list is the only one worth filtering: it is the only one that
+    // grows without bound, and the only one where "show me the member ones" is
+    // a question an admin actually has.
+    const withFilter = kind === "all";
+    node.innerHTML =
+      (withFilter
+        ? `<div class="gl-tools">` +
+            `<input class="gl-q" id="gl-q" type="search" placeholder="${escapeHtml(
+              "Search the quotes…")}" autocomplete="off">` +
+            `<div class="gl-chips" id="gl-chips">` +
+              `<button class="gl-chip active" data-f="all" type="button">All</button>` +
+              `<button class="gl-chip" data-f="member" type="button">From members</button>` +
+              `<button class="gl-chip" data-f="admin" type="button">From admins</button>` +
+              `<button class="gl-chip" data-f="off" type="button">Withdrawn</button>` +
+            `</div>` +
+          `</div>`
+        : "") +
+      `<div id="gl-list"><div class="loading">Loading…</div></div>`;
+
+    const listEl = node.querySelector("#gl-list");
+    let rows = [];
+    let filter = "all";
+    let q = "";
+
+    // ---- pending: a queue, oldest first, each row opening its own page -----
+    const pendingHtml = () => {
+      if (!rows.length) {
+        return `<div class="m-hint">${escapeHtml("Nothing is waiting right now.")}</div>`;
+      }
+      return `<div class="gl-n">${escapeHtml(rows.length === 1
+        ? "1 quote waiting" : `${rows.length} quotes waiting`)}</div>` +
+        rows.map((r) =>
+          // ⚠ An <a>, not a button with a click handler: back from the detail
+          // page must return here, and hash history is what does that for free.
+          `<a class="gl-row" href="#/m/gyanreview?id=${encodeURIComponent(String(r.id))}">` +
+            `<div class="gl-top">` +
+              `<span class="gl-who">${escapeHtml(r.username || "A member")}</span>` +
+              (r.resubmit_of ? `<span class="gl-again">sent again</span>` : "") +
+              `<span class="gl-when">${escapeHtml(timeAgo(r.created_at))}</span>` +
+            `</div>` +
+            `<div class="gl-t">${escapeHtml(r.text || "")}</div>` +
+            `<span class="gl-go">Review →</span>` +
+          `</a>`).join("");
     };
 
-    await loadQueue();
-    loadLog();
+    // ---- approved: a record, newest decision first -------------------------
+    const approvedHtml = () => {
+      if (!rows.length) {
+        return `<div class="m-hint">${escapeHtml("Nothing has been approved yet.")}</div>`;
+      }
+      return `<div class="gl-n">${escapeHtml(rows.length === 1
+        ? "1 approved quote" : `${rows.length} approved quotes`)}</div>` +
+        rows.map((r) => {
+          const words = r.approved_text || r.text || "";
+          const sent = r.sent_count
+            ? `sent ${r.sent_count}×` : "waiting its turn";
+          const when = (r.first_slot != null && r.first_slot_date)
+            ? ` · first at ${gyanWhen({ slot: r.first_slot, date: r.first_slot_date })}`
+            : "";
+          return `<div class="gl-row plain">` +
+            `<div class="gl-top">` +
+              `<span class="gl-who">${escapeHtml(r.username || "A member")}</span>` +
+              `<span class="gl-when">${escapeHtml(timeAgo(r.decided_at || r.created_at))}</span>` +
+            `</div>` +
+            `<div class="gl-t">${escapeHtml(words)}</div>` +
+            `<div class="gl-meta">${escapeHtml(sent + when +
+              (r.decider_name ? ` · approved by ${r.decider_name}` : ""))}</div>` +
+          `</div>`;
+        }).join("");
+    };
+
+    // ---- all: THE POOL, whoever wrote it ----------------------------------
+    // ⚠ A different table from the two above. `thoughts` is what is actually
+    // sent every hour; ganga_suggestions is only the queue that some of it came
+    // through. An admin's own line has no suggestion row at all, which is
+    // exactly why "everything in the database" cannot be answered from the
+    // lists above.
+    const allHtml = () => {
+      const needle = q.trim().toLowerCase();
+      const show = rows.filter((r) => {
+        if (filter === "member" && r.source !== "member") return false;
+        if (filter === "admin" && r.source !== "admin") return false;
+        if (filter === "off" && r.active !== false) return false;
+        if (needle && String(r.text_hi || "").toLowerCase().indexOf(needle) < 0) return false;
+        return true;
+      });
+      if (!rows.length) {
+        return `<div class="m-hint">${escapeHtml("There are no quotes in the pool yet.")}</div>`;
+      }
+      if (!show.length) {
+        return `<div class="m-hint">${escapeHtml("Nothing here matches that.")}</div>`;
+      }
+      return `<div class="gl-n">${escapeHtml(show.length === rows.length
+        ? `${rows.length} quotes in the pool`
+        : `${show.length} of ${rows.length} quotes`)}</div>` +
+        show.map((r) =>
+          `<div class="gl-row plain${r.active === false ? " off" : ""}" ` +
+            `data-tid="${escapeHtml(String(r.id))}">` +
+            `<div class="gl-top">` +
+              `<span class="gl-src ${r.source === "member" ? "mem" : "adm"}">${escapeHtml(
+                r.source === "member" ? "Member" : "Admin")}</span>` +
+              (r.suggested_name
+                ? `<span class="gl-who">${escapeHtml(r.suggested_name)}</span>` : "") +
+              (r.active === false ? `<span class="gl-off">Withdrawn</span>` : "") +
+              `<span class="gl-when">${escapeHtml(r.last_sent_at
+                ? "last " + timeAgo(r.last_sent_at) : "not sent yet")}</span>` +
+            `</div>` +
+            `<div class="gl-t">${escapeHtml(r.text_hi || "")}</div>` +
+            `<div class="gl-meta">${escapeHtml(
+              (r.sent_count ? `sent ${r.sent_count}×` : "never sent") + ` · #${r.id}`)}</div>` +
+            `<div class="gl-acts">` +
+              `<button class="btn" data-act="${r.active === false ? "on" : "off"}" type="button">` +
+                `${r.active === false ? "Put back" : "Withdraw"}</button>` +
+            `</div>` +
+          `</div>`).join("");
+    };
+
+    const render = () => {
+      listEl.innerHTML = kind === "pending" ? pendingHtml()
+                       : kind === "approved" ? approvedHtml()
+                       : allHtml();
+    };
+
+    if (withFilter) {
+      const qEl = node.querySelector("#gl-q");
+      // ⚠ The search box is OUTSIDE #gl-list, which is the region render()
+      // rewrites. Inside it, every keystroke would destroy the field it came
+      // from — the same rule the compose boxes elsewhere in this feature follow.
+      qEl.addEventListener("input", () => { q = qEl.value; render(); });
+      node.querySelector("#gl-chips").addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-f]");
+        if (!b) return;
+        filter = b.dataset.f;
+        node.querySelectorAll("#gl-chips .gl-chip").forEach((x) =>
+          x.classList.toggle("active", x.dataset.f === filter));
+        render();
+      });
+
+      // Withdraw / put back. ⚠ The words are never edited here — a line already
+      // sent to every phone cannot be un-sent, and quietly rewriting it
+      // afterwards would leave the pool disagreeing with what people read.
+      listEl.addEventListener("click", async (e) => {
+        const btn = e.target.closest("button[data-act]");
+        if (!btn) return;
+        const row = btn.closest(".gl-row");
+        const tid = Number(row.dataset.tid);
+        const on = btn.dataset.act === "on";
+        btn.disabled = true;
+        try {
+          await WA.setThoughtActive(tid, on);
+          const hit = rows.find((r) => Number(r.id) === tid);
+          if (hit) hit.active = on;
+          _gangaPool = null;         // the duplicate check reads `active`
+          toast(on ? "Back in the rotation." : "Taken out of the rotation.");
+          render();
+        } catch (err) {
+          toast((err && err.message) || "Couldn't change that.");
+          btn.disabled = false;
+        }
+      });
+    }
+
+    try {
+      if (kind === "all") {
+        rows = await gangaPool(true);
+      } else {
+        rows = await WA.listGangaSuggestions(kind, 500);
+        if (kind === "pending") rows = rows.filter((r) => !r.superseded);
+      }
+    } catch (e) {
+      listEl.innerHTML = `<div class="m-hint">${escapeHtml(
+        (e && e.message) || "Couldn't reach the server just now.")}</div>`;
+      return;
+    }
+    render();
+  }
+
+  // ---- 3. ONE pending quote, the whole page to it -------------------------
+  // The operator's shape (2026-09-04): the list is for choosing, this is for
+  // deciding — so the reason box can be as big as the decision deserves rather
+  // than the one-line input that was squeezed into a queue row before.
+  //
+  // ⚠ The quote is in a TEXTAREA, not static text: the admin may fix a typo
+  // before approving, and the alternative is returning a hundred-character line
+  // and asking somebody to retype the whole thing. What is approved is whatever
+  // is in this box; what the member wrote is kept untouched on the row
+  // (approve_ganga_suggestion keeps both, and the member's own page shows both).
+  const GANGA_REASONS = [
+    "यह विचार पहले से है (duplicate)",
+    "कृपया थोड़ा और स्पष्ट लिखें",
+    "कृपया छोटा करें",
+    "गुरुवाणी के अनुरूप नहीं है",
+  ];
+
+  async function gangaOnePage(sid) {
+    const node = el(`<div class="m-gr m-go"></div>`);
+    pageFrame("Review quote", node);
+
+    if (!isModerator()) {
+      node.innerHTML = `<div class="m-hint">${escapeHtml(
+        "This screen is for the sutradhar and the moderators.")}</div>`;
+      return;
+    }
+
+    node.innerHTML = `<div class="loading">Loading…</div>`;
+
+    let queue = [];
+    try { queue = await WA.listGangaSuggestions("pending", 500); }
+    catch (e) {
+      node.innerHTML = `<div class="m-hint">${escapeHtml(
+        (e && e.message) || "Couldn't reach the server just now.")}</div>`;
+      return;
+    }
+    queue = queue.filter((r) => !r.superseded);
+
+    const i = queue.findIndex((r) => Number(r.id) === Number(sid));
+    if (i < 0) {
+      // Decided by somebody else while this admin was reading it. Say so rather
+      // than showing an empty page — with several moderators this is ordinary,
+      // not an error.
+      node.innerHTML =
+        `<div class="m-hint">${escapeHtml(
+          "That quote has already been decided.")}</div>` +
+        `<div class="gr-acts" style="justify-content:flex-start;margin-top:12px">` +
+          `<a class="btn" href="#/m/gyanreview?list=pending">Back to the queue</a>` +
+        `</div>`;
+      return;
+    }
+    const r = queue[i];
+    // Where to go once this one is dealt with. Working through a queue of ten
+    // should be ten decisions, not ten round trips through the list.
+    const nextId = queue[i + 1] ? queue[i + 1].id : null;
+    const onward = () => {
+      if (nextId) go(`#/m/gyanreview?id=${encodeURIComponent(String(nextId))}`);
+      else go("#/m/gyanreview?list=pending");
+    };
+
+    node.innerHTML =
+      `<div class="go-head">` +
+        `<div class="go-who">${escapeHtml(r.username || "A member")}` +
+          `<span class="go-when">${escapeHtml(timeAgo(r.created_at))}</span></div>` +
+        (r.resubmit_of
+          ? `<div class="go-again">${escapeHtml(
+              "Sent again after being returned.")}</div>` : "") +
+        (nextId ? `<div class="go-left">${escapeHtml(
+          `${queue.length - i - 1} more waiting after this one`)}</div>` : "") +
+      `</div>` +
+      `<textarea class="go-text" id="go-text" rows="6">${escapeHtml(r.text || "")}</textarea>` +
+      `<div class="go-note">${escapeHtml(
+        "You may correct a word before approving. The member's own wording is kept " +
+        "on their page beside yours.")}</div>` +
+      `<div class="gr-warn" id="go-warn"></div>` +
+      `<div class="go-acts">` +
+        `<button class="btn" id="go-dupe" type="button">Check duplicate</button>` +
+        `<button class="btn" id="go-return" type="button">Return…</button>` +
+        `<button class="btn primary" id="go-approve" type="button">Approve</button>` +
+      `</div>` +
+      // ⚠ Built now and merely un-hidden, never painted on demand: a repaint
+      // would throw away a reason the admin had begun typing.
+      `<div class="go-why" id="go-why" hidden>` +
+        `<div class="go-why-h">${escapeHtml(
+          "Why are you returning it? The member is shown this, word for word.")}</div>` +
+        `<div class="go-chips" id="go-chips">` +
+          GANGA_REASONS.map((t, n) =>
+            `<button class="gl-chip" data-r="${n}" type="button">${escapeHtml(t)}</button>`).join("") +
+        `</div>` +
+        `<textarea class="go-reason" id="go-reason" rows="6" maxlength="400" ` +
+          `placeholder="${escapeHtml("कारण लिखें…")}"></textarea>` +
+        `<div class="go-acts">` +
+          `<button class="btn" id="go-why-x" type="button">Cancel</button>` +
+          `<button class="btn primary" id="go-why-send" type="button">Send back</button>` +
+        `</div>` +
+      `</div>`;
+
+    const ta = node.querySelector("#go-text");
+    const warn = node.querySelector("#go-warn");
+    const why = node.querySelector("#go-why");
+    const reason = node.querySelector("#go-reason");
+    const busy = (on) => node.querySelectorAll("button").forEach((b) => (b.disabled = on));
+
+    const approve = async () => {
+      const text = (ta.value || "").trim();
+      if (!text) { toast("There is nothing to approve."); return; }
+      busy(true);
+      try {
+        await WA.approveGangaSuggestion(r.id, text);
+        // Tell the member. Fire-and-forget: the approval is written either way.
+        WA.notifyGangaDecision(r.id, true);
+        _gangaPool = null;           // the pool just grew
+        toast("Approved — it goes out at the top of the next hour 🌸");
+        onward();
+      } catch (err) {
+        toast((err && err.message) || "Couldn't approve that.");
+        busy(false);
+      }
+    };
+
+    const sendBack = async (text) => {
+      const words = (text || "").trim();
+      // Postgres refuses a blank reason too (ganga_declined_has_reason), but
+      // saying so here saves a round trip and names the field.
+      if (!words) { toast("Please give a reason — the member is shown it."); return; }
+      busy(true);
+      try {
+        await WA.declineGangaSuggestion(r.id, words);
+        WA.notifyGangaDecision(r.id, false);
+        toast("Sent back with your reason.");
+        onward();
+      } catch (err) {
+        toast((err && err.message) || "Couldn't return that.");
+        busy(false);
+      }
+    };
+
+    let hits = [];
+    const showDupes = async () => {
+      warn.innerHTML = `<div class="gr-dupe ok"><div class="gr-dupe-h">${escapeHtml(
+        "Looking through the pool…")}</div></div>`;
+      hits = await gangaDuplicates((ta.value || "").trim());
+      warn.innerHTML = gangaDupeHtml(hits);
+      return hits.length > 0;
+    };
+
+    node.querySelector("#go-dupe").addEventListener("click", showDupes);
+
+    node.querySelector("#go-approve").addEventListener("click", async () => {
+      // ⚠ The check runs on the way to approving as well as on demand. The
+      // explicit button is what the operator asked for; this is what stops a
+      // duplicate reaching the pool on the day somebody forgets to press it.
+      // Still advisory — the panel offers "Approve anyway".
+      if (await showDupes()) return;
+      warn.innerHTML = "";
+      return approve();
+    });
+
+    node.querySelector("#go-return").addEventListener("click", () => {
+      why.hidden = false;
+      reason.focus();
+    });
+    node.querySelector("#go-why-x").addEventListener("click", () => { why.hidden = true; });
+    node.querySelector("#go-why-send").addEventListener("click", () => sendBack(reason.value));
+
+    // The four stock reasons fill the box and stay editable — typing a Hindi
+    // sentence on a phone is the reason a return gets skipped and an approval
+    // given instead.
+    node.querySelector("#go-chips").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-r]");
+      if (!b) return;
+      reason.value = GANGA_REASONS[Number(b.dataset.r)] || "";
+      reason.focus();
+    });
+
+    // The duplicate panel's own buttons, delegated because it is repainted.
+    warn.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-dupe]");
+      if (!b) return;
+      if (b.dataset.dupe === "cancel") { warn.innerHTML = ""; return; }
+      if (b.dataset.dupe === "go") { warn.innerHTML = ""; return approve(); }
+      if (b.dataset.dupe === "return") {
+        // Return AS a duplicate: the reason is pre-filled with the line it
+        // duplicates, so the member is told what it repeats rather than just
+        // that it repeats something.
+        const h = hits[Number(b.dataset.hit)];
+        warn.innerHTML = "";
+        why.hidden = false;
+        reason.value = h
+          ? `यह विचार पहले से है — “${h.row.text_hi}”`
+          : GANGA_REASONS[0];
+        reason.focus();
+      }
+    });
   }
 
   // ==========================================================================
@@ -21009,11 +21891,19 @@ const MOBILE_UI = (() => {
         return seg[2] ? msgReaderPage(p, decodeURIComponent(seg[2]), params) : msgIndexPage(p, params);
       }
       if (p === "gyan") return gyanPage(params);   // also where a thought notification lands
+      // The member's own quotes: waiting, returned-with-a-reason (and editable
+      // from there), and approved with the hour they went out to everybody.
+      // Reached only from the purple link on #/m/gyan — no notification points
+      // here, so it is safe to have been added after those payloads were built.
+      if (p === "gyanmine") return gangaMinePage(params);
       // The admins' queue. ⚠ Its own route rather than a card on #/moderator:
       // ganga_pending notifications point at it, and a notification must land on
       // the thing it is about, not on a page to scroll. The page refuses itself
       // to non-moderators, and Postgres refuses every RPC behind it.
-      if (p === "gyanreview") return gangaReviewPage();
+      // ⚠ FOUR screens behind this ONE route (hub / list / one quote), chosen by
+      // query string. The bare route must keep working exactly as it did: it is
+      // what every `ganga_pending` payload already on a phone points at.
+      if (p === "gyanreview") return gangaReviewRoute(params);
       // ?u=<uuid> → an admin opening ONE member's conversation, which is also
       // where the member→admin notification lands.
       if (p === "contact") return contactPage(params);
