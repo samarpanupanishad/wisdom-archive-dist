@@ -691,6 +691,10 @@ const PATHS = {
   camera: '<path d="M4 8h2.6l1.6-2.4h7.6L17.4 8H20a1.8 1.8 0 0 1 1.8 1.8v8.4A1.8 1.8 0 0 1 20 20H4a1.8 1.8 0 0 1-1.8-1.8V9.8A1.8 1.8 0 0 1 4 8z"/><circle cx="12" cy="14" r="3.4"/>',
   lock: '<rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7"/><path d="M12 14.2v2.2"/>',
   lotus: '<path d="M12 20c-4.4 0-8-2.7-8-6 2 .4 3.4 1.2 4.4 2.1"/><path d="M12 20c4.4 0 8-2.7 8-6-2 .4-3.4 1.2-4.4 2.1"/><path d="M12 20c-2.8-2-4.2-4.4-4.2-7 0-2.8 1.5-5.3 4.2-7 2.7 1.7 4.2 4.2 4.2 7 0 2.6-1.4 5-4.2 7z"/>',
+  // The Samuhik Satsang menu row. Same outline as COMMUNITY_ICON (the speech
+  // bubble on the topbar button and in every chat header), so the menu row and
+  // the button that opens the same discussions are recognisably one thing.
+  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
 };
 const icon = (n) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${PATHS[n] || ""}</svg>`;
 
@@ -708,6 +712,14 @@ const NAV = [
   { route: "broadcast", label: "Admin Announcements", hash: "#/broadcast", icon: "spark" },
   { route: "special", label: "Special Telegram Messages", hash: "#/special", icon: "spark" },
   { route: "letterpad", label: "Letterhead Messages", hash: "#/letterpad", icon: "letter" },
+  // ⚠ The two discussion menus sit together, Samuhik Satsang first — the same
+  // order and the same pairing as the mobile drawer's "Satsang" group. The
+  // desktop went without this row for a long time, and the cost was that the
+  // topbar badge could say "3 discussions have something new" while nothing
+  // anywhere named the three: the button beside it opens whatever message is on
+  // screen (see renderCommunityTab), so a reader had no way to reach the one
+  // that had actually moved. This row is that way.
+  { route: "community", label: "Samuhik Satsang", hash: "#/community", icon: "chat" },
   { route: "anubhuti", label: "Anubhuti Sharing", hash: "#/anubhuti", icon: "lotus" },
   { divider: true },
   { route: "admin", label: "Add Guru's Msg", hash: "#/admin", icon: "upload" },
@@ -725,6 +737,7 @@ function buildNav() {
     const badge = it.route === "special" ? `<span class="nav-badge" data-special-badge hidden></span>`
       : it.route === "broadcast" ? `<span class="nav-badge" data-broadcast-badge hidden></span>`
       : it.route === "letterpad" ? `<span class="nav-badge" data-letterpad-badge hidden></span>`
+      : it.route === "community" ? `<span class="nav-badge" data-satsang-badge hidden></span>`
       : it.route === "anubhuti" ? `<span class="nav-badge" data-anubhuti-badge hidden></span>`
       : it.route === "admintalks" ? `<span class="nav-badge" data-admintalk-badge hidden></span>` : "";
     nav.appendChild(el(`<a href="${it.hash}" data-route="${it.route}"${it.modOnly ? ' class="mod-only"' : ""}><span class="ico">${icon(it.icon)}</span><span class="label">${it.label}</span>${badge}</a>`));
@@ -1416,7 +1429,14 @@ async function renderCommunityTab(body) {
   // entry, so the panel discusses whatever is actually on screen.
   const chatTarget = (_chatCtx && _chatCtx.wid) || _stageId || store.lastViewed();
   if (chatTarget) {
-    await renderWisdomChat(body, chatTarget, _chatCtx && _chatCtx.title);
+    // ⚠ `onBack` is what makes the index reachable at all from here. Without it
+    // this branch is a dead end: `store.lastViewed()` is persisted in
+    // localStorage, so after the first message anyone ever opens in this browser
+    // `chatTarget` is permanently truthy and the `else` below never runs again.
+    // The button carries the count of the OTHER threads with new messages, so
+    // the header answers "something arrived — where?" without leaving the chat.
+    await renderWisdomChat(body, chatTarget, _chatCtx && _chatCtx.title,
+      { onBack: () => renderSatsangIndex(body) });
   } else {
     // Nothing on screen to discuss → the Samuhik Satsang INDEX: every running
     // discussion, grouped by section in the fixed order, newest activity first.
@@ -1431,7 +1451,18 @@ async function renderCommunityTab(body) {
 // mobile page: they share the DATA (satsangGroups) but not the markup — the
 // panel is a narrow column, the mobile page is a full screen with thumbnails.
 // Keep the shared part in satsangGroups(); don't fold the two views together.
-async function renderSatsangIndex(body) {
+//
+// `opts.onOpen(v)` decides what a row does, because the SAME rows are drawn in
+// two desktop places now: inside the panel (default — swap the panel to that
+// chat in place, since the panel *is* the chat surface) and on the full-page
+// `#/community` (which has no chat surface of its own, so it opens the panel).
+// Keep this one renderer for both; the row markup is identical and the only
+// real difference is where the click lands.
+async function renderSatsangIndex(body, opts) {
+  const onOpen = (opts && opts.onOpen) || ((v) => {
+    selectSatsangThread(v);
+    renderWisdomChat(body, v.wid, v.title, { onBack: () => renderSatsangIndex(body, opts) });
+  });
   body.innerHTML = `<div class="cp-feed-wrap" id="cp-feed-wrap"><div class="loading" style="padding:24px">Loading…</div></div>`;
   const wrap = body.querySelector("#cp-feed-wrap");
 
@@ -1477,16 +1508,65 @@ async function renderSatsangIndex(body) {
           <div class="sx-last">${escapeHtml(satsangLastLine(v))}</div>
         </div>
       </a>`);
-      // Opening a discussion swaps the panel to that chat in place — the desktop
-      // panel is the chat surface, so there is nowhere else to navigate to.
       item.addEventListener("click", (e) => {
         e.preventDefault();
-        renderWisdomChat(body, v.wid, v.title);
+        onOpen(v);
       });
       list.appendChild(item);
     });
     wrap.appendChild(sec);
   });
+}
+
+// ---- #/community — the Samuhik Satsang index as a PAGE --------------------
+// The desktop's answer to "a discussion has something new — which one?". The
+// topbar button cannot be that answer: it is bound to the message on screen
+// (_chatCtx / lastViewed), which is the right thing for "join this satsang" and
+// the wrong thing for "take me to what moved".
+//
+// It reuses renderSatsangIndex, so there is exactly one desktop row renderer
+// and the panel and the page can never drift apart. Only the click differs —
+// see openSatsangFromIndex.
+async function renderSatsangPage() {
+  $view.innerHTML = `<div class="sx-page">
+    <h2 class="sx-page-head">${COMMUNITY_ICON} Samuhik Satsang</h2>
+    <div class="sx-page-sub">Every running discussion, newest activity first. Open one to join it.</div>
+    <div class="sx-page-list"></div>
+  </div>`;
+  await renderSatsangIndex($view.querySelector(".sx-page-list"), { onOpen: openSatsangFromIndex });
+}
+
+// Picking a discussion out of the index — from EITHER surface — republishes
+// `_chatCtx`, because that is the one place the rest of the desktop reads "which
+// discussion are we in": renderCommunityTab picks its target from it, and the
+// half-view's left-hand pane (commFocusWid) is keyed to it, so a Special or
+// Letterhead row lands with its own message beside the conversation instead of
+// whatever happened to be there. Skip this and the panel, the highlighted card
+// and the left pane can all disagree.
+// ⚠ Safe against route()'s `_chatCtx = null`: that runs while a page renders,
+// this runs on a click long afterwards.
+function selectSatsangThread(v) {
+  const m = CHAT_NS_RE.exec(String(v.wid || ""));
+  _chatCtx = {
+    wid: v.wid,
+    title: v.title || chatWidLabel(v.wid),
+    // ⚠ Empty, exactly as wireDesktopChatTarget leaves it. Nothing reads this
+    // field on the desktop, and the one formatter that would fill it
+    // (fmtHumanDate) lives inside MOBILE_UI's closure — calling it from here is
+    // a ReferenceError, not a nicer label.
+    dateLabel: "",
+    back: m ? "#/m/" + m[1] + "/" + encodeURIComponent(m[2]) : "#/entry/" + encodeURIComponent(v.wid),
+  };
+  _commFocusOff = false;   // a deliberate pick always shows that message again
+  applyCommFocus();
+}
+
+// A row on the PAGE opens that discussion in the side panel — the panel is the
+// only chat surface the desktop has, and putting a second one inline here would
+// be another copy to keep in step.
+function openSatsangFromIndex(v) {
+  selectSatsangThread(v);
+  openCommunityPanel();
 }
 
 // ---- live chat (Server-Sent Events): one open stream per viewed wisdom ----
@@ -2936,14 +3016,18 @@ function openChatStream(wid, msgsEl, ctx) {
   });
 }
 
-// The "who is here now" sheet, opened from the header chip (.wc-online). Every
-// name in it is someone with THIS thread open right now — nothing more.
+// The names behind the "who is here now" chip (.wc-online). Every name is
+// someone with THIS thread open right now — nothing more.
+// ⚠ The MODEL only. Two surfaces render it: the mobile sheet
+// (openChatPresenceSheet) and the desktop's in-chat strip
+// (toggleChatPresenceInline). They must never drift apart — the count in the
+// heading and the rows under it are decided here, once.
 // ⚠ Deliberately NOT the Admin Talks participants sheet: no roles, no "added
 // on" date, no sutradhar-first order. Presence carries only a username (see
 // subscribeChat), so a moderator and an ordinary member are indistinguishable
 // here — which is the point. A snapshot at open time; the header count stays
 // live, and someone arriving while the sheet is up shows on the next open.
-function openChatPresenceSheet(ctx) {
+function chatPresenceModel(ctx) {
   const me = (ctx && ctx.me) || (currentUser() || {}).username || "";
   const hidden = !!(ctx && ctx.presenceHidden);
   // ctx.present already excludes us (openChatStream filters it out), and we are
@@ -2973,7 +3057,17 @@ function openChatPresenceSheet(ctx) {
     .filter(Boolean).join("")
     || `<li class="at-p at-p-none">No one else is here right now.</li>`;
   const n = others.length + (hidden ? 0 : 1);
+  const note = hidden
+    ? "Members who are here right now. You are hidden from this list — sending a message adds you to it."
+    : "Members who are here right now — it changes as people come and go.";
+  return { n, rows, note };
+}
 
+// MOBILE: the names as a modal sheet over the whole screen. A snapshot at open
+// time; someone arriving while it is up shows on the next open.
+// ⚠ The DESKTOP does not come through here — see toggleChatPresenceInline.
+function openChatPresenceSheet(ctx) {
+  const { n, rows, note } = chatPresenceModel(ctx);
   const sheet = el(`<div class="at-sheet">
     <div class="at-sheet-card" role="dialog" aria-label="Who is here now">
       <div class="at-sheet-top">
@@ -2981,15 +3075,52 @@ function openChatPresenceSheet(ctx) {
         <button class="at-sheet-x" type="button" aria-label="Close">✕</button>
       </div>
       <ul class="at-plist">${rows}</ul>
-      <div class="at-sheet-note">${hidden
-        ? "Members who are here right now. You are hidden from this list — sending a message adds you to it."
-        : "Members who are here right now — it changes as people come and go."}</div>
+      <div class="at-sheet-note">${note}</div>
     </div>
   </div>`);
   const close = armChatSheet(sheet);   // …so Android BACK closes it, not the room
   sheet.querySelector(".at-sheet-x").addEventListener("click", close);
   sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
   document.body.appendChild(sheet);
+}
+
+// DESKTOP: the same names, but INSIDE the chat.
+// ⚠ Deliberately NOT the sheet above. .at-sheet is a body-level modal at
+// z-index 60 and the docked satsang panel is 79, so on the desktop the sheet
+// opened BEHIND the discussion: a half-covered box whose ✕ was underneath the
+// chat, and the only way to shut it was to close the whole panel first
+// (operator, 2026-09-04). Raising the z-index would have fixed the overlap and
+// still been wrong — a scrim over the entire browser window to name three
+// people, when the chat they are in is right there. It opens as a strip under
+// the chat header instead, the chip toggles it, and unlike the sheet it
+// repaints live as people come and go (see paintOnline).
+function toggleChatPresenceInline(wrap, btn, ctx) {
+  const open = wrap.querySelector(".wc-presence");
+  if (open) { open.remove(); btn.classList.remove("is-open"); return; }
+  const box = el(`<div class="wc-presence"></div>`);
+  paintChatPresenceInline(box, ctx);
+  // Delegated, so it survives the repaints paintOnline drives through here.
+  box.addEventListener("click", (e) => {
+    if (!e.target.closest(".wc-presence-x")) return;
+    box.remove();
+    btn.classList.remove("is-open");
+  });
+  // BELOW the header (and below the find row when that is showing) — never
+  // above it, or the chat title jumps down the screen every time this opens.
+  const after = wrap.querySelector(".wc-search") || wrap.querySelector(".wc-hdr");
+  if (!after) return;
+  after.insertAdjacentElement("afterend", box);
+  btn.classList.add("is-open");
+}
+
+function paintChatPresenceInline(box, ctx) {
+  const { n, rows, note } = chatPresenceModel(ctx);
+  box.innerHTML = `<div class="wc-presence-top">
+      <span class="at-sheet-h">${n} here now</span>
+      <button class="wc-presence-x" type="button" aria-label="Close">✕</button>
+    </div>
+    <ul class="at-plist">${rows}</ul>
+    <div class="at-sheet-note">${note}</div>`;
 }
 
 // ---- composer helpers, shared by every chat surface -----------------------
@@ -3043,8 +3174,25 @@ function chatDraftSet(wid, text) {
 // when it's absent.
 async function renderWisdomChat(body, wid, label, opts) {
   closeChatStream();
+  // ---- "‹ All" — the way OUT of one discussion, and the only one ------------
+  // Opt-in via opts.onBack, so it appears on the desktop Samuhik Satsang panel
+  // and nowhere else: Anubhuti Sharing and Admin Talks are single threads with
+  // no index behind them, and the mobile shell hides .wc-hdr entirely and does
+  // its own back with the Android gesture.
+  // Its badge is the number of OTHER threads with unread messages — the topbar
+  // count minus this one. That is the whole point: the topbar badge says how
+  // many discussions moved but never which, and this is the control that goes
+  // and looks. It is deliberately not the topbar's own number; showing "3" here
+  // while the reader is sitting in one of those three reads as a miscount.
+  const otherUnread = (opts && opts.onBack)
+    ? SATSANG.known().filter((t) => String(t.wid) !== String(wid) && SATSANG.isUnread(t)).length
+    : 0;
   body.innerHTML = `<div class="wc-wrap">
     <div class="wc-hdr">
+      ${opts && opts.onBack ? `<button class="wc-back" type="button" title="All Samuhik Satsang discussions" aria-label="Back to all discussions">
+        <span class="wc-back-ch" aria-hidden="true">‹</span><span class="wc-back-lb">All</span>
+        ${otherUnread ? `<span class="wc-back-n">${otherUnread > 99 ? "99+" : otherUnread}</span>` : ""}
+      </button>` : ""}
       <span class="wc-title">${COMMUNITY_ICON} ${escapeHtml(label || chatWidLabel(wid))}</span>
       <button class="wc-online" type="button" hidden aria-label="Who is here now">
         <span class="wc-online-top"><i class="wc-online-dot"></i><span class="wc-online-n">1</span></span>
@@ -3073,6 +3221,19 @@ async function renderWisdomChat(body, wid, label, opts) {
   // chatWidLabel(), which reads "Guru's msg #anubhuti:7" — and would cost Admin
   // Talks its presence hook.
   body.querySelector(".wc-refresh").addEventListener("click", () => renderWisdomChat(body, wid, label, opts));
+  const backBtn = body.querySelector(".wc-back");
+  if (backBtn) backBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeChatStream();     // the list is not a conversation; stop listening to one
+    leaveChatPresence();   // …and stop claiming to be sitting in it
+    // The half-view's left pane belongs to ONE discussed message, so it comes
+    // down with the discussion. Picking a row from the index puts it back
+    // (openSatsangFromIndex republishes _chatCtx), which is what keeps the pane
+    // and the panel from ever showing two different messages.
+    _commFocusOff = true;
+    applyCommFocus();
+    opts.onBack();
+  });
   newMsgBtn.addEventListener("click", () => {
     msgsEl.scrollTop = msgsEl.scrollHeight;
     newMsgBtn.hidden = true;
@@ -3311,8 +3472,15 @@ async function renderWisdomChat(body, wid, label, opts) {
       if (lb) lb.textContent = solo ? "You" : "Here";
       onlineBtn.setAttribute("aria-label",
         solo ? "Only you are here — see who is here" : n + " here now — see who is here");
+      // The desktop strip is open on the same presence data, so repaint it here
+      // rather than leaving a stale list sitting under a live count.
+      const inline = wrap.querySelector(".wc-presence");
+      if (inline) paintChatPresenceInline(inline, ctx);
     };
-    onlineBtn.addEventListener("click", () => openChatPresenceSheet(ctx));
+    onlineBtn.addEventListener("click", () => {
+      if (document.body.classList.contains("m-mode")) openChatPresenceSheet(ctx);
+      else toggleChatPresenceInline(wrap, onlineBtn, ctx);
+    });
     ctx.paintOnline();
   }
 
@@ -5185,6 +5353,13 @@ async function route() {
   // Clear the "current wisdom" — home/entry set it again; other pages leave it empty.
   _stageId = null;
   _chatCtx = null;        // the reader re-publishes it if we land back in one
+  _commFocusOff = false;
+  applyCommFocus();       // …so the one-message pane goes with the message
+  // An Anubhuti sharing in full view leaves `chat-full` on #app and its own
+  // page node is about to be destroyed, so nothing else would ever take it off.
+  // The satsang panel SURVIVES navigation, so its full mode re-asserts it.
+  document.getElementById("app").classList.toggle("chat-full",
+    _commMode === "full" && !(document.getElementById("fab-panel") || {}).hidden);
   _searchBackFn = null;   // leaving search (even to re-search) drops any open detail view
   updateIdNav(null);
   if (document.getElementById("conc-panel-body")) renderConclusionPanelBody(null);
@@ -5210,6 +5385,11 @@ async function route() {
   if (seg[0] === "broadcast") { setActiveNav("broadcast"); return renderBroadcast(); }
   if (seg[0] === "special") { setActiveNav("special"); return renderSpecial(); }
   if (seg[0] === "letterpad") { setActiveNav("letterpad"); return renderLetterpad(); }
+  // ⚠ `#/community`, not `#/m/community`: the mobile route is MOBILE_UI's and is
+  // claimed above by MOBILE_UI.handles(). This is the desktop page and the two
+  // never meet. It deliberately takes no `?wid=` — a bare route means the index
+  // on both surfaces, and "discuss this message" is the topbar button's job.
+  if (seg[0] === "community") { setActiveNav("community"); return renderSatsangPage(); }
   if (seg[0] === "anubhuti") { setActiveNav("anubhuti"); return renderAnubhuti(params); }
   if (seg[0] === "admin") { setActiveNav("admin"); return renderAdmin(); }
   if (seg[0] === "moderator") { setActiveNav("moderator"); return renderModerator(); }
@@ -5259,14 +5439,138 @@ function closeCommunityPanel() {
   leaveChatPresence(); // … and an admin who revealed himself goes back into hiding
   const panel = document.getElementById("fab-panel");
   if (panel) panel.hidden = true;
-  setCommSplit(false);   // leaving the panel always exits the split view
+  _commFocusOff = false;   // the next open starts on the message again
+  setCommMode(null);       // leaving the panel drops the split entirely
 }
 
-// Community split view — wisdom stacks on the left, chat fills the freed space.
-function setCommSplit(on) {
-  document.getElementById("app").classList.toggle("comm-split", on);
-  const btn = document.getElementById("fab-expand");
-  if (btn) btn.title = on ? "Collapse" : "Expand";
+// ---- the panel's two sizes: HALF (the default) and FULL -------------------
+// Half — the Guru's msg this satsang is about on the left, the discussion on
+// the right. Full — the discussion over the whole window, sidebar and topbar
+// included (it is `position: fixed` at a z-index above both).
+// ⚠ There used to be a THIRD shape — a 340px card floating in the top-right
+// corner — and the single ⤤ button cycled half ↔ card. Both are gone (operator,
+// 2026-09-04: "provide an option of full/half"). A discussion read in a 340px
+// column beside a page nobody was reading was the worst of both, and an icon
+// that never said which way it was about to go made the control feel arbitrary;
+// the two states are now written on the buttons.
+// `null` means "not open at all" — every class comes off.
+let _commMode = "half";
+function setCommMode(mode) {
+  const app = document.getElementById("app");
+  if (!mode) {
+    app.classList.remove("comm-split", "comm-full", "chat-full", "comm-focus");
+    paintCommFocusPane(null);      // …and take the one-message pane down with it
+    return;
+  }
+  _commMode = mode === "full" ? "full" : "half";
+  app.classList.add("comm-split");                         // both sizes dock flush
+  app.classList.toggle("comm-full", _commMode === "full");
+  // `chat-full` is the SHARED flag — Anubhuti Sharing sets it too — and all it
+  // does is hide the floating chrome (the autohide pill) that would otherwise
+  // sit on top of a full-window discussion.
+  app.classList.toggle("chat-full", _commMode === "full");
+  const half = document.getElementById("fab-half");
+  const full = document.getElementById("fab-full");
+  if (half) half.classList.toggle("is-on", _commMode === "half");
+  if (full) full.classList.toggle("is-on", _commMode === "full");
+  applyCommFocus();
+}
+
+// ---- half view: the LEFT side is the ONE Guru's msg being discussed -------
+// The Special / Letterpad pages are card LISTS, so until now the left half of a
+// split was whatever list happened to be open — the discussed message one
+// narrow card among nine hundred, squeezed into whatever width the discussion
+// had left it (operator, 2026-09-04: "left side should show msg of guru in
+// which samuhik satsang is done"). Half view now swaps #view for a pane holding
+// that one message.
+// ⚠ REBUILT from the cached row, never lifted out of the list: the list paints
+// in chunks of 30 (paintSpecialList) and the discussed card is very often in a
+// chunk that has not been painted yet — as a DOM filter this would have left
+// the left half simply blank, and only for the older messages.
+// ⚠ Only `special:` / `letterpad:` wids. An archive entry is already a
+// one-message page, so there it stays out of the way and the split is the plain
+// one it always was.
+let _commFocusOff = false;   // the reader asked for the whole list back
+
+function commFocusWid() {
+  if (_commFocusOff || _commMode !== "half") return null;
+  const panel = document.getElementById("fab-panel");
+  if (!panel || panel.hidden) return null;
+  const wid = String((_chatCtx && _chatCtx.wid) || "");
+  return CHAT_NS_RE.test(wid) ? wid : null;
+}
+
+function applyCommFocus() {
+  const wid = commFocusWid();
+  document.getElementById("app").classList.toggle("comm-focus", !!wid);
+  paintCommFocusPane(wid);
+}
+
+// Builds (or clears) the left-hand one-message pane. It lives in .main BESIDE
+// #view rather than inside it, so a repaint of the page underneath — a live
+// Special update, a language flip, a whole route() — cannot destroy it, and it
+// never needs re-wiring when one happens.
+let _cfPaintSeq = 0;
+async function paintCommFocusPane(wid) {
+  const main = document.querySelector(".main");
+  if (!main) return;
+  let pane = document.getElementById("comm-focus-pane");
+  if (!wid) { if (pane) pane.remove(); return; }
+  if (pane && pane.dataset.wid === wid) return;            // already showing it
+  if (!pane) {
+    pane = el(`<div class="cf-pane" id="comm-focus-pane"></div>`);
+    main.appendChild(pane);
+  }
+  pane.dataset.wid = wid;
+  // The pane outlives any one selection, so a slow letterpad index must not be
+  // allowed to paint a message the reader has already moved off.
+  const seq = ++_cfPaintSeq;
+  const m = CHAT_NS_RE.exec(wid);
+  const listName = m[1] === "special" ? "Special Telegram Messages" : "Letterhead Messages";
+  pane.innerHTML = `<div class="cf-bar">
+      <button class="cf-back" type="button">‹ All ${escapeHtml(listName)}</button>
+      <span class="cf-lb">Being discussed</span>
+    </div>
+    <div class="cf-body"><div class="loading" style="padding:24px">Loading…</div></div>`;
+  // Back to the list — the panel stays open and the discussion keeps running,
+  // so this is how a reader picks a different message to discuss.
+  pane.querySelector(".cf-back").addEventListener("click", () => {
+    _commFocusOff = true;         // …until they pick another card, which clears it
+    applyCommFocus();
+  });
+  // Letterpad's per-card language toggle, which normally rides the list's own
+  // delegated handler (renderLetterpadInto) — this pane is not that list.
+  pane.addEventListener("click", (e) => {
+    const btn = e.target.closest(".lp-langtog button");
+    if (btn) paintCommFocusLetterpad(pane, m[2], btn.dataset.l);
+  });
+  const body = pane.querySelector(".cf-body");
+  try {
+    if (m[1] === "special") {
+      const r = ((typeof SPECIAL !== "undefined" && SPECIAL.cached()) || [])
+        .find((x) => String(x.id) === m[2]);
+      body.innerHTML = r ? specialCardHtml(r, "dual")
+        : `<div class="empty">This message is no longer in the archive.</div>`;
+    } else {
+      await paintCommFocusLetterpad(pane, m[2], "hi", seq);
+    }
+  } catch {
+    body.innerHTML = `<div class="empty">Could not load this message.</div>`;
+  }
+}
+
+// One letterpad message into the focus pane, in `lang`. Split out because the
+// card's own हिंदी/English toggle repaints it.
+async function paintCommFocusLetterpad(pane, id, lang, seq) {
+  const index = await LETTERPAD.loadIndex();
+  if ((seq && seq !== _cfPaintSeq) || !pane.isConnected) return;
+  const body = pane.querySelector(".cf-body");
+  if (!body) return;
+  const msg = (index.messages || []).find((x) => String(x.id) === id);
+  if (!msg) { body.innerHTML = `<div class="empty">This message is no longer in the archive.</div>`; return; }
+  body.innerHTML = letterpadCardHtml(msg, lang);
+  const card = body.querySelector(".lp-card");
+  if (card) wireCarousel(card, { pages: +card.dataset.pages || 1 });
 }
 
 function openCommunityPanel() {
@@ -5279,7 +5583,8 @@ function openCommunityPanel() {
   // pop in only when first opening (not when just refreshing)
   if (!wasOpen) { panel.style.animation = "none"; void panel.offsetWidth; panel.style.animation = ""; }
   renderCommunityTab(body);
-  setCommSplit(true);   // discussion-heavy, so it opens maximized by default
+  _commFocusOff = false;   // a fresh open always starts on the message itself
+  setCommMode("half");     // half is the default size, every single open
 }
 
 function initCommunityPanel() {
@@ -5291,10 +5596,15 @@ function initCommunityPanel() {
     if (panel.hidden) openCommunityPanel(); else closeCommunityPanel();
   });
   document.getElementById("fab-panel-close").addEventListener("click", closeCommunityPanel);
-  document.getElementById("fab-expand").addEventListener("click", (e) => {
-    e.stopPropagation();
-    setCommSplit(!document.getElementById("app").classList.contains("comm-split"));
-  });
+  // ⚠ Guarded, because index.html is the ONE file that never ships over the
+  // air (it is not in publish_update.py's UI_FILES): an installed APK still
+  // holds the markup with the old single #fab-expand button. The panel is
+  // `display: none` on the mobile shell so neither control is ever reachable
+  // there — but this file is shared, so it must not throw on the way past.
+  const halfBtn = document.getElementById("fab-half");
+  const fullBtn = document.getElementById("fab-full");
+  if (halfBtn) halfBtn.addEventListener("click", (e) => { e.stopPropagation(); setCommMode("half"); });
+  if (fullBtn) fullBtn.addEventListener("click", (e) => { e.stopPropagation(); setCommMode("full"); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeCommunityPanel(); });
 }
 
@@ -6964,7 +7274,9 @@ function wireDesktopChatTarget(container, sectionKey, titleOf) {
       dateLabel: "",
       back: "#/" + sectionKey,
     };
+    _commFocusOff = false;      // picking a card always shows that message
     repaintOpenCommunityPanel();
+    applyCommFocus();
   });
 }
 // Repaint an ALREADY-OPEN community panel when the selection changes, so the
@@ -7860,8 +8172,17 @@ async function renderAnubhutiTopic(id) {
   }
 
   const when = String(topic.created_at || "").slice(0, 10);
+  // ⚠ The back link and the size control share a row so the control has a home
+  // that survives the chat's ↻ (renderWisdomChat replaces the whole of
+  // .an-chat, so anything injected into .wc-hdr is gone after one refresh).
   const page = el(`<div class="an-page an-topic">
-    <a class="an-back" href="#/anubhuti">‹ All sharings</a>
+    <div class="an-topbar">
+      <a class="an-back" href="#/anubhuti">‹ All sharings</a>
+      <div class="fab-size an-size" role="group" aria-label="Discussion size">
+        <button class="fab-size-b" type="button" data-sz="half" title="Sharing on the left, discussion on the right">Half</button>
+        <button class="fab-size-b" type="button" data-sz="full" title="Discussion fills the whole window">Full</button>
+      </div>
+    </div>
     <div class="an-head">
       <div class="an-head-title">${escapeHtml(topic.title || "—")}</div>
       <div class="an-head-by">${escapeHtml(topic.author || "")}${when ? " · " + escapeHtml(fmtDate(when)) : ""}</div>
@@ -7887,7 +8208,35 @@ async function renderAnubhutiTopic(id) {
     page.querySelector(".an-head").appendChild(del);
   }
   $view.replaceChildren(page);
+  wireAnubhutiSize(page);
   await renderWisdomChat(page.querySelector(".an-chat"), anubhutiWidOf(id), topic.title || "Anubhuti Sharing");
+}
+
+// Anubhuti Sharing gets the SAME two sizes as the satsang panel (operator,
+// 2026-09-04: "do the same thing of full and half of anubhuti sharing").
+// Half — the default — puts the sharing on the left and its discussion on the
+// right. Until now the two were stacked in one 780px column: a member read the
+// sharing, scrolled past it into the chat, and then had no way to look at it
+// again while writing a reply about it. Full puts the discussion over the whole
+// window.
+// ⚠ Desktop only, and it needs no m-mode guard: #/anubhuti is claimed by
+// MOBILE_UI.handles(), so renderAnubhutiTopic never runs inside the app at all.
+function wireAnubhutiSize(page) {
+  const ctl = page.querySelector(".an-size");
+  if (!ctl) return;
+  const set = (sz) => {
+    page.classList.toggle("an-half", sz === "half");
+    page.classList.toggle("an-full", sz === "full");
+    // Shared with the satsang panel: hides the floating autohide pill, which
+    // would otherwise sit on top of a full-window discussion.
+    document.getElementById("app").classList.toggle("chat-full", sz === "full");
+    ctl.querySelectorAll("[data-sz]").forEach((b) => b.classList.toggle("is-on", b.dataset.sz === sz));
+  };
+  ctl.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-sz]");
+    if (b) set(b.dataset.sz);
+  });
+  set("half");                       // half is the default, on every open
 }
 
 // --------------------------------------------------------------------------
@@ -12430,6 +12779,101 @@ function dhyanImportPick(onDone) {
 
 // Set by the mounted diary page so the sit screen can refresh it on close
 // without either one holding a reference to the other.
+// ==========================================================================
+// THE INBOX — a diary backup this computer can already see.
+// Plan: DHYAN_DIARY_SYNC_PLAN.md §4
+//
+// The member exports on the phone and sends the file over by whatever they
+// already know — Quick Share, Bluetooth, a cable, a chat with themselves, a
+// synced Drive folder. Nothing about that changed; all that was missing was
+// somebody noticing the file had landed. The desktop looks in its own
+// `diary_inbox/` folder and in Downloads and offers what it finds.
+//
+// ⚠ An offer, never an automatic merge. It opens the SAME preview dialog the
+// Restore… button has opened since 9.30 — one merge path, one set of promises
+// on screen, and no way to acquire records without having seen the count.
+//
+// ⚠ DESKTOP ONLY, and the guard is not cosmetic. `app.js` rides the mobile OTA
+// as well, and on the phone `wa-native.js` intercepts every same-origin
+// /api/* and answers `{"detail":"Not found"}` with a 404. A 404 here means
+// "this build of the desktop has no inbox" and must stay silent either way —
+// never a toast, never an error.
+// ==========================================================================
+const DD_INBOX = (() => {
+  const BASE = "/api/diary/inbox";
+  const on = () => !window.WA_NATIVE_ACTIVE;
+  let _scan = null;
+
+  async function load() {
+    if (!on()) return null;
+    try {
+      const r = await fetch(BASE, { cache: "no-store" });
+      if (!r.ok) return null;              // 404: an older desktop. Not an error.
+      _scan = await r.json();
+      return _scan;
+    } catch { return null; }               // app window closed under a stale tab
+  }
+
+  // The newest file that has not been offered yet, or null. The scan returns
+  // seen ones too so the Backup screen can be honest about what is there.
+  const offer = () => {
+    const fs = (_scan && Array.isArray(_scan.files)) ? _scan.files : [];
+    return fs.find((f) => !f.seen) || null;
+  };
+  const path = () => (_scan && _scan.inboxPath) || "";
+
+  async function text(token) {
+    const r = await fetch(BASE + "/" + encodeURIComponent(token), { cache: "no-store" });
+    if (!r.ok) throw new Error("that backup is no longer there");
+    return r.text();
+  }
+
+  // ⚠ Marks OUR state file, never the member's file — nothing here moves,
+  // renames or deletes what it found. Fire-and-forget: if the write fails the
+  // only consequence is that the offer comes back next time.
+  function dismiss(token) {
+    const f = (_scan && _scan.files || []).find((x) => x.token === token);
+    if (f) f.seen = true;
+    try {
+      fetch(BASE + "/" + encodeURIComponent(token) + "/seen", { method: "POST" })
+        .then(() => {}, () => {});
+    } catch (_) {}
+  }
+
+  return { on, load, offer, path, text, dismiss };
+})();
+
+// The one line the diary's main screen grows when a backup is waiting. Empty
+// string on the phone, on an older desktop, and whenever there is nothing to
+// offer — so the screen is unchanged for everybody it does not concern.
+function ddInboxBannerHtml() {
+  const f = DD_INBOX.offer();
+  if (!f) return "";
+  const where = (() => {
+    const s = String(f.folder || "").replace(/[\\/]+$/, "");
+    const i = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
+    return i >= 0 ? s.slice(i + 1) : s;
+  })();
+  const when = (() => {
+    const t = Date.parse(f.exportedAt || "");
+    if (!isFinite(t)) return "";
+    try { return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" }); }
+    catch { return ""; }
+  })();
+  const bits = [`${f.sessions} entr${f.sessions === 1 ? "y" : "ies"}`];
+  if (when) bits.push("saved " + when);
+  if (where) bits.push("in " + where);
+  return `
+    <div class="dd-inbox" data-inbox="${escapeHtml(f.token)}">
+      <div class="dd-inbox-h">A diary backup from your phone</div>
+      <div class="dd-inbox-s">${escapeHtml(bits.join(" · "))}</div>
+      <div class="dd-inbox-btns">
+        <button class="btn primary" data-inbox-open type="button">Merge it</button>
+        <button class="btn" data-inbox-no type="button">Not now</button>
+      </div>
+    </div>`;
+}
+
 let _ddRefresh = null;
 
 // ---- Android BACK inside the diary ------------------------------------------
@@ -13136,6 +13580,15 @@ async function mountDhyanDiary(node) {
         moving to a new phone, is the one thing that can lose your diary — so keep a copy somewhere
         safe.</div>
       <div class="dd-backup-when${backupOverdue() ? " warn" : ""}">${escapeHtml(when)}</div>
+      ${DD_INBOX.on() && DD_INBOX.path() ? `
+      <div class="dd-sect-label">From your phone</div>
+      <div class="dd-inbox-path">
+        <div class="dd-inbox-path-s">Export a copy on the phone and send it to this computer any way
+          you like — Quick Share, Bluetooth, a cable, or a message to yourself. It is offered here
+          the next time you open the diary. If it isn't found, put the file in this folder:</div>
+        <code class="dd-inbox-code">${escapeHtml(DD_INBOX.path())}</code>
+        <button class="btn dd-inbox-copy" data-inbox-copy type="button">Copy folder path</button>
+      </div>` : ""}
       ${omDiagHtml()}`;
   }
 
@@ -13378,6 +13831,7 @@ async function mountDhyanDiary(node) {
     // ---- home -------------------------------------------------------------
     node.replaceChildren(el(`
       <div class="dd-wrap">
+        ${ddInboxBannerHtml()}
         <div class="dd-today">
           <div class="dd-today-day">${escapeHtml(dayLabel(today))}<span
             class="dd-diya${aartisOn(today) ? " on" : ""}" role="img"
@@ -13673,6 +14127,34 @@ async function mountDhyanDiary(node) {
     const im = node.querySelector("[data-import]");
     if (im) im.addEventListener("click", () => dhyanImportPick(render));
 
+    // ---- the inbox banner ------------------------------------------------
+    const ib = node.querySelector("[data-inbox]");
+    if (ib) {
+      const token = ib.dataset.inbox;
+      ib.querySelector("[data-inbox-open]").addEventListener("click", async () => {
+        let text;
+        try { text = await DD_INBOX.text(token); }
+        catch (err) {
+          // Moved or deleted between the scan and the tap. Stop offering it and
+          // repaint; there is nothing for the member to do about it.
+          toast("That backup isn't there any more.");
+          DD_INBOX.dismiss(token); render(); return;
+        }
+        // ⚠ Marked seen only on an actual MERGE. Cancelling the preview leaves
+        // the offer standing — a cancel means "not this, not now", and losing
+        // the only pointer to the file because of it would be its own bug.
+        openDhyanImportPreview(text, () => { DD_INBOX.dismiss(token); render(); });
+      });
+      ib.querySelector("[data-inbox-no]").addEventListener("click", () => {
+        DD_INBOX.dismiss(token); render();
+      });
+    }
+    const ic = node.querySelector("[data-inbox-copy]");
+    if (ic) ic.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(DD_INBOX.path()); toast("Folder path copied."); }
+      catch { toast("Couldn't copy — select the path and copy it by hand."); }
+    });
+
     const resume = node.querySelector("[data-resume]");
     // ⚠ Re-arms the audio for the REMAINING time. A reload or a return from
     // another page loses the scheduled bell (the AudioContext died with the
@@ -13790,6 +14272,15 @@ async function mountDhyanDiary(node) {
   render();
   await SADHANA.ready();
   if (node.isConnected) render();
+
+  // ⚠ AFTER the two paints above, never before. The inbox is a convenience;
+  // the diary must be on screen whether or not a local server answers, and a
+  // scan of someone's Downloads folder must never sit in front of the first
+  // frame. One look per mount — see DD_INBOX for why there is no timer.
+  if (DD_INBOX.on()) {
+    await DD_INBOX.load();
+    if (node.isConnected && DD_INBOX.offer()) render();
+  }
 }
 
 async function renderDhyanDiary() {
@@ -13850,6 +14341,11 @@ const SADHANA = (() => {
   const MAX_COUNT = 200000;          // ~1850 malas; far past any real day
   const MAX_PAGE = 100000;           // granth: far past any real granth
   const MAX_TOMBSTONES = 500;
+  // ⚠ THE list of record kinds — cleanSession() reads it to decide what is a
+  // record, and normalise() reads it to tell "a record from a newer app" apart
+  // from "junk". Two copies of this would drift the first time a kind was
+  // added, and the drift would be silent (see §5 of DHYAN_DIARY_SYNC_PLAN.md).
+  const KINDS = ["japa", "dhyan", "granth", "aarti"];
   const FUTURE_SKEW_MS = 36 * 3600_000;
   // Past this, an open stopwatch means someone forgot to stop, not that they
   // did nine hours of japa. Storage only reports it; the UI asks (plan §1).
@@ -13907,8 +14403,7 @@ const SADHANA = (() => {
   // as trusted is how one hand-edited file corrupts a decade of history.
   function cleanSession(s) {
     if (!s || typeof s !== "object") return null;
-    const kind = (s.kind === "japa" || s.kind === "dhyan" || s.kind === "granth"
-                  || s.kind === "aarti") ? s.kind : null;
+    const kind = KINDS.includes(s.kind) ? s.kind : null;
     if (!kind) return null;
 
     const t = Date.parse(s.startedAt);
@@ -13959,17 +14454,35 @@ const SADHANA = (() => {
     return out;
   }
 
-  function normalise(raw) {
+  // `report`, when given, comes back carrying what was dropped and why. Every
+  // other caller passes nothing and is unaffected — only an IMPORT needs to
+  // know, and it needs to know badly (§5).
+  function normalise(raw, report) {
     if (!raw || typeof raw !== "object") return null;
     if (raw.v !== undefined && Number(raw.v) > SCHEMA) return null;   // written by a newer app
     const sessions = [];
     const seen = new Set();
+    let unknown = 0, junk = 0;
     for (const s of (Array.isArray(raw.sessions) ? raw.sessions : [])) {
       const c = cleanSession(s);
-      if (!c || seen.has(c.id)) continue;
+      if (!c) {
+        // ⚠ These two are NOT the same thing and must never be added together.
+        // Junk is a broken record and ignoring it is right. An UNKNOWN KIND is
+        // a perfectly good record written by a NEWER build of this app — the
+        // schema `v` above does not catch it, because `v` did not move when
+        // `granth` and `aarti` were added. Dropping those silently is how a
+        // desktop that merges a phone backup ends up holding nine of twelve
+        // kinds, and nobody finds out until the round trip back.
+        if (s && typeof s === "object" && typeof s.kind === "string"
+            && !KINDS.includes(s.kind)) unknown++;
+        else junk++;
+        continue;
+      }
+      if (seen.has(c.id)) continue;
       seen.add(c.id);
       sessions.push(c);
     }
+    if (report) { report.unknown = unknown; report.junk = junk; }
     const deleted = (Array.isArray(raw.deleted) ? raw.deleted : [])
       .filter((x) => typeof x === "string").slice(-MAX_TOMBSTONES);
     return {
@@ -14046,17 +14559,56 @@ const SADHANA = (() => {
     return s;
   })();
   let _lsOk = true;
+  // null until the first attempt. Only meaningful on the desktop, where the
+  // durable store is a file the local server keeps rather than Preferences.
+  let _diskOk = null;
+
+  // ---- the durable store, one per platform ---------------------------------
+  // Preferences (SharedPreferences) on the phone; on the desktop a file the
+  // local server keeps, because there `localStorage` is otherwise the ONLY copy
+  // of someone's practice and a browser "delete cookies and site data" ends it.
+  // See `app/diary_store.py` for the whole list of ways that happens.
+  //
+  // ⚠ They are never both present, and the test is not cosmetic: the desktop
+  // has no Capacitor, and on the phone `wa-native.js` intercepts every
+  // same-origin /api/* and would answer this route `{"detail":"Not found"}`
+  // with a 404 (wa-native.js:433) — which reconcile() would then read as
+  // "nothing kept yet" and try to seed. One store or the other, never both.
+  const DISK_URL = "/api/diary/mine";
+  const _prefs = () => (window.Capacitor && window.Capacitor.Plugins
+                        && window.Capacitor.Plugins.Preferences) || null;
+  const _onDisk = () => !window.WA_NATIVE_ACTIVE;
 
   function pushPrefs() {
-    const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
+    const P = _prefs();
     if (!P || !P.set) return Promise.resolve(false);   // desktop, or a pre-plugin shell
     return P.set({ key: KEY, value: JSON.stringify(state) }).then(() => true, () => false);
   }
 
-  // `durable: false` skips the Preferences write. The bead counter uses it: it
+  // The desktop's stand-in for pushPrefs. Sends `state` — the same bytes
+  // Preferences holds, NOT exportPayload() — so both stores hold one shape and
+  // normalise()/merge() can read either without knowing which it got. That is
+  // also what keeps `savedAt` and a half-finished sitting alive across a
+  // browser wipe; an export payload carries neither.
+  //
+  // ⚠ Never rejects. persist() is awaited where failure must not propagate —
+  // finishing a sitting above all — and a tab left open after the app window
+  // was closed would otherwise throw there on every write.
+  function pushDisk() {
+    if (!_onDisk()) return Promise.resolve(false);
+    return fetch(DISK_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state),
+    }).then((r) => (_diskOk = !!r.ok), () => (_diskOk = false));
+  }
+
+  const pushDurable = () => ((_prefs() && _prefs().set) ? pushPrefs() : pushDisk());
+
+  // `durable: false` skips the durable write. The bead counter uses it: it
   // persists every single bead so a crash at 253 doesn't cost 253, and a
-  // SharedPreferences write per bead would be hundreds of needless disk hits.
-  // It writes durably at each mala boundary and on stop.
+  // SharedPreferences write (or an HTTP round trip) per bead would be hundreds
+  // of needless disk hits. It writes durably at each mala boundary and on stop.
   function persist(durable) {
     state.savedAt = Date.now();
     try {
@@ -14066,30 +14618,52 @@ const SADHANA = (() => {
       // raise the count) but it would outlive the sitting it belongs to.
       localStorage.removeItem(LIVE_KEY);
       _lsOk = true;
-    } catch { _lsOk = false; }      // quota — Preferences still has it
-    return (durable === false) ? Promise.resolve(true) : pushPrefs();
+    } catch { _lsOk = false; }      // quota — the durable store still has it
+    return (durable === false) ? Promise.resolve(true) : pushDurable();
   }
 
   // ⚠ Call and await before trusting a read on a cold start. localStorage is
   // read synchronously above so the UI paints without waiting, but only this
-  // sees what Preferences kept through a cache clear.
+  // sees what the durable store kept through a cache clear.
   let _readyP = null;
   function ready() {
     if (!_readyP) _readyP = reconcile();
     return _readyP;
   }
-  async function reconcile() {
-    const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
-    if (!P || !P.get) return state;
-    let durable = null;
-    try {
+
+  // Reads whichever durable store this platform has.
+  //
+  // ⚠ `null` means "nothing kept yet" and THROWING means "I could not read
+  // it", and the two must never be collapsed: reconcile() seeds the store on
+  // the first and leaves it strictly alone on the second. Seeding over a store
+  // that merely failed to read would push the last good copy out of
+  // diary.prev.json on the desktop, and on the phone would overwrite the copy
+  // a cache clear had just made the only one.
+  async function readDurable() {
+    const P = _prefs();
+    if (P && P.get) {
       const got = await P.get({ key: KEY });
-      durable = normalise(JSON.parse((got && got.value) || "null"));
-    } catch { return state; }        // unreadable: keep the cache, change nothing
+      return normalise(JSON.parse((got && got.value) || "null"));
+    }
+    if (!_onDisk()) return null;
+    const r = await fetch(DISK_URL, { cache: "no-store" });
+    if (r.status === 404) { _diskOk = true; return null; }   // nothing kept yet
+    if (!r.ok) throw new Error("diary store unreadable (" + r.status + ")");
+    const durable = normalise(JSON.parse(await r.text()));
+    _diskOk = true;
+    // A file is there but it isn't a diary. Refuse rather than seed over it.
+    if (!durable) throw new Error("diary store is not a diary payload");
+    return durable;
+  }
+
+  async function reconcile() {
+    let durable;
+    try { durable = await readDurable(); }
+    catch { return state; }         // unreadable: keep the cache, change nothing
     if (!durable) {
       // Nothing durable yet — first run, or an install that predates this
       // feature. Seed it so the next cache clear has something to restore from.
-      if (state.sessions.length || state.active) await pushPrefs();
+      if (state.sessions.length || state.active) await pushDurable();
       return state;
     }
     const before = state.sessions.length;
@@ -14288,8 +14862,22 @@ const SADHANA = (() => {
     let raw;
     try { raw = JSON.parse(String(text || "")); }
     catch { return { ok: false, error: "That file isn't valid JSON." }; }
-    const payload = normalise(raw);
+    const report = {};
+    const payload = normalise(raw, report);
     if (!payload) return { ok: false, error: "That file isn't a Dhyan Diary backup, or it was written by a newer version of the app." };
+    // ⚠ §5. Checked BEFORE "no sittings in it", or a backup made entirely of
+    // records this build cannot read would be reported as an empty one.
+    //
+    // ⚠ There is deliberately NO "merge anyway". A merge that drops records
+    // must not be reachable by clicking through a warning: the file looks
+    // fine, the merge reports success, and the missing kinds are noticed only
+    // when this copy is restored onto a wiped phone months later.
+    if (report.unknown) return {
+      ok: false, unknownKinds: report.unknown,
+      error: `This backup was made by a newer version of the app — ${report.unknown} `
+        + `entr${report.unknown === 1 ? "y" : "ies"} in it cannot be read by this copy yet. `
+        + `Update the app, then restore. Nothing has been changed.`,
+    };
     if (!payload.sessions.length) return { ok: false, error: "That backup has no sittings in it." };
 
     const mine = new Map(state.sessions.map((s) => [s.id, s]));
@@ -14364,7 +14952,7 @@ const SADHANA = (() => {
     exportText, exportName, exportPayload, inspectImport, applyImport,
     // Diagnostics — the cache write is the one that can fail silently (quota),
     // and a Settings screen should be able to say so.
-    health: () => ({ cacheOk: _lsOk, count: state.sessions.length, savedAt: state.savedAt }),
+    health: () => ({ cacheOk: _lsOk, diskOk: _diskOk, count: state.sessions.length, savedAt: state.savedAt }),
     FORGOT_SEC, BEADS_PER_MALA: 108,
   };
 })();

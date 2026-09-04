@@ -1618,6 +1618,52 @@ body {
   .app.comm-split #fab-panel { width: 100%; left: 0; border-left: none; }
   .app.comm-split .main { margin-right: 0; }
 }
+
+/* ----- FULL view: the discussion over the whole window --------------------
+   .fab-panel is already `position: fixed` at z-index 79, the sidebar is only
+   `sticky` with no z-index of its own and the topbar is z-index 20 — so
+   widening the panel to the viewport is the whole of "full". Nothing has to be
+   hidden and nothing re-lays-out. See setCommMode in app.js. */
+.app.comm-full #fab-panel { left: 0; width: 100%; }
+.app.comm-full .main { margin-right: 0; }
+/* Shared by BOTH full-window discussions (this panel and Anubhuti Sharing):
+   the autohide pill is fixed at z-index 70 and would otherwise float over the
+   conversation with nothing behind it left to reveal. */
+.app.chat-full .autohide-toggle { display: none; }
+
+/* The Half | Full control itself. Two states, both named on the button —
+   the icon it replaced never said which way it was about to go. */
+.fab-size { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--border);
+  border-radius: 999px; overflow: hidden; background: var(--surface); }
+.fab-size-b { border: none; background: none; color: var(--muted); cursor: pointer;
+  font: 700 11.5px var(--sans); letter-spacing: .02em; padding: 5px 11px;
+  transition: background .12s, color .12s; }
+.fab-size-b:hover { background: var(--accent-soft); color: var(--accent); }
+.fab-size-b.is-on, .fab-size-b.is-on:hover { background: var(--accent); color: #fff; }
+
+/* ----- HALF view: the left side is the ONE Guru's msg being discussed -----
+   #view is swapped for .cf-pane, which holds that message alone. Both are
+   children of .main, so the topbar and the sidebar are untouched by the swap.
+   See paintCommFocusPane in app.js for why the message is rebuilt rather than
+   filtered out of the list. */
+.app.comm-focus #view { display: none; }
+.app:not(.comm-focus) .cf-pane { display: none; }
+.cf-pane { padding: 18px 22px 60px; max-width: 1340px; width: 100%; }
+.cf-bar { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; }
+.cf-back { border: 1px solid var(--border); background: var(--surface); color: var(--accent);
+  font: 600 13px var(--sans); padding: 6px 13px; border-radius: 999px; cursor: pointer; }
+.cf-back:hover { background: var(--accent-soft); border-color: var(--accent); }
+.cf-lb { font: 700 10.5px var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+/* It is the only card on screen, so it needs no list spacing and no accent
+   rail — there is nothing left for it to be distinguished FROM. */
+.cf-pane .sp-card, .cf-pane .lp-card { margin: 0; max-width: none; }
+/* Half a window is too narrow for the Hindi | English pair, exactly as a phone
+   is — stack it the same way the 720px breakpoint already does. */
+.app.comm-split .sp-card.sp-dual { grid-template-columns: 1fr; }
+.app.comm-split .sp-card.sp-dual .sp-col + .sp-col {
+  border-left: none; padding-left: 0; border-top: 1px solid var(--border-soft);
+  padding-top: 12px; margin-top: 12px; }
+
 .fab-panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 .fab-panel-body .cp-feed-wrap { flex: 1; overflow-y: auto; padding: 4px 0; }
 .fab-panel-body .conc-panel-body { flex: 1; overflow-y: auto; }
@@ -4163,6 +4209,45 @@ body.m-mode.m-zoom .m-vpanel { display: none !important; }
 .sx-item.sx-unread .sx-title { color: var(--text); }
 .sx-item.sx-unread .sx-last { color: var(--text); font-weight: 500; }
 
+/* Desktop page #/community — the SAME rows again (renderSatsangIndex draws
+   both), in a card instead of a panel column. Deliberately narrower than
+   .sp-page: these are one-line rows, and a 980px row with a 40-character title
+   at one end and a timestamp at the other is unreadable. */
+.sx-page { max-width: 720px; margin: 0 auto; padding: 18px 22px 60px; }
+.sx-page-head {
+  font-family: var(--serif); margin: 4px 0 4px;
+  display: flex; align-items: center; gap: 9px;
+}
+.sx-page-sub { color: var(--muted); font: 500 13px var(--sans); margin: 0 0 18px; }
+.sx-page-list {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+}
+/* The group heads are `position: sticky` for the panel's own scroller. On the
+   page the scroller is the whole document and the topbar sits above it, so
+   sticky heads would ride out from under it — the page is short enough not to
+   need them. */
+.sx-page-list .sx-group-head { position: static; }
+.sx-page-list .sx-item:last-child { border-bottom: none; }
+
+/* "‹ All" — leave one discussion for the list of all of them. Only rendered
+   when renderWisdomChat is given opts.onBack (the desktop Samuhik Satsang
+   panel); Anubhuti Sharing and Admin Talks are single threads and never get it.
+   The number is the count of OTHER threads with unread messages. */
+.wc-back {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font: 700 12px var(--sans); cursor: pointer; padding: 3px 9px 3px 6px;
+  border-radius: 999px; white-space: nowrap;
+}
+.wc-back:hover { background: var(--accent-soft); border-color: var(--accent-2); }
+.wc-back-ch { font-size: 15px; line-height: 1; margin-top: -1px; }
+.wc-back-n {
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+  background: #e0483e; color: #fff;   /* the app's one badge red — see .nav-badge */
+  font: 700 10.5px/16px var(--sans); text-align: center; margin-left: 2px;
+}
+
 /* ==== mobile message reader (#/m/<section>/<id>) ==========================
    Fixed between the two panels — literally "top panel to bottom panel", the
    same band the daily-message image occupies. Scrolls naturally and keeps
@@ -4646,6 +4731,70 @@ body.m-mode .at-page .at-chat { height: auto; border: none; border-radius: 0; }
 .at-sheet-note {
   flex: 0 0 auto; padding: 11px 16px; border-top: 1px solid var(--border-soft);
   font: 500 11.5px var(--sans); color: var(--muted); line-height: 1.5;
+}
+
+/* ----- "Who is here now" as a strip INSIDE the chat (desktop) -------------
+   The sheet above is a body-level modal at z-index 60 and the docked satsang
+   panel is 79, so on the desktop it opened BEHIND the discussion — a
+   half-covered box whose ✕ was under the chat. The names open here instead;
+   see toggleChatPresenceInline. Rows reuse the sheet's .at-p markup, so the
+   two surfaces can never look like different lists. */
+.wc-presence {
+  flex: 0 0 auto; display: flex; flex-direction: column; max-height: 46%;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, .06);
+}
+.wc-presence-top { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; padding: 9px 16px 6px; }
+.wc-presence-x { border: none; background: none; cursor: pointer; font-size: 14px;
+  color: var(--muted); line-height: 1; padding: 2px 4px; }
+.wc-presence-x:hover { color: var(--accent); }
+.wc-presence .at-plist { flex: 1 1 auto; min-height: 0; padding: 0 0 2px; }
+.wc-presence .at-p { padding: 5px 16px; }
+.wc-presence .at-p-av { width: 30px; height: 30px; font-size: 13px; }
+.wc-presence .at-sheet-note { padding: 8px 16px 10px; }
+/* The chip stays lit while its list is open, so it reads as the toggle it is. */
+.wc-online.is-open { background: var(--accent); border-color: var(--accent); color: #fff; }
+.wc-online.is-open .wc-online-dot { background: #fff; box-shadow: none; }
+
+/* ----- Anubhuti Sharing: the same two sizes as the satsang panel ----------
+   Half (the default) puts the sharing on the left and its discussion on the
+   right. Stacked in one column, a member read the sharing, scrolled past it
+   into the chat, and then had no way to look at it again while replying. */
+.an-topbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+.an-topbar .an-back { margin-bottom: 0; }
+.an-size { margin-left: auto; }
+
+.an-page.an-half { max-width: none; }
+.an-page.an-half.an-topic {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 22px; align-items: start;
+}
+.an-page.an-half .an-topbar { grid-area: 1 / 1 / 2 / 3; }
+.an-page.an-half .an-head { grid-area: 2 / 1 / 3 / 2; }
+/* Sticky, not capped: the sharing on the left may be long and the page scrolls
+   for it, but the discussion must not scroll off the top while it does. */
+.an-page.an-half .an-chat {
+  grid-area: 2 / 2 / 3 / 3; position: sticky; top: 76px; height: calc(100vh - 100px);
+}
+/* Autohide is the default, and it takes the topbar away — so the discussion
+   starts higher and gets the height back. */
+.app.autohide .an-page.an-half .an-chat { top: 14px; height: calc(100vh - 38px); }
+
+/* Full: the discussion over the whole window. Only the size control survives,
+   as a floating pill, because it is the way back out. */
+.an-page.an-full .an-back, .an-page.an-full .an-head { display: none; }
+.an-page.an-full .an-topbar { position: fixed; top: 12px; right: 18px; z-index: 81; margin: 0; }
+.an-page.an-full .an-chat {
+  position: fixed; inset: 0; z-index: 80; height: auto; border: none; border-radius: 0;
+}
+/* …so that pill never lands on the chat's own find / refresh buttons. */
+.an-page.an-full .an-chat .wc-hdr { padding-right: 132px; }
+
+/* Two half-width columns stop being readable well before a phone — fall back
+   to the stacked column the page has always been. */
+@media (max-width: 900px) {
+  .an-page.an-half.an-topic { display: block; }
+  .an-page.an-half .an-chat { position: static; height: min(62vh, 620px); }
 }
 
 /* ---------------------------------------------------------------------------
@@ -5504,6 +5653,32 @@ body.dd-sitting { overflow: hidden; }
 .dd-backup-btns { display: flex; gap: 8px; }
 .dd-backup-btns .btn { flex: 1; justify-content: center; }
 .dd-backup-note { margin-top: 10px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+/* ---- the inbox: a backup this computer can already see -------------------
+   Sits at the very top of the diary's main screen, above today's figures.
+   ⚠ Deliberately NOT .dd-live's accent gradient: that card means "a sitting is
+   running right now" and this must not compete with it. A soft tinted card
+   reads as an offer, which is what it is. */
+.dd-inbox {
+  margin: 0 0 14px; padding: 13px 15px; border-radius: 14px;
+  background: var(--accent-soft); border: 1px solid var(--accent);
+}
+.dd-inbox-h { font-size: 13.5px; font-weight: 700; color: var(--accent); }
+.dd-inbox-s { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.dd-inbox-btns { display: flex; gap: 8px; margin-top: 11px; }
+.dd-inbox-btns .btn { padding: 7px 13px; font-size: 12.5px; }
+
+/* The folder to drop a file into, on the Backup screen. The path is a real
+   filesystem path, so it wraps anywhere rather than pushing the panel wide. */
+.dd-inbox-path { margin-top: 4px; }
+.dd-inbox-path-s { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.dd-inbox-code {
+  display: block; margin: 8px 0; padding: 8px 10px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  font: 500 11px var(--mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  color: var(--text); overflow-wrap: anywhere;
+}
+.dd-inbox-copy { padding: 7px 13px; font-size: 12.5px; }
 
 /* ---- restore preview ----
    The file is user-supplied, so this always runs before anything is merged. */
