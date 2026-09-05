@@ -39,6 +39,10 @@ let _deviceHeader = null;
 // paints. Both callers now share one in-flight promise.
 let _deviceSignInFlight = null;
 
+// Whether this project is ENFORCING device binding (the app_settings switch),
+// read once per session. null = not read yet. See WA.deviceBindingOn().
+let _bindingOn = null;
+
 // supabase-js fixes `global.headers` at createClient time, and the header has to
 // be able to appear (and change) later. A custom fetch is the supported way to
 // do that, and it covers PostgREST, RPC, Storage and Functions in one place.
@@ -2634,6 +2638,38 @@ const WA = {
   deviceCapabilities() { return _deviceCapabilities(); },
   deviceIsSignedIn() { return !!_deviceHeader; },
 
+  // Is device binding actually being ENFORCED on this project?
+  //
+  // `app_settings.admin_device_binding` is the master switch Postgres reads in
+  // wa_device_ok(); while it is '0' every gate in the feature passes and an
+  // unregistered admin is refused nothing. The client has to follow the same
+  // switch or the two disagree — a UI that locks an admin out of screens the
+  // server would happily serve is a self-inflicted outage, and it is the whole
+  // reason the audit week exists. Reading it here means one OTA can ship the
+  // gate INERT and the operator's single SQL flip turns on both halves at once.
+  //
+  // ⚠ Fails OPEN. A failed read means offline or a hiccup, not "enforce": the
+  // server is the real gate, so guessing wrong in this direction merely lets an
+  // admin open a screen whose content then declines to load. Guessing wrong the
+  // other way locks a working admin out of the app over a dropped packet.
+  //
+  // The last known value is remembered so an offline launch after the flip
+  // still shows the register screen rather than five screens of errors.
+  async deviceBindingOn() {
+    if (_bindingOn !== null) return _bindingOn;
+    try {
+      const { data, error } = await _sb.from("app_settings")
+        .select("value").eq("key", "admin_device_binding").maybeSingle();
+      if (error) throw error;
+      _bindingOn = !!data && data.value === "1";
+      try { localStorage.setItem("wa:device:binding", _bindingOn ? "1" : "0"); } catch (_) {}
+      return _bindingOn;
+    } catch (_) {
+      try { return localStorage.getItem("wa:device:binding") === "1"; } catch (_) { return false; }
+    }
+  },
+
+
   // Create the key (if needed) and queue this device for the Sutradhar.
   // Returns {id, status, enroll_code} — the code is read aloud so the Sutradhar
   // knows WHICH request they are approving. It is not a secret.
@@ -2687,7 +2723,9 @@ const WA = {
   //
   // Clears the in-flight handshake too, so a sign-in by the NEXT person starts a
   // fresh one instead of joining the departing user's.
-  deviceSignOut() { _deviceHeader = null; _deviceSignInFlight = null; },
+  // Clears the enforcement flag too, so the next person on this machine reads
+  // the switch fresh instead of inheriting the departing user's answer.
+  deviceSignOut() { _deviceHeader = null; _deviceSignInFlight = null; _bindingOn = null; },
 
   myDevices() { return _rpc("list_my_devices"); },
   revokeDevice(id) { return _rpc("revoke_device", { p_id: id }); },
@@ -2697,12 +2735,17 @@ const WA = {
   // requireAuth:false (so it still demands an unlock inside 60s), or one Android
   // invalidated when the screen lock changed.
   //
-  // ⚠ Revokes the server-side row FIRST, then destroys the local key. That order
-  // matters: wa_device_cap() caps an account at 3 devices, so leaving the dead
-  // row behind would let two re-registrations exhaust the allowance and the
-  // third fail with a cap error that looks unrelated to what the user did. If
-  // revoke succeeds and the delete then fails, the device is merely revoked —
+  // ⚠ Revokes the server-side row FIRST, then destroys the local key. If revoke
+  // succeeds and the delete then fails, the device is merely revoked —
   // recoverable. The reverse order can strand a row nothing can ever sign for.
+  //
+  // ⚠ Since add_device_one_slot.sql the revoke SUCCEEDS ONLY FOR THE SUTRADHAR:
+  // revoke_device() is theirs alone now. For a moderator every attempt below
+  // throws and is swallowed, and that is fine rather than broken — the slot rule
+  // is "one ACTIVE device per platform", so the fresh key enrols as a PENDING
+  // replacement beside the row this could not clear, and the sutradhar's
+  // approval retires the old one in the same transaction. The loop is kept
+  // because for the sutradhar it still does exactly what it says.
   async resetDeviceKey() {
     let mine = { devices: [] };
     try { mine = await _rpc("list_my_devices"); } catch (_) {}

@@ -4636,6 +4636,23 @@ body.gated { overflow: hidden; }
 .dv-box .dv-err:empty { display: none; }
 .dv-box .dv-err { font-size: 13px; color: #a23b3b; margin-top: 8px; }
 
+/* The whole-page version: what an admin gets INSTEAD of a closed screen while
+   their device is unapproved (renderDeviceGate). The register box inside it is
+   the same deviceBox() the Moderator page uses, so it needs the card around it
+   that the Moderator page's own card would otherwise have provided. */
+.dvgate { max-width: 640px; }
+.dvgate .dvgate-h { margin-bottom: 6px; }
+.dvgate .dvgate-sub { color: var(--muted); line-height: 1.6; }
+.dvgate .dvgate-box {
+  margin: 16px 0; padding: 14px 15px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
+}
+.dvgate .dvgate-open {
+  font-size: 13.5px; line-height: 1.65; color: var(--muted);
+  padding: 11px 13px; border-radius: 10px;
+  border: 1px solid var(--border); background: rgba(127, 127, 127, .06);
+}
+
 .mod-dev-code {
   font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums;
   font-size: 15px; font-weight: 700; letter-spacing: .14em; margin-top: 4px;

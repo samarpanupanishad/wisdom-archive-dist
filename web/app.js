@@ -605,6 +605,127 @@ async function paintDeviceBox(box) {
   });
 }
 
+// --------------------------------------------------------------------------
+// DEVICE_GATE — what a moderator or sutradhar may reach on a device the
+// Sutradhar has not approved (ADMIN_DEVICE_BINDING_PLAN.md; operator's rule,
+// 2026-09-06: "without device registration, app functionality should not be
+// accessible to moderator or sutradhar … only Guru's content is visible").
+//
+// OPEN: the archive, Daily Msg, Special Messages, Letterhead Msg, Anushthan,
+// Upanishad Ganga to READ, their own Dhyan Diary, Msg to Admin, and the
+// account/settings pages. CLOSED: Samuhik Satsang, Anubhuti Sharing, Admin
+// Talks, Important Updates, suggesting a Ganga quote, and every admin screen.
+//
+// ⚠ AN ALLOW-LIST, deliberately. A screen added later is gated until someone
+// puts it in OPEN on purpose; default-closed is the only way a list like this
+// survives the app growing around it.
+//
+// ⚠ IT IS NOT THE SECURITY, and must never be mistaken for it. Postgres
+// refuses every closed surface to an unbound admin on its own
+// (add_device_enforcement.sql + add_device_one_slot.sql), and the anon key
+// ships in this repo, so anyone can skip the SPA entirely. All this does is
+// decide what the app OFFERS, so the user meets one explanation instead of
+// five screens of errors. Never put a check here that Postgres does not also
+// make.
+//
+// ⚠ It follows the SERVER's switch (WA.deviceBindingOn), not a constant. While
+// `admin_device_binding` is '0' nothing is enforced anywhere and this gate
+// stays down — which is what lets the OTA ship inert and the operator's single
+// SQL flip turn on both halves together.
+const DEVICE_GATE = (() => {
+  const OPEN = new Set([
+    "",                                    // home — the day's message
+    "entry", "search", "browse", "favorites", "random", "stats",
+    "daily", "nomsg", "special", "letterpad", "anushthan",
+    "gyan",        // reading the five thoughts. The compose box gates itself.
+    "dhyan",       // private, on-device, nothing here for a thief
+    "contact",     // Msg to Admin — a stranded admin's only way to ask
+    "menu", "account", "settings", "about", "help",
+  ]);
+
+  // The route key, flattening the two shells: mobile pages are #/m/<page>,
+  // desktop pages are #/<page>, and several names appear in both tables.
+  function keyOf(seg) {
+    if (!seg.length) return "";
+    if (seg[0] === "m") return seg[1] || "";
+    return seg[0];
+  }
+
+  // null until the switch has been read. Unknown counts as "gate it" — see
+  // renderDeviceGate(), which resolves the unknown and moves on rather than
+  // leaving anyone stuck on it.
+  let armed = null;
+
+  return {
+    // Sync on purpose: route() runs on every navigation and must not await.
+    // This asks "might this need the gate?"; renderDeviceGate() decides.
+    blocks(seg) {
+      return armed !== false && isModerator()
+             && !WA.deviceIsSignedIn() && !OPEN.has(keyOf(seg));
+    },
+    isOpenRoute(seg) { return OPEN.has(keyOf(seg)); },
+    // For a control on an OPEN page that is itself closed — the Upanishad
+    // Ganga compose box being the only one today.
+    //
+    // ⚠ Strict `armed === true`, unlike blocks(). A route can afford to show
+    // "Checking…" for a moment; a widget cannot, and hiding a working box on
+    // an unread flag is worse than showing one whose send is refused with a
+    // sentence that says exactly what to do (the ganga_suggestions trigger).
+    blocksAction() {
+      return armed === true && isModerator() && !WA.deviceIsSignedIn();
+    },
+    setArmed(v) { armed = v; },
+    // Read the switch once, at boot. Failure leaves it null, i.e. "check
+    // properly when it matters" rather than a guess in either direction.
+    async prime() {
+      try { armed = await WA.deviceBindingOn(); } catch (_) {}
+      return armed;
+    },
+  };
+})();
+
+// The screen an unregistered admin lands on instead of a closed one.
+//
+// It does the settling that blocks() could not: joins the boot handshake (it is
+// single-flight, so this costs nothing extra) and reads the enforcement switch.
+// If either says the user is fine, it re-routes to the page they actually asked
+// for, so a slow handshake shows a moment of "Checking…" rather than a wrongly
+// locked screen.
+async function renderDeviceGate(seg) {
+  const nav = _nav;
+  $view.innerHTML = `<div class="empty">Checking this device…</div>`;
+
+  // Not being enforced at all: nothing to gate, go where they were going.
+  let on = true;
+  try { on = await WA.deviceBindingOn(); } catch (_) {}
+  DEVICE_GATE.setArmed(on);
+  if (!current(nav)) return;
+  if (!on) return route();
+
+  let ok = false;
+  try { ok = await WA.deviceSignIn(); } catch (_) {}
+  if (!current(nav)) return;
+  if (ok) return route();          // the handshake landed — carry on
+
+  const page = el(`<div class="prose dvgate">
+    <!-- ⚠ Not "Register this device": deviceBox() below says exactly that in its
+         own first-run heading, and the two stacked read as a stutter. This line
+         says what has happened; the box says what to do about it. -->
+    <h2 class="dvgate-h">This device is not registered</h2>
+    <p class="dvgate-sub">Moderator and Sutradhar accounts work only on devices the Sutradhar has
+      approved — one mobile and one desktop each. Until this one is approved, the community and
+      the admin screens stay closed here.</p>
+    <div class="dvgate-box"></div>
+    <p class="dvgate-open"><b>You can still read everything from Baba Swami</b> — the daily
+      message, Special Messages, Letterhead Msg, Anushthan Msg, Upanishad Ganga and the whole
+      archive — and your Personal Dhyan Diary. Msg to Admin still works too, so you can ask the
+      Sutradhar to approve this device.</p>
+  </div>`);
+  page.querySelector(".dvgate-box").appendChild(deviceBox());
+  $view.innerHTML = "";
+  $view.appendChild(page);
+}
+
 function accessBox() {
   const box = el(`<div class="ax-box"><div class="ax-note">Checking your access…</div></div>`);
   paintAccessBox(box);
@@ -1425,6 +1546,17 @@ const CHAT_TOUCH_ENTER = !!(window.matchMedia && window.matchMedia("(pointer: co
 // Community tab — per-wisdom chat when a wisdom is open, recent feed otherwise
 // --------------------------------------------------------------------------
 async function renderCommunityTab(body) {
+  // ⚠ The desktop community panel is NOT a route — it opens over whatever page
+  // is showing — so route()'s DEVICE_GATE check never sees it. Without this an
+  // unregistered admin would open the panel and watch it fail to load, which is
+  // the one thing the gate exists to prevent. Mobile reaches the same screens
+  // through #/m/community and is covered by the router.
+  if (DEVICE_GATE.blocksAction()) {
+    body.innerHTML = `<div class="empty">Register this device to open Samuhik Satsang.
+      Moderator and Sutradhar accounts work only on devices the Sutradhar has approved —
+      see the Moderator page.</div>`;
+    return;
+  }
   // A Special Telegram / Letterpad message being read wins over the archive
   // entry, so the panel discusses whatever is actually on screen.
   const chatTarget = (_chatCtx && _chatCtx.wid) || _stageId || store.lastViewed();
@@ -6052,6 +6184,15 @@ async function route() {
   ANUBHUTI.refresh().catch(() => {});   // same contract, same 30s throttle
   ADMINTALK.refresh().catch(() => {});  // no-ops for everyone but a moderator
   ADMINMSG.refresh().catch(() => {});   // one number, two meanings — see ADMINMSG
+  // ⚠ BEFORE the shell dispatch below, so it covers both shells at one point.
+  // An admin whose device the Sutradhar has not approved gets the register
+  // screen instead of a closed page. Down entirely for members, and for
+  // everyone while `admin_device_binding` is '0'. See DEVICE_GATE.
+  if (DEVICE_GATE.blocks(seg)) {
+    if (MOBILE_UI.active) MOBILE_UI.fallthrough(seg);
+    setActiveNav("");
+    return renderDeviceGate(seg);
+  }
   // Mobile app shell (APK / ?waNativeTest=1): image-first pages take over
   // home / entry / #/m/* routes; every other route falls through to the
   // standard views below, framed by the mobile top bar.
@@ -21155,6 +21296,20 @@ const MOBILE_UI = (() => {
         wireModSignIn(box, () => gyanPage(params));
         return;
       }
+      // An admin on a device the Sutradhar has not approved may READ the five
+      // thoughts but not add to the pool — the same rule Postgres enforces on
+      // the insert (add_device_one_slot.sql). Reading is the whole point of the
+      // screen, so only the box goes.
+      if (DEVICE_GATE.blocksAction()) {
+        composeEl.innerHTML =
+          `<div class="m-ganga-box">` +
+            `<div class="m-hint">` +
+            escapeHtml("Register this device to send a thought of your own. "
+              + "Moderator and Sutradhar accounts work only on devices the Sutradhar has approved.")
+            + `</div>` +
+          `</div>`;
+        return;
+      }
       composeEl.innerHTML =
         `<div class="m-ganga-box">` +
           `<textarea id="m-ganga-ta" rows="5" maxlength="${limit}" ` +
@@ -24050,6 +24205,14 @@ AUTH_GATE.boot(function startApp() {
   // a startup error — deviceBox() on the Moderator page is where the user is
   // told what to do about it.
   if (isModerator()) WA.deviceSignIn().catch(() => {});
+
+  // Read the enforcement switch once, and re-route if it turns out to be on:
+  // safeRoute() above has already painted whatever the user landed on, and on
+  // an enforcing project a closed page must become the register screen. Costs
+  // one cached row read, and nothing at all for a member.
+  if (isModerator()) {
+    DEVICE_GATE.prime().then((on) => { if (on) safeRoute(); }).catch(() => {});
+  }
 
   // Special Messages: paint the unread badges from the offline cache right away
   // (chrome for both shells exists by now), then freshen in the background so a
