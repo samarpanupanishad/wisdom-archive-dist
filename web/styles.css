@@ -4652,6 +4652,104 @@ body.gated { overflow: hidden; }
   padding: 7px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
 }
 
+/* ---- Search By (desktop): Word · Date · Date Range -----------------------
+   The three tabs the phone has always had, in desktop clothes. `ds-` namespace;
+   the results below them are the ordinary .results rows + the .sg- groups. */
+.ds-head { margin-bottom: 0; }
+.ds-head .ds-sub { margin: 0 0 18px; }
+.ds-tabs {
+  display: inline-flex; gap: 4px; margin: 14px 0 0; padding: 4px;
+  background: var(--sidebar); border: 1px solid var(--border); border-radius: 12px;
+}
+.ds-tab {
+  border: none; background: none; border-radius: 9px; padding: 8px 20px;
+  font-size: 13.5px; font-weight: 600; color: var(--muted);
+  transition: background .14s, color .14s, box-shadow .14s;
+}
+.ds-tab:hover { color: var(--accent); }
+.ds-tab.active { background: var(--surface); color: var(--accent); box-shadow: var(--shadow); }
+.ds-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0 2px; }
+.ds-dash { color: var(--muted); font-size: 15px; }
+.ds-field { position: relative; display: inline-flex; align-items: center; gap: 9px; }
+.ds-f-label {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.ds-f-btn {
+  display: inline-flex; align-items: center; gap: 9px; padding: 10px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 11px;
+  box-shadow: var(--shadow); transition: border-color .14s, box-shadow .14s;
+}
+.ds-f-btn { min-width: 176px; }
+.ds-f-btn:hover { border-color: var(--accent-2); }
+.ds-field.open .ds-f-btn { border-color: var(--accent-2); box-shadow: var(--ring); }
+.ds-f-ico { color: var(--accent); display: flex; flex: 0 0 auto; }
+.ds-f-val { flex: 1; text-align: left; font-size: 14.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-f-ph { color: var(--muted); }
+.ds-f-caret { color: var(--muted); font-size: 11px; }
+/* Same popover shape as .arch-pick-pop, one layer higher: this one can sit over
+   the results list rather than over an empty page. */
+.ds-f-pop {
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 60;
+  width: 300px; padding: 14px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: var(--shadow-lg); animation: archPop .14s ease;
+}
+.ds-f-pop[hidden] { display: none; }
+.ds-clear {
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  border-radius: 9px; padding: 9px 15px; font-size: 13px;
+  transition: color .12s, border-color .12s;
+}
+.ds-clear:hover { color: var(--accent); border-color: var(--accent-2); }
+.ds-note { font-size: 12.5px; color: var(--muted); }
+
+/* Word tab: its own field + हिंदी/English switch, so the language you are
+   searching in sits beside what you are typing. `.hi-seg` / `.hi-sugg` /
+   `.hi-row` are the TOP BAR's classes, reused deliberately — one look for one
+   engine (HindiType), and the light-blue "Hindi typing" cue is the same one the
+   phone's Search By uses. */
+.ds-wordwrap { width: 100%; }
+.ds-searchbox { position: relative; display: flex; align-items: center; flex: 0 1 430px; min-width: 230px; }
+.ds-searchbox .ds-f-ico { position: absolute; left: 14px; pointer-events: none; }
+.ds-searchbox input {
+  width: 100%; padding: 11px 42px; border: 1px solid #bbdefb; border-radius: 11px;
+  background: var(--surface); font-size: 15px; color: var(--text); outline: none;
+  box-shadow: var(--shadow); transition: border-color .15s, box-shadow .15s;
+}
+.ds-searchbox input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.ds-searchbox.hi-glow input { border-color: #90caf9; box-shadow: 0 0 0 3px #e3f2fd; }
+.ds-searchbox input:focus, .ds-searchbox.hi-glow input:focus { border-color: var(--accent-2); box-shadow: var(--ring); }
+.ds-q-clear {
+  position: absolute; right: 7px; width: 28px; height: 28px; border: none; border-radius: 50%;
+  background: #e3f2fd; color: #1565c0; font-size: 12px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; transition: background .12s;
+}
+.ds-q-clear:hover { background: #bbdefb; }
+/* ⚠ `display:flex` above outranks the UA's `[hidden]{display:none}`, so the
+   ✕ sat there on an empty field with `hidden` faithfully set. */
+.ds-q-clear[hidden] { display: none; }
+.ds-sugg { min-width: 230px; }
+.ds-seg button { padding: 9px 17px; font-size: 13px; }
+.ds-hint { margin-top: 9px; font-size: 12.5px; color: var(--muted); }
+.ds-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Daily is legitimately empty on a day only a Special message answers for, and
+   `.empty`'s 60px band sitting above the section groups read as a broken page. */
+.ds-page > .empty { padding: 28px 20px 4px; font-size: 15.5px; }
+.ds-page > .sg-groups { margin-top: 18px; }
+.ds-presets .chip-btn { padding: 8px 14px; }
+/* Narrow windows (and the mobile shell, which can still reach #/search by an
+   old link): the tabs go full width and the fields stack instead of squeezing. */
+@media (max-width: 760px) {
+  .ds-tabs { display: flex; width: 100%; }
+  .ds-tab { flex: 1; padding: 8px 6px; }
+  .ds-field { flex: 1 1 100%; }
+  .ds-f-btn { flex: 1; min-width: 0; }
+  .ds-searchbox { flex: 1 1 100%; }
+  .ds-dash { display: none; }
+  .ds-f-pop { width: min(300px, 86vw); }
+}
+
 /* ---- desktop search: the non-daily sections ------------------------------
    Daily results keep the thumbnail list above; Special / Letterpad / Anushthan
    render as compact rows that expand IN PLACE — those sections have no

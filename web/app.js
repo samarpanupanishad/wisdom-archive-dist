@@ -1571,9 +1571,16 @@ function openSatsangFromIndex(v) {
 
 // ---- live chat (Server-Sent Events): one open stream per viewed wisdom ----
 let _chatStream = null;
+// The element the open stream is painting into. Read by route() to tell a chat
+// that dies with the page it is on (the Anubhuti sharing page and Admin Talks —
+// both render into $view) from the one that does NOT: the desktop community
+// panel survives navigation on purpose, so closing its stream on every hash
+// change would leave an open, visible discussion quietly receiving nothing.
+let _chatHost = null;
 
 function closeChatStream() {
   if (_chatStream) { try { _chatStream.close(); } catch {} _chatStream = null; }
+  _chatHost = null;
 }
 
 // ---- chat time / grouping helpers ----------------------------------------
@@ -3044,6 +3051,7 @@ function presenceHideCardEl() {
 function openChatStream(wid, msgsEl, ctx) {
   closeChatStream();
   if (!isSignedIn()) return;   // not signed in; the manual refresh button still works
+  _chatHost = msgsEl;          // …so route() can tell whether this chat is being left
   // Live updates via Supabase Realtime (replaces the old SSE stream). Deleting a
   // message is an UPDATE (a soft delete), not a DELETE — the DELETE path stays
   // for rows removed before the migration, and for a true purge.
@@ -4214,7 +4222,11 @@ function renderThumbList(items, opts) {
   // footer (optional): a factory for extra content below the list. Called on
   // EVERY showList() — including the empty branch, and again after a detail
   // view is backed out of — so search's other sections can't vanish.
-  const { nav, backButton, header, emptyMsg, fetchEntry, footer } = opts;
+  // wrapClass (optional): an extra class on the list wrapper, so a page can
+  // style what it put inside it. Search By's date tabs use it: their Daily
+  // group is legitimately empty on days only a Special message answers for,
+  // and `.empty`'s 60px band above the groups reads as a broken page.
+  const { nav, backButton, header, emptyMsg, fetchEntry, footer, wrapClass } = opts;
   const snippet = opts.snippet || ((item, lang) => escapeHtml(item[`body_${lang}`] || ""));
 
   function showList() {
@@ -4222,7 +4234,7 @@ function renderThumbList(items, opts) {
     _stageId = null;
     updateIdNav(null);
     if (document.getElementById("conc-panel-body")) renderConclusionPanelBody(null);
-    const wrap = el(`<div class="flush-top"></div>`);
+    const wrap = el(`<div class="flush-top${wrapClass ? " " + wrapClass : ""}"></div>`);
     if (backButton) wrap.appendChild(backButton);
     if (header) wrap.appendChild(header);
     if (!items.length) {
@@ -4352,19 +4364,305 @@ function searchGroupsEl(groups) {
   return wrap;
 }
 
-async function renderSearch(q) {
-  if (document.activeElement !== searchInput) searchInput.value = q;
-  searchClear.style.display = q ? "block" : "none";
-  document.getElementById("kbd-hint").style.display = q ? "none" : "block";
-  if (!q.trim()) {
-    $view.innerHTML = `<div class="page-title">Search</div><div class="empty">Type a word above to search every English and Hindi transcript.</div>`;
-    $view.prepend(searchBackBtn());
+// ==========================================================================
+// Desktop Search By — Word · Date · Date Range
+// ==========================================================================
+// The browser could only ever search by WORD, while the phone has had all
+// three tabs since 2026-08-12 (MOBILE_UI.searchPage). These are those three,
+// and — the half that could genuinely have drifted — they CHOOSE RESULTS with
+// the same code the phone runs:
+//   • Word matches through MSG_CORPUS.match(), exactly as it always did here.
+//   • Date / Date Range match through MSG_CORPUS.datesOf(), which is the UNION
+//     rule: a teaching signed 2019 and re-posted to Telegram in 2026 is found
+//     under BOTH years.
+//   • Both calendars offer searchDateUnion() — every date ANY of the four
+//     sections can answer for. Offering the daily archive's dates alone hides
+//     whole years that only Special Telegram messages live in.
+// What is deliberately NOT shared is the rendering: this stays desktop-shaped
+// (renderThumbList rows above, the collapsible .sg- groups below), the way the
+// word search already looked. Same split the two Word surfaces always had.
+const DESK_SEARCH = { by: "word", q: "", date: "", from: "", to: "" };
+const DESK_SEARCH_TABS = [["word", "Word"], ["date", "Date"], ["range", "Date Range"]];
+
+// The state lives in DESK_SEARCH; the hash is kept in step with replaceState so
+// a reload — or a copied link — lands back on the same tab with the same dates.
+// ⚠ replaceState fires no hashchange, so this never re-routes. That is the
+// point: a tab switch or a date pick repaints the page in place instead of
+// tearing down everything route() owns, which is what keeps the top bar's
+// query, the sidebar state and an in-flight fetch from being thrown away.
+function deskSearchSyncHash() {
+  const p = new URLSearchParams();
+  if (DESK_SEARCH.q.trim()) p.set("q", DESK_SEARCH.q.trim());
+  p.set("by", DESK_SEARCH.by);
+  if (DESK_SEARCH.by === "date" && DESK_SEARCH.date) p.set("d", DESK_SEARCH.date);
+  if (DESK_SEARCH.by === "range") {
+    if (DESK_SEARCH.from) p.set("from", DESK_SEARCH.from);
+    if (DESK_SEARCH.to) p.set("to", DESK_SEARCH.to);
+  }
+  const h = "#/search?" + p.toString();
+  if (location.hash !== h) { try { history.replaceState(null, "", h); } catch {} }
+}
+
+// The tab bar, this tab's own controls and the result count, as ONE element.
+// ⚠ It has to be one element because renderThumbList takes it as `header` and
+// re-appends that same node when a result's detail view is backed out of — so
+// the controls, and every listener on them, survive the round trip. Build it
+// per paint, never once per page: the counts are in it.
+function deskSearchHead(sub, controls) {
+  const head = el(`<div class="page-head ds-head">
+    <div class="page-title">Search</div>
+    <div class="ds-tabs" role="tablist" aria-label="Search by">${DESK_SEARCH_TABS.map(([k, t]) =>
+      `<button class="ds-tab${DESK_SEARCH.by === k ? " active" : ""}" type="button" role="tab" aria-selected="${DESK_SEARCH.by === k}" data-by="${k}">${t}</button>`).join("")}</div>
+    <div class="ds-controls"></div>
+    <div class="page-sub ds-sub">${sub}</div>
+  </div>`);
+  head.querySelector(".ds-tabs").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-by]");
+    if (!b || b.dataset.by === DESK_SEARCH.by) return;
+    DESK_SEARCH.by = b.dataset.by;
+    deskSearchRun(_nav).catch(showRouteError);
+  });
+  if (controls) head.querySelector(".ds-controls").appendChild(controls);
+  return head;
+}
+
+// One "dd/mm/yyyy ▾" field that drops the very month grid Browse by Date uses
+// (buildCalendar), so the two date surfaces of this app look and behave alike.
+// `dates` is a Set — only days in it are marked and clickable, which is what
+// stops the picker offering a day nothing can answer for.
+// ⚠ The outside-click / Escape listeners are bound while the popover is OPEN
+// and unbound the moment it closes. They deliberately are NOT the self-cleaning
+// "am I still in the DOM?" kind used elsewhere in this file: this field lives
+// inside renderThumbList's `header`, which is DETACHED while a result's detail
+// view is showing and then re-appended — a listener that unbound itself on
+// detach would hand back a dead field.
+function deskDateField(label, value, dates, onPick) {
+  const box = el(`<div class="ds-field">
+    <span class="ds-f-label">${escapeHtml(label)}</span>
+    <button class="ds-f-btn" type="button">
+      <span class="ds-f-ico">${icon("calendar")}</span>
+      <span class="ds-f-val${value ? "" : " ds-f-ph"}">${value ? fmtDate(value) : "dd/mm/yyyy"}</span>
+      <span class="ds-f-caret">▾</span>
+    </button>
+    <div class="ds-f-pop" hidden></div>
+  </div>`);
+  const btn = box.querySelector(".ds-f-btn"), pop = box.querySelector(".ds-f-pop");
+  const onDoc = (e) => { if (!box.contains(e.target)) close(); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  function close() {
+    if (pop.hidden) return;
+    pop.hidden = true; pop.innerHTML = ""; box.classList.remove("open");
+    document.removeEventListener("click", onDoc);
+    document.removeEventListener("keydown", onKey);
+  }
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();          // …or onDoc closes it again on the way up
+    if (!pop.hidden) { close(); return; }
+    // Open on the chosen month; failing that on the newest month anything can
+    // answer for, which beats today when the archive ends months ago.
+    let newest = ""; for (const d of dates) if (d > newest) newest = d;
+    pop.appendChild(buildCalendar(dates, {
+      initial: value || newest || null,
+      selected: value || null,
+      onPick: (iso) => { close(); onPick(iso); },
+    }));
+    pop.hidden = false; box.classList.add("open");
+    document.addEventListener("click", onDoc);
+    document.addEventListener("keydown", onKey);
+  });
+  return box;
+}
+
+// Repaint whichever tab is active. Every tab change and every date pick comes
+// through here rather than through the router. `nav` is route()'s generation
+// token, so a slow fetch resolving after the user has navigated away is
+// dropped — and because a tab switch does NOT bump it, each tab also re-checks
+// that it is still the active one before painting.
+async function deskSearchRun(nav) {
+  deskSearchSyncHash();
+  if (DESK_SEARCH.by === "date") return deskDateSearch(nav);
+  if (DESK_SEARCH.by === "range") return deskRangeSearch(nav);
+  return deskWordSearch(nav);
+}
+// A tab with nothing chosen yet: the same chrome, an invitation instead of a list.
+function deskSearchPrompt(head, msg) {
+  const wrap = el(`<div class="flush-top"></div>`);
+  wrap.appendChild(searchBackBtn());
+  wrap.appendChild(head);
+  wrap.appendChild(el(`<div class="empty">${msg}</div>`));
+  $view.replaceChildren(wrap);
+}
+// Special / Letterpad are CLIENT caches: on a desktop session that has never
+// opened those sections they are empty, and the very messages a search exists
+// to find would silently not be there. Every tab warms them once and repaints
+// only if the counts actually moved, so a warm cache never janks the page.
+function deskWarmSections() { return Promise.allSettled([SPECIAL.sync(), LETTERPAD.loadIndex()]); }
+
+// ---- Word ----------------------------------------------------------------
+// The tab has its own हिंदी / English switch and its own field, the way the
+// phone's Search By → Word does. The top bar can still drive it from any page,
+// but the language you are searching IN belongs next to what you are typing,
+// not as one control among six in the bar above.
+// ⚠ ONE ENGINE, THREE SURFACES. `HindiType` owns the Roman → Devanagari
+// suggestions, the mode and where it is stored (`wa:searchLang`); the top bar,
+// this field and the phone all call it. Never fork the transliteration or the
+// word list — in हिंदी mode an unsuggestible word is an UNSEARCHABLE one.
+// The mode is shared state, so this switch repaints the top bar's copy
+// (`hiSegPaint`) and the top bar's repaints this one: they cannot disagree.
+// ⚠ THE NODE IS BUILT ONCE AND REUSED. Every keystroke repaints the page and
+// renderThumbList's `header` is rebuilt with it — a field re-created each time
+// would lose its value and its caret after one letter. `deskWordSync()` updates
+// only the parts that change, and `deskCaret`/`deskRestoreCaret` put the caret
+// back across the move (appending into the new head detaches the input, which
+// blurs it). For the same reason the Word tab does NOT blank $view for a
+// loading state once its field is on screen.
+let _wordCtl = null;
+function deskWordControls() {
+  if (_wordCtl) { deskWordSync(); return _wordCtl; }
+  _wordCtl = el(`<div class="ds-wordwrap">
+    <div class="ds-row">
+      <div class="ds-searchbox" id="ds-qbox">
+        <span class="ds-f-ico">${icon("search")}</span>
+        <input id="ds-q" type="search" autocomplete="off" aria-label="Search Guru's msgs">
+        <button class="ds-q-clear" id="ds-q-clear" type="button" aria-label="Clear" hidden>✕</button>
+        <div class="hi-sugg ds-sugg" id="ds-sugg" hidden></div>
+      </div>
+      <div class="hi-seg ds-seg" id="ds-seg" role="group" aria-label="Search language">
+        <button data-mode="hi" type="button">हिंदी</button>
+        <button data-mode="en" type="button">English</button>
+      </div>
+      <span class="ds-note" id="ds-note"></span>
+    </div>
+    <div class="ds-hint" id="ds-hint">English letters बनेंगे हिंदी शब्द — नीचे से चुनें</div>
+  </div>`);
+  const q = _wordCtl.querySelector("#ds-q");
+  const seg = _wordCtl.querySelector("#ds-seg");
+  const sugg = _wordCtl.querySelector("#ds-sugg");
+  const qbox = _wordCtl.querySelector("#ds-qbox");
+  const clr = _wordCtl.querySelector("#ds-q-clear");
+  let deb = null;
+
+  const hideSugg = () => { sugg.hidden = true; sugg.innerHTML = ""; };
+  // Devanagari typed straight from a Hindi keyboard searches immediately,
+  // whatever the switch says — the rule the top bar and the phone both use.
+  const hindiTyping = () => HindiType.mode() === "hi" && q.value.trim() && !HindiType.hasDevanagari(q.value);
+  const run = () => {
+    clearTimeout(deb);
+    hideSugg();
+    DESK_SEARCH.q = q.value;
+    // The top bar is an alias of this field, not a second query.
+    searchInput.value = q.value;
+    searchClear.style.display = q.value ? "block" : "none";
+    const kbd = document.getElementById("kbd-hint");
+    if (kbd) kbd.style.display = q.value ? "none" : "block";
+    deskSearchRun(_nav).catch(showRouteError);
+  };
+  const renderSugg = () => {
+    const items = HindiType.suggest(q.value, 6);
+    if (!items.length) { hideSugg(); return false; }
+    sugg.innerHTML = items.map((t, i) => HindiType.rowHtml(t, i)).join("");
+    sugg.hidden = false;
+    return true;
+  };
+  // Suggestions FIRST, but never a dead end: with nothing to offer, हिंदी mode
+  // would swallow the keystroke and leave a blank screen. Search what was typed.
+  const suggestOrSearch = () => { if (!renderSugg()) { clearTimeout(deb); deb = setTimeout(run, 250); } };
+
+  seg.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-mode]"); if (!b) return;
+    HindiType.setMode(b.dataset.mode);
+    hiSegPaint();                 // …and the top bar's copy of this same switch
+    deskWordSync(); hideSugg();
+    if (b.dataset.mode === "hi") HindiType.load();   // warm the vocab
+    // select(), not a bare focus(): a programmatic focus drops the caret at
+    // position 0, so the next thing typed landed IN FRONT of the old term
+    // ("peace" + "शांती"). Switching language almost always means a new word.
+    q.focus(); q.select();
+  });
+  sugg.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-term]"); if (!b) return;
+    hideSugg(); q.value = b.dataset.term; run();
+  });
+  q.addEventListener("input", () => {
+    clearTimeout(deb);
+    clr.hidden = !q.value;
+    if (hindiTyping()) {
+      const v = q.value;
+      HindiType.load().then(() => { if (q.value === v) suggestOrSearch(); });
+      suggestOrSearch();
+      return;
+    }
+    hideSugg();
+    deb = setTimeout(run, 250);
+  });
+  q.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !sugg.hidden) { ev.stopPropagation(); hideSugg(); return; }
+    if (ev.key !== "Enter") return;
+    ev.preventDefault();
+    if (hindiTyping()) {
+      const top = HindiType.suggest(q.value, 1)[0];
+      if (top) { hideSugg(); q.value = top.term; run(); return; }
+    }
+    run();
+  });
+  clr.addEventListener("click", () => { q.value = ""; hideSugg(); run(); q.focus(); });
+  document.addEventListener("click", (ev) => { if (!sugg.hidden && !qbox.contains(ev.target)) hideSugg(); });
+  deskWordSync();
+  if (HindiType.mode() === "hi") HindiType.load();
+  return _wordCtl;
+}
+// The parts of the Word controls that change between paints: the field's value
+// (never while it is being typed in), the clear button, the switch, the
+// placeholder and glow, and the note saying which language actually matched.
+function deskWordSync() {
+  if (!_wordCtl) return;
+  const q = _wordCtl.querySelector("#ds-q");
+  const hi = HindiType.mode() === "hi";
+  if (document.activeElement !== q) q.value = DESK_SEARCH.q;
+  _wordCtl.querySelector("#ds-q-clear").hidden = !q.value;
+  _wordCtl.querySelectorAll("#ds-seg button").forEach((b) => b.classList.toggle("active", (b.dataset.mode === "hi") === hi));
+  _wordCtl.querySelector("#ds-qbox").classList.toggle("hi-glow", hi);
+  q.placeholder = hi ? "Type shanti, prem, dhyan… get हिंदी" : "Search in English…";
+  _wordCtl.querySelector("#ds-hint").style.display = hi ? "" : "none";
+  // ⚠ Which language MATCHED comes from the SCRIPT of what was typed, not from
+  // the switch — Devanagari pasted while the switch says English still searches
+  // Hindi bodies, which is the only thing that makes a pasted word findable.
+  // This note is where the two are allowed to differ, visibly.
+  const term = DESK_SEARCH.q.trim();
+  _wordCtl.querySelector("#ds-note").textContent =
+    term ? "Matched in " + (HindiType.hasDevanagari(term) ? "हिंदी" : "English") : "";
+}
+// Where the caret is in the Word field, if that is where the user is typing.
+// Captured before a repaint and put back after it — see deskWordControls.
+function deskCaret() {
+  const a = document.activeElement;
+  return (a && a.id === "ds-q") ? [a.selectionStart, a.selectionEnd] : null;
+}
+function deskRestoreCaret(c) {
+  if (!c) return;
+  const q = document.getElementById("ds-q");
+  if (!q) return;
+  q.focus();
+  try { q.setSelectionRange(c[0], c[1]); } catch {}
+}
+
+async function deskWordSearch(nav) {
+  const q = DESK_SEARCH.q.trim();
+  const ctl = deskWordControls();     // built/synced before anything can wipe $view
+  if (!q) {
+    const caret = deskCaret();
+    deskSearchPrompt(deskSearchHead("Every English and Hindi transcript is searched, plus every Special Telegram, Letterhead and Anushthan message.", ctl),
+      "Type a word to search.");
+    deskRestoreCaret(caret);
     return;
   }
-  const nav = _nav;
-  $view.innerHTML = `<div class="loading">Searching “${escapeHtml(q)}”…</div>`;
+  // ⚠ No loading wipe once the field is on screen. Every keystroke runs a
+  // search, and blanking $view for it would make the field the user is typing
+  // in vanish and come back under their hands. The previous results just stay
+  // up for the ~100ms until the new ones land.
+  if (!document.getElementById("ds-q")) $view.innerHTML = `<div class="loading">Searching “${escapeHtml(q)}”…</div>`;
   const data = await api("/api/search?q=" + encodeURIComponent(q));
-  if (!current(nav)) return;
+  if (!current(nav) || DESK_SEARCH.by !== "word" || DESK_SEARCH.q.trim() !== q) return;
 
   const paint = (groups) => {
     const extra = groups.reduce((n, g) => n + g.rows.length, 0);
@@ -4372,7 +4670,7 @@ async function renderSearch(q) {
     renderThumbList(data.results, {
       nav,
       backButton: searchBackBtn(),
-      header: el(`<div class="page-head"><div class="page-title">Search Results for <span class="hl-accent">“${escapeHtml(q)}”</span></div><div class="page-sub">Found ${total} Guru's msg${total === 1 ? "" : "s"} across Daily, Special Telegram, Letterpad and Anushthan</div></div>`),
+      header: deskSearchHead(`Found <strong>${total}</strong> Guru's msg${total === 1 ? "" : "s"} for <span class="hl-accent">“${escapeHtml(q)}”</span> across Daily, Special Telegram, Letterpad and Anushthan.`, deskWordControls()),
       // Daily's own empty state — the groups below are rendered either way, and
       // they are often the ONLY hit (a word the guru used solely in a Telegram
       // or letterpad message is in none of the daily transcripts).
@@ -4380,20 +4678,182 @@ async function renderSearch(q) {
       snippet: (r, lang) => highlight(r[`body_${lang}`], q),
       fetchEntry: (r) => api("/api/entry/" + encodeURIComponent(r.id)),   // list rows don't carry images
       footer: () => searchGroupsEl(groups),
+      wrapClass: "ds-page",
     });
   };
   const first = searchMsgGroups(q);
+  const caret = deskCaret();
   paint(first);
-  // Special / Letterpad are CLIENT caches: on a desktop session that has never
-  // opened those sections they are empty, and the very messages this search
-  // exists to find would silently not be there. Warm once, then repaint — but
-  // only if the counts actually moved, so a warm cache never janks the page.
-  Promise.allSettled([SPECIAL.sync(), LETTERPAD.loadIndex()]).then(() => {
-    if (!current(nav)) return;
+  deskRestoreCaret(caret);
+  deskWarmSections().then(() => {
+    if (!current(nav) || DESK_SEARCH.by !== "word" || DESK_SEARCH.q.trim() !== q) return;
     const again = searchMsgGroups(q);
     const moved = again.some((g, i) => g.rows.length !== first[i].rows.length);
-    if (moved) paint(again);
+    if (!moved) return;
+    const c = deskCaret();
+    paint(again);
+    deskRestoreCaret(c);
   });
+}
+
+// ---- Date + Date Range ---------------------------------------------------
+// Daily comes from the archive API; the three message sections are client
+// caches, so their rows are matched right here — through the same
+// MSG_CORPUS.datesOf() the phone's Search By runs. `hit(dates)` is the entire
+// difference between the Date tab and the Date Range tab.
+function deskDateGroups(hit) {
+  const lang = HindiType.mode() === "en" ? "en" : "hi";
+  return DESK_SEARCH_SECS.map((s) => ({ sec: s, lang, term: "", rows: MSG_CORPUS.searchByDate(s.key, hit) }));
+}
+// /api/browse rows carry a 140-char preview, not the full body renderThumbList's
+// two language columns read — without this a date result renders as two em
+// dashes where a word result shows the teaching.
+function deskBrowseRow(r) {
+  const cut = (s) => (s && s.length >= 140 ? s + "…" : (s || ""));
+  return Object.assign({}, r, {
+    body_en: r.body_en || cut(r.preview_en),
+    body_hi: r.body_hi || cut(r.preview_hi),
+  });
+}
+// Shared tail of both date tabs: paint, then warm the section caches and repaint
+// if that turned up messages this date could reach.
+function deskDatePaint(nav, daily, hit, headFor, emptyMsg, still) {
+  const rows = daily.map(deskBrowseRow);
+  const paint = (groups) => {
+    const total = rows.length + groups.reduce((n, g) => n + g.rows.length, 0);
+    renderThumbList(rows, {
+      nav,
+      backButton: searchBackBtn(),
+      header: headFor(total),
+      emptyMsg,
+      wrapClass: "ds-page",
+      fetchEntry: (r) => api("/api/entry/" + encodeURIComponent(r.id)),
+      footer: () => searchGroupsEl(groups),
+    });
+  };
+  const first = deskDateGroups(hit);
+  paint(first);
+  deskWarmSections().then(() => {
+    if (!current(nav) || !still()) return;
+    const again = deskDateGroups(hit);
+    if (again.some((g, i) => g.rows.length !== first[i].rows.length)) paint(again);
+  });
+}
+
+async function deskDateSearch(nav) {
+  const dates = await searchDateUnion();
+  if (!current(nav) || DESK_SEARCH.by !== "date") return;
+  const iso = DESK_SEARCH.date;
+  const pick = (d) => { DESK_SEARCH.date = d; deskSearchRun(_nav).catch(showRouteError); };
+  const controls = el(`<div class="ds-row"></div>`);
+  controls.appendChild(deskDateField("On", iso, dates, pick));
+  if (iso) {
+    const clr = el(`<button class="ds-clear" type="button">Clear</button>`);
+    clr.addEventListener("click", () => pick(""));
+    controls.appendChild(clr);
+  }
+  if (!iso) {
+    deskSearchPrompt(deskSearchHead("Pick a day and read everything from it. A Special Telegram message the guru re-posted is found under <em>both</em> its dates — the day it was posted and the date in its signature.", controls),
+      "Pick a date to search.");
+    return;
+  }
+  $view.innerHTML = `<div class="loading">Loading ${fmtDateLong(iso)}…</div>`;
+  let daily = [];
+  try { daily = (await api("/api/browse?date=" + encodeURIComponent(iso))).results || []; } catch {}
+  const still = () => DESK_SEARCH.by === "date" && DESK_SEARCH.date === iso;
+  if (!current(nav) || !still()) return;
+  deskDatePaint(nav, daily, (ds) => ds.includes(iso),
+    (total) => deskSearchHead(`Found <strong>${total}</strong> Guru's msg${total === 1 ? "" : "s"} on <span class="hl-accent">${fmtDateLong(iso)}</span>.`, controls),
+    `No Daily Msg on ${fmtDateLong(iso)}.`, still);
+}
+
+async function deskRangeSearch(nav) {
+  const dates = await searchDateUnion();
+  if (!current(nav) || DESK_SEARCH.by !== "range") return;
+  const rerun = () => deskSearchRun(_nav).catch(showRouteError);
+  const setBound = (k, v) => {
+    DESK_SEARCH[k] = v;
+    // A bound picked past the other one is a range entered backwards, not an
+    // empty result — swap them rather than hand back "no results".
+    if (DESK_SEARCH.from && DESK_SEARCH.to && DESK_SEARCH.from > DESK_SEARCH.to) {
+      const t = DESK_SEARCH.from; DESK_SEARCH.from = DESK_SEARCH.to; DESK_SEARCH.to = t;
+    }
+    rerun();
+  };
+  const from = DESK_SEARCH.from, to = DESK_SEARCH.to;
+  const controls = el(`<div class="ds-row"></div>`);
+  controls.appendChild(deskDateField("From", from, dates, (d) => setBound("from", d)));
+  controls.appendChild(el(`<span class="ds-dash">–</span>`));
+  controls.appendChild(deskDateField("To", to, dates, (d) => setBound("to", d)));
+  const presets = el(`<div class="ds-presets">
+    <button class="chip-btn" type="button" data-p="7">Last 7 days</button>
+    <button class="chip-btn" type="button" data-p="30">Last 30 days</button>
+    <button class="chip-btn" type="button" data-p="year">This year</button>
+    ${(from || to) ? `<button class="ds-clear" type="button" data-p="clear">Clear</button>` : ""}
+  </div>`);
+  presets.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-p]"); if (!b) return;
+    const p = b.dataset.p, today = MSG_CORPUS.todayIso();
+    if (p === "clear") { DESK_SEARCH.from = ""; DESK_SEARCH.to = ""; }
+    else if (p === "year") { DESK_SEARCH.from = today.slice(0, 4) + "-01-01"; DESK_SEARCH.to = today; }
+    else {
+      const d = new Date(), pad = (n) => (n < 10 ? "0" + n : "" + n);
+      d.setDate(d.getDate() - (Number(p) - 1));
+      DESK_SEARCH.from = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+      DESK_SEARCH.to = today;
+    }
+    rerun();
+  });
+  controls.appendChild(presets);
+  if (!from || !to) {
+    deskSearchPrompt(deskSearchHead("Pick a first and a last date — every Guru's msg between them, Daily and every message section together.", controls),
+      "Pick both dates to search.");
+    return;
+  }
+  $view.innerHTML = `<div class="loading">Loading ${fmtDateLong(from)} – ${fmtDateLong(to)}…</div>`;
+  let daily = [];
+  try {
+    const raw = await api("/api/browse?from=" + encodeURIComponent(from) + "&to=" + encodeURIComponent(to));
+    if (Array.isArray(raw.results)) {
+      daily = raw.results;
+    } else {
+      // ⚠ Not this backend, which has answered from/to since Date Range shipped
+      // on the phone. #/search is NOT one of MOBILE_UI.handles()' routes, so an
+      // installed APK reaching this link runs its BUNDLED wa-native.js — which
+      // never updates over the air (app/static/CLAUDE.md) and falls through to
+      // the group=month-periods branch, returning {periods:[…]}. Fetch the
+      // matching days one at a time there instead of showing an empty Daily.
+      const all = await dailyDateSet();
+      const days = [...all].filter((d) => d >= from && d <= to).sort().reverse();
+      const per = await Promise.all(days.map((d) => api("/api/browse?date=" + encodeURIComponent(d)).catch(() => ({ results: [] }))));
+      daily = per.flatMap((r) => r.results || []);
+    }
+  } catch {}
+  const still = () => DESK_SEARCH.by === "range" && DESK_SEARCH.from === from && DESK_SEARCH.to === to;
+  if (!current(nav) || !still()) return;
+  deskDatePaint(nav, daily, (ds) => ds.some((d) => d >= from && d <= to),
+    (total) => deskSearchHead(`Found <strong>${total}</strong> Guru's msg${total === 1 ? "" : "s"} between <span class="hl-accent">${fmtDateLong(from)}</span> and <span class="hl-accent">${fmtDateLong(to)}</span>.`, controls),
+    `No Daily Msg between ${fmtDateLong(from)} and ${fmtDateLong(to)}.`, still);
+}
+
+// The route entry point. `?by=` picks the tab, `?q=` / `?d=` / `?from=`+`?to=`
+// carry that tab's own state, so a reloaded or shared link comes back to the
+// same results. Typing in the top bar routes here with `?q=` alone, and that
+// is what makes a keystroke mean "the Word tab" without saying so.
+async function renderSearch(params) {
+  const q = params.get("q") || "";
+  const by = params.get("by");
+  if (by === "word" || by === "date" || by === "range") DESK_SEARCH.by = by;
+  else if (q.trim()) DESK_SEARCH.by = "word";
+  DESK_SEARCH.q = q;
+  if (MSG_CORPUS.isIsoDate(params.get("d"))) DESK_SEARCH.date = params.get("d");
+  if (MSG_CORPUS.isIsoDate(params.get("from"))) DESK_SEARCH.from = params.get("from");
+  if (MSG_CORPUS.isIsoDate(params.get("to"))) DESK_SEARCH.to = params.get("to");
+  if (document.activeElement !== searchInput) searchInput.value = q;
+  searchClear.style.display = q ? "block" : "none";
+  document.getElementById("kbd-hint").style.display = q ? "none" : "block";
+  deskWordSync();     // the page's own field mirrors the bar (no-op before it exists)
+  return deskSearchRun(_nav);
 }
 
 // --------------------------------------------------------------------------
@@ -5558,6 +6018,23 @@ async function route() {
   // Clear the "current wisdom" — home/entry set it again; other pages leave it empty.
   _stageId = null;
   _chatCtx = null;        // the reader re-publishes it if we land back in one
+  // Navigating away IS leaving the chat — the rule MOBILE_UI.route() has always
+  // applied and the desktop never did. Without it an admin who revealed himself
+  // by posting (see revealPresence) stayed revealed for the rest of the session,
+  // and stayed tracked as present in a thread he had walked away from — his
+  // phone did neither. ↻ refresh does not come through here, which is what keeps
+  // him listed mid-conversation.
+  //
+  // ⚠ EXCEPT the community panel, which SURVIVES navigation by design (see the
+  // chat-full line just below). Its chat is still on screen when this route is
+  // done, so tearing its stream down here would silently stop an open, visible
+  // discussion from receiving messages. Only a chat inside $view is genuinely
+  // being left behind, and _chatHost is how the two are told apart.
+  const chatPanel = document.getElementById("fab-panel");
+  if (_chatHost && !(chatPanel && chatPanel.contains(_chatHost))) {
+    closeChatStream();
+    leaveChatPresence();
+  }
   _commFocusOff = false;
   applyCommFocus();       // …so the one-message pane goes with the message
   // An Anubhuti sharing in full view leaves `chat-full` on #app and its own
@@ -5583,7 +6060,7 @@ async function route() {
     MOBILE_UI.fallthrough(seg);
   }
   if (seg[0] === "entry" && seg[1]) { setActiveNav(""); return renderEntry(seg[1]); }
-  if (seg[0] === "search") { setActiveNav("search"); return renderSearch(params.get("q") || ""); }
+  if (seg[0] === "search") { setActiveNav("search"); return renderSearch(params); }
   if (seg[0] === "favorites") { setActiveNav("favorites"); return renderFavorites(); }
   if (seg[0] === "browse") { const mode = ["date", "month", "year"].includes(seg[1]) ? seg[1] : "month"; setActiveNav("browse-" + mode); return renderBrowse(mode, params); }
   if (seg[0] === "random") { setActiveNav("random"); return renderRandom(); }
@@ -6333,6 +6810,7 @@ if (hiSeg && hiSugg) {
     const b = e.target.closest("button[data-mode]"); if (!b) return;
     HindiType.setMode(b.dataset.mode);
     hiSegPaint(); hiHideSugg();
+    deskWordSync();   // …and Search By → Word's copy of this same switch
     if (b.dataset.mode === "hi") HindiType.load();   // warm the vocab
     searchInput.focus();
   });
@@ -7958,9 +8436,99 @@ const MSG_CORPUS = (() => {
   // Rows of one section matching `term`, newest-first order preserved from the
   // cache. The caller renders them however its surface renders rows.
   const search = (key, lang, term) => rowsOf(key).filter((r) => match(key, r, lang, term));
+
+  // ---- DATES: which DAY a message belongs to -------------------------------
+  // The other half of "does this message come back", and it lives here for
+  // exactly the reason the text half does: the DESKTOP Search By -> Date /
+  // Date Range tabs need it and MOBILE_UI is a stub on the desktop. The mobile
+  // names (specialDatesOf / specialPostedDate / secDatesOf / secPickDate /
+  // dpDatesForScope) are thin aliases over these now, so the phone and the
+  // browser cannot drift on which day a message answers for.
+  const isIsoDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  // A Special message carries TWO dates and a SEARCH must honour both (operator
+  // decision): `posted_at` is when it hit Telegram, `msg_date` is the date
+  // printed in its signature block. They diverge because the guru re-posts old
+  // teachings - a teaching signed 2019 and re-posted in 2026 must be findable
+  // under BOTH years. msg_date is parsed out of message text, so it carries
+  // occasional junk (rows dated 2000, 2029, 2030); bound it to something a
+  // human could have written rather than letting it invent year-wheel entries.
+  const SPECIAL_MSGDATE_MIN = "2010-01-01";
+  function todayIso() {
+    const t = new Date(), p = (n) => (n < 10 ? "0" + n : "" + n);
+    return t.getFullYear() + "-" + p(t.getMonth() + 1) + "-" + p(t.getDate());
+  }
+  // The ONE date a section's own screens file a row under - its date pill, its
+  // calendar, its list filter. Special uses the Telegram post date alone, so
+  // what the grid marks and what the list then holds can never disagree.
+  // ⚠ Every section but Special reads `date`, INCLUDING broadcast: an
+  // announcement's own screens deliberately show no date at all (MSG_SECTIONS
+  // .broadcast, hideDate), so "teach" this about posted_at only alongside a
+  // decision to give that section a calendar.
+  function pickDate(key, r) {
+    if (key === "special") {
+      const p = (r.posted_at || r.created_at || "").slice(0, 10);
+      return isIsoDate(p) ? p : "";
+    }
+    const d = (r.date || "").slice(0, 10);
+    return isIsoDate(d) ? d : "";
+  }
+  // EVERY date a row can answer for - the UNION rule a SEARCH uses. Only
+  // Special ever has a second one.
+  function datesOf(key, r) {
+    const out = [];
+    const posted = pickDate(key, r);
+    if (posted) out.push(posted);
+    if (key !== "special") return out;
+    const sig = (r.msg_date || "").slice(0, 10);
+    if (isIsoDate(sig) && sig >= SPECIAL_MSGDATE_MIN && sig <= todayIso() && !out.includes(sig)) out.push(sig);
+    return out;
+  }
+  // Every date ONE section can be asked for, as a Set of "YYYY-MM-DD" - what
+  // fills a date picker. `union` = it feeds a SEARCH picker (both of a Special
+  // message's dates); without it, its posted date alone (a section's own
+  // calendar, which must agree with the list it filters).
+  const datesForKey = (key, union) => new Set(union
+    ? rowsOf(key).flatMap((r) => datesOf(key, r))
+    : rowsOf(key).map((r) => pickDate(key, r)).filter(Boolean));
+  // Rows of one section whose dates satisfy `hit(dates)` - the date twin of
+  // search(), and the predicate BOTH surfaces' Date tabs run.
+  const searchByDate = (key, hit) => rowsOf(key).filter((r) => hit(datesOf(key, r)));
+
   return { KEYS, rowsOf, fieldsOf, textOf, match, search, anushthanRows,
+           isIsoDate, SPECIAL_MSGDATE_MIN, todayIso, pickDate, datesOf,
+           datesForKey, searchByDate,
            ANUSHTHAN_MESSAGES, ANUSHTHAN_FROM_LETTERPAD };
 })();
+
+// Every date the DAILY archive can answer for, as a Set of "YYYY-MM-DD".
+// ⚠ Memoized ONLY on success. This set is one input to the search union below,
+// so caching a failed or empty fetch would silently drop every daily date from
+// the date pickers on BOTH surfaces for the rest of the session - they would
+// look perfectly fine and just quietly stop offering daily-only days.
+let _dailyDates = null;
+async function dailyDateSet() {
+  if (_dailyDates) return _dailyDates;
+  let periods = [];
+  try { periods = (await api("/api/browse?group=date")).periods || []; } catch {}
+  const s = new Set(periods.map((p) => p.period).filter(MSG_CORPUS.isIsoDate));
+  if (s.size) _dailyDates = s;
+  return s;
+}
+// What Search By -> Date / Date Range offers on BOTH surfaces: every date ANY
+// of the four sections can answer for.
+// ⚠ NOT the daily archive's dates. That was the whole bug behind "Search By ->
+// 2019 finds nothing": the daily archive holds no 2019/2020/2021 entries, so
+// those years were never even offered - while ~380 Special Telegram messages
+// sit in exactly them. Deliberately re-derived on every call (past the daily
+// fetch), so a message that syncs in becomes pickable without a reload; the
+// scan is a few thousand strings and is not hot.
+async function searchDateUnion() {
+  const out = new Set(await dailyDateSet());
+  for (const key of ["special", "letterpad", "anushthan"]) {
+    for (const d of MSG_CORPUS.datesForKey(key, true)) out.add(d);
+  }
+  return out;
+}
 
 // ==========================================================================
 // WIDGET — the home-screen widget's data snapshot (Android only).
@@ -16741,67 +17309,41 @@ const MOBILE_UI = (() => {
   // Only "daily" hits the network; the message sections are already fully
   // client-cached (see SPECIAL/LETTERPAD), so their dates are a local scan.
   const DP_SCOPES = ["daily", "special", "letterpad", "anushthan"];
-  const isIsoDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
-
-  // A Special message carries TWO dates and a search must honour both (operator
-  // decision): `posted_at` is when it hit Telegram, `msg_date` is the date
-  // printed in its signature block. They diverge because the guru re-posts old
-  // teachings — a teaching signed 2019 and re-posted in 2026 must be findable
-  // under BOTH years. msg_date is parsed out of message text, so it carries
-  // occasional junk (rows dated 2000, 2029, 2030); bound it to something a
-  // human could have written rather than letting it invent year-wheel entries.
-  const SPECIAL_MSGDATE_MIN = "2010-01-01";
-  const todayIso = () => { const t = new Date(); return dpIso(t.getFullYear(), t.getMonth(), t.getDate()); };
-  function specialDatesOf(r) {
-    const out = [];
-    const posted = specialPostedDate(r);
-    if (posted) out.push(posted);
-    const sig = (r.msg_date || "").slice(0, 10);
-    if (isIsoDate(sig) && sig >= SPECIAL_MSGDATE_MIN && sig <= todayIso() && !out.includes(sig)) out.push(sig);
-    return out;
-  }
+  // ⚠ ALIASES, NOT implementations. Which day(s) a message belongs to moved to
+  // MSG_CORPUS (module scope) so the DESKTOP Search By -> Date / Date Range
+  // tabs can run the very same rule — MOBILE_UI is a stub on the desktop, so
+  // nothing defined in here exists there at all. Change the rule THERE; a
+  // second copy is precisely how the phone and the browser would start
+  // disagreeing about a re-posted Special message.
+  const isIsoDate = MSG_CORPUS.isIsoDate;
+  const SPECIAL_MSGDATE_MIN = MSG_CORPUS.SPECIAL_MSGDATE_MIN;
+  const todayIso = MSG_CORPUS.todayIso;
+  // Both of a Special message's dates: `posted_at` (when it hit Telegram) and
+  // the date printed in its signature block, because the guru re-posts old
+  // teachings and one signed 2019 must be findable under 2019 as well as 2026.
+  const specialDatesOf = (r) => MSG_CORPUS.datesOf("special", r);
   // ⚠ The SECTION's own screens (its date pill, its calendar, its list filter)
   // are POSTED-DATE ONLY — operator's call: the date the message reached
   // Telegram is the one the calendar colours and the pill shows, so what the
-  // grid marks and what the list then contains can never disagree. The two-date
-  // rule above stays exactly as it was for Search By, where a re-posted 2019
-  // teaching must still be findable under 2019.
-  function specialPostedDate(r) {
-    const p = (r.posted_at || r.created_at || "").slice(0, 10);
-    return isIsoDate(p) ? p : "";
-  }
+  // grid marks and what the list then contains can never disagree. Search By
+  // still matches on both, via specialDatesOf.
+  const specialPostedDate = (r) => MSG_CORPUS.pickDate("special", r);
+  const dpDailyDates = dailyDateSet;
 
   // Every date each source can answer for. Returned as a Set of "YYYY-MM-DD".
-  // ⚠ Memoized ONLY on success. A failed/empty fetch must not stick: this set is
-  // one input to the union scope, so caching a failure would silently drop every
-  // Daily date from Search By for the rest of the session — the picker would
-  // look fine and just quietly stop offering daily-only dates.
-  let _dpDaily = null;
-  async function dpDailyDates() {
-    if (_dpDaily) return _dpDaily;
-    let periods = [];
-    try { periods = (await api("/api/browse?group=date")).periods || []; } catch {}
-    const s = new Set(periods.map((p) => p.period).filter(isIsoDate));
-    if (s.size) _dpDaily = s;
-    return s;
-  }
   // `union` = this set feeds Search By's combined picker, where a Special
   // message answers for BOTH its dates. Without it (a section's own picker) it
   // answers for its posted date alone — see specialPostedDate.
+  // Only "daily" hits the network; the message sections are already fully
+  // client-cached (see SPECIAL/LETTERPAD), so their dates are a local scan.
+  // Anushthan has no message store yet (see ANUSHTHAN_SEARCH_SEC) and comes
+  // back empty — wired in on purpose: the picker + search slot are built, and
+  // light up with zero further code changes the day that content ships.
   async function dpDatesForScope(scope, union) {
     if (scope === "daily") return dpDailyDates();
-    if (scope === "special") {
-      const rows = (typeof SPECIAL !== "undefined" ? SPECIAL.cached() : []) || [];
-      return new Set(union ? rows.flatMap(specialDatesOf) : rows.map(specialPostedDate).filter(Boolean));
+    if (scope === "special" || scope === "letterpad" || scope === "anushthan") {
+      return MSG_CORPUS.datesForKey(scope, union);
     }
-    if (scope === "letterpad") {
-      const rows = (typeof LETTERPAD !== "undefined" ? LETTERPAD.items() : []) || [];
-      return new Set(rows.map((m) => m.date).filter(isIsoDate));
-    }
-    // Anushthan has no message store yet (see ANUSHTHAN_SEARCH_SEC). Wired in as
-    // an empty source on purpose: the picker + search slot are built, and light
-    // up with zero further code changes the day that content ships.
-    if (scope === "anushthan") return new Set(anushthanRows().map((m) => m.date).filter(isIsoDate));
     return new Set();
   }
   // Cached per scope. "all" is deliberately NOT cached across calls beyond the
@@ -18345,19 +18887,11 @@ const MOBILE_UI = (() => {
       nodes: hits.map((r) => el(msgIndexRowHtml(sec, r, sec.lastSeen ? sec.lastSeen() : "", hrefOf, "", hl))),
     };
   }
-  function secDatesOf(sec, r) {
-    if (sec.key === "special") return specialDatesOf(r);
-    const d = (r.date || "").slice(0, 10);
-    return isIsoDate(d) ? [d] : [];
-  }
+  const secDatesOf = (sec, r) => MSG_CORPUS.datesOf(sec.key, r);
   // The ONE date a section's own screens file a row under — its date pill, its
   // calendar and its list filter. Special uses the Telegram post date only (see
   // specialPostedDate); Search By still matches on both via secDatesOf.
-  function secPickDate(sec, r) {
-    if (sec.key === "special") return specialPostedDate(r);
-    const d = (r.date || "").slice(0, 10);
-    return isIsoDate(d) ? d : "";
-  }
+  const secPickDate = (sec, r) => MSG_CORPUS.pickDate(sec.key, r);
   // The four groups every Search By tab renders, in the operator's fixed order.
   // matchFn is applied to the message sections; `dailyRows` is passed in because
   // Daily comes from the archive API, not a client cache.
