@@ -538,6 +538,26 @@ async function _deviceSignIn() {
       });
       if (vr.error || !vr.data || !vr.data.ok) continue;
       _deviceHeader = vr.data.header;
+
+      // Tell the server WHICH phone this is, for notifications.
+      //
+      // send-push addresses FCM tokens, and a token is claimed onto an account
+      // by claimPushToken() at sign-in — so an account owning an approved device
+      // says nothing about whether THIS phone is that device. Stamping the link
+      // here is the only honest moment: we have just proved possession of the
+      // enrolled private key. See supabase/add_push_device_link.sql.
+      //
+      // ⚠ Fire-and-forget, and failure must never fail the handshake. The device
+      // is working — the user is signed in and every gate has opened. A missing
+      // RPC (the SQL not run yet) or a dropped packet must not undo that, and
+      // send-push treats an unlinked admin as "notify everything", exactly as
+      // today. It retries on the next launch, which is the next line of defence.
+      try {
+        const tok = (typeof localStorage !== "undefined")
+          ? localStorage.getItem("wa:push:token") : "";
+        if (tok) _rpc("link_push_token", { tok, p_device: d.id }).catch(() => {});
+      } catch (_) {}
+
       return true;
     } catch (e) {
       // AUTH_REQUIRED (phone not unlocked recently enough) and KEY_INVALIDATED
