@@ -839,7 +839,7 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-bubble { position: relative; flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px 14px 14px 14px; padding: 8px 12px; }
 .wc-meta { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
 .wc-user { font-weight: 700; font-size: 12.5px; color: var(--accent); }
-.wc-stamp { display: flex; justify-content: flex-end; margin-top: 2px; }
+.wc-stamp { display: flex; justify-content: flex-end; gap: 4px; margin-top: 2px; }
 .wc-time { font-size: 10.5px; color: var(--muted); }
 /* Absolutely positioned, not part of .wc-meta — grouped bubbles have no meta
    row, and the sutradhar must still be able to reach every message. */
@@ -880,6 +880,22 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-rb-x { border: none; background: none; color: var(--muted); font-size: 14px; cursor: pointer; padding: 2px 4px; }
 .wc-rb-x:hover { color: var(--accent); }
 
+/* Editing your own message (MSG_EDIT_PLAN.md). Amber rather than the reply
+   bar's accent purple: the two can never be up together, and the composer
+   holding words that are ALREADY POSTED is a different state from one holding
+   words about to be. The clock is what says how different. */
+.wc-editbar { display: flex; align-items: center; gap: 7px; margin: 8px 12px 0; padding: 6px 9px; background: #fdf6e6; border-left: 3px solid #d19b1d; }
+.wc-editbar[hidden] { display: none; }
+/* ⚠ Deliberately NO glyph on this bar. A ✎ is drawn by Android's emoji font as a
+   full-colour sticker beside flat amber text — the same fault that made 9.70's
+   📎/📷 buttons have to be replaced by icon()s in 9.71. The bar's colour and its
+   words are enough; a button here would earn an icon(), a decoration does not. */
+.wc-eb-title { flex: 1; min-width: 0; font-size: 12px; font-weight: 700; color: #8a6410; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wc-eb-left { font-size: 12px; color: #a97a12; font-variant-numeric: tabular-nums; }
+.wc-eb-left::before { content: "· "; }
+.wc-eb-x { border: none; background: none; color: #a97a12; font-size: 14px; cursor: pointer; padding: 2px 4px; }
+.wc-eb-x:hover { color: #8a6410; }
+
 /* Pinned message banner */
 .wc-pinbar { display: flex; align-items: center; gap: 8px; padding: 7px 14px; background: #fdf6ef; border-bottom: 1px solid #f0dcc8; flex: 0 0 auto; }
 .wc-pinbar[hidden] { display: none; }
@@ -917,6 +933,12 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-live { padding: 6px 14px 0; font-size: 11.5px; color: var(--muted); font-style: italic; }
 .wc-live[hidden] { display: none; }
 .wc-seen { font-size: 10.5px; color: var(--muted); text-align: right; margin-top: 1px; }
+
+/* "· edited", on the time line, for everyone — not only under your own latest
+   message the way "Seen by N" is. Same size and colour as the clock beside it:
+   it is a footnote about the message, never an announcement. */
+.wc-edited { font-size: 10.5px; color: var(--muted); }
+.wc-edited::before { content: "· "; }
 
 /* Shared photos + PDFs. The aspect ratio is reserved from the stored w/h so a
    bubble doesn't jump when the signed URL resolves a beat later. */
@@ -994,6 +1016,10 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-sheet-item { border: none; background: none; text-align: left; font-size: 15px; color: var(--text); padding: 13px 12px; border-radius: 10px; cursor: pointer; }
 .wc-sheet-item:hover { background: var(--accent-soft); }
 .wc-sheet-danger { color: #c0392b; }
+/* "Already edited": the one edit is spent, and saying so is the whole point —
+   a row that simply disappeared after one use reads as a fault. */
+.wc-sheet-off { color: var(--muted); cursor: default; }
+.wc-sheet-off:hover { background: none; }
 .wc-sheet-cancel { color: var(--muted); text-align: center; }
 .wc-text { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: #3a3742; word-break: break-word; }
 .wc-text mark.chat-hl, mark.chat-hl { background: #fde68a; color: #78450a; border-radius: 3px; padding: 0 2px; }
@@ -1015,6 +1041,10 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-foot { flex: 0 0 auto; border-top: 1px solid var(--border-soft); background: var(--surface); }
 .wc-tb-btn { border: none; background: none; color: var(--muted); border-radius: 7px; width: 28px; height: 26px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; cursor: pointer; transition: background .12s, color .12s; }
 .wc-tb-btn:hover { background: var(--accent-soft); color: var(--accent); }
+/* Attach + camera, switched off while editing: an edit changes WORDS only, and
+   the database pins `attachments` whatever this button does. */
+.wc-tb-btn:disabled { opacity: .3; cursor: default; }
+.wc-tb-btn:disabled:hover { background: none; color: var(--muted); }
 .wc-emoji-picker { position: absolute; bottom: calc(100% + 4px); left: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 10px; display: none; flex-wrap: wrap; gap: 4px; width: 244px; z-index: 60; }
 .wc-emoji-picker.open { display: flex; }
 .wc-emoji-item { border: none; background: none; font-size: 20px; cursor: pointer; width: 34px; height: 34px; border-radius: 7px; display: flex; align-items: center; justify-content: center; transition: background .1s; }
@@ -1031,6 +1061,9 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .wc-send { flex: 0 0 auto; width: 44px; height: 44px; border: none; border-radius: 50%; background: var(--accent); color: #fff; font-size: 17px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: filter .12s; }
 .wc-send:hover { filter: brightness(1.08); }
 .wc-send:disabled { opacity: .55; cursor: default; }
+/* Saving an edit, not sending. Amber to match the bar above the composer, so
+   the two halves of edit mode plainly belong to each other. */
+.wc-send-ok { background: #d19b1d; }
 .wc-muted { padding: 18px; text-align: center; color: var(--muted); font-size: 14px; background: #fafafa; border-top: 1px solid var(--border-soft); }
 /* Mod panel — chat controls per member */
 .mu-chat-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 0 2px; }

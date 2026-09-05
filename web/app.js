@@ -1632,6 +1632,17 @@ function chatLastRendered(msgsEl) {
 // hook while it still points at its own, so even if that stopped holding, one
 // sheet closing could not disarm another's.
 let _chatSheetClose = null;
+
+// Set while the composer is in edit mode (MSG_EDIT_PLAN.md), so Android BACK
+// cancels the edit rather than leaving the thread with somebody's half-changed
+// words in the box. Read in onHardwareBack AFTER _chatSheetClose — an open
+// action sheet is drawn on top of the composer, so it closes first.
+//
+// ⚠ Like armChatSheet, an exit only ever clears the hook while it is still its
+// own: a re-render that starts a new edit must not have its hook torn down by
+// the previous composer's exit.
+let _chatEditClose = null;
+
 function armChatSheet(sheet) {
   const close = () => {
     sheet.remove();
@@ -1642,17 +1653,70 @@ function armChatSheet(sheet) {
   return close;
 }
 
+// ---- editing your own message (MSG_EDIT_PLAN.md) --------------------------
+// Five minutes, once, words only. Postgres enforces every one of those rules
+// (add_message_edit.sql §3C); everything here exists so the app never OFFERS an
+// edit the server is going to refuse.
+const EDIT_WINDOW_MS = 5 * 60 * 1000;
+
+// ⚠ The window is measured by POSTGRES, on now() — the phone's clock is not the
+// server's. So the offset between them is learned from the created_at of every
+// row the server hands back, and the message somebody wants to edit is one they
+// have just sent, which means the path that matters is always calibrated.
+// Uncalibrated the offset is zero, i.e. the device clock, and the database is
+// still the one that decides.
+let _srvSkew = 0;
+function noteServerTime(iso) {
+  const t = iso && Date.parse(iso);
+  if (t) _srvSkew = t - Date.now();
+}
+function serverNow() { return Date.now() + _srvSkew; }
+
+// Whether this message may be changed, and what the action sheet should say
+// about it. null = draw no row at all; {left} = offer it; {spent:true} = the one
+// edit is used, say so rather than letting the row vanish and read as a bug.
+//
+// "Someone has already replied" is answered from the DOM, not with a query: a
+// reply made inside five minutes is by definition in the page already on
+// screen. Postgres tests it properly — this only decides what to draw.
+function chatEditState(m, ctx, msgsEl) {
+  if (!m || !m.id || m.sys || m.deletedAt || m.pending) return null;
+  if (!ctx || !ctx.canReply || !ctx.startEdit || m.user !== ctx.me) return null;
+  const sent = Date.parse(m.ts || "");
+  if (!sent) return null;
+  if (EDIT_WINDOW_MS - (serverNow() - sent) <= 0) return null;
+  if (msgsEl && /^[\w:-]+$/.test(m.id) &&
+      msgsEl.querySelector(`[data-reply-to="${m.id}"]`)) return null;
+  if (m.editedAt) return { spent: true };
+  return { left: EDIT_WINDOW_MS - (serverNow() - sent) };
+}
+
+// "4 min left" — deliberately not "4:59 left". The sheet is glanced at and
+// dismissed; a ticking second hand on it would be noise, and the bar that
+// follows carries the real clock.
+function editLeftLabel(ms) {
+  const mins = Math.floor(ms / 60000);
+  return mins >= 1 ? mins + " min left" : "less than a minute";
+}
+
 // Long-press (touch) / right-click (desktop) → the message action sheet.
 // ⚠ Delete is SUTRADHAR-ONLY (ctx.canDelete, not ctx.canModerate) — see the note
 // on WA.getChat in wa-supabase.js.
 function openChatMsgMenu(m, ctx, msgEl) {
   if (m.deletedAt) return;      // nothing to copy, reply to, or delete twice
+  // Directly under Reply, and only ever on your own message. A spent edit is
+  // shown greyed for the rest of the five minutes: a row that simply disappears
+  // after one use reads as a fault, one grey line is the whole explanation.
+  const edit = chatEditState(m, ctx, msgEl.parentElement);
   const sheet = el(`<div class="wc-sheet-back">
     <div class="wc-sheet">
       ${ctx.canReply ? `<div class="wc-sheet-react">${REACT_EMOJIS.map((e) =>
         `<button class="wc-sr-btn" data-emoji="${escapeHtml(e)}">${e}</button>`).join("")}</div>` : ""}
       <div class="wc-sheet-quote">${escapeHtml((m.text || "").slice(0, 120))}</div>
       ${ctx.canReply ? `<button class="wc-sheet-item" data-act="reply">Reply</button>` : ""}
+      ${!edit ? "" : edit.spent
+        ? `<button class="wc-sheet-item wc-sheet-off" disabled>Already edited</button>`
+        : `<button class="wc-sheet-item" data-act="edit">Edit · ${escapeHtml(editLeftLabel(edit.left))}</button>`}
       <button class="wc-sheet-item" data-act="copy">Copy text</button>
       ${ctx.canReply ? `<button class="wc-sheet-item" data-act="forward">Forward to another satsang</button>` : ""}
       ${ctx.canModerate ? `<button class="wc-sheet-item" data-act="pin">${ctx.pinnedId === m.id ? "Unpin" : "Pin this message"}</button>` : ""}
@@ -1674,6 +1738,8 @@ function openChatMsgMenu(m, ctx, msgEl) {
       close();
       if (act === "reply") {
         if (ctx.setReply) ctx.setReply(m);
+      } else if (act === "edit") {
+        if (ctx.startEdit) ctx.startEdit(m);
       } else if (act === "forward") {
         openForwardPicker(m, ctx);
       } else if (act === "pin") {
@@ -2534,15 +2600,19 @@ function buildChatMsgEl(m, ctx, prev) {
   // words matter on the thread index and in the push preview, but not here,
   // under the picture they describe.
   const isPlaceholder = atts && m.text === mediaPlaceholder(atts);
+  // ⚠ `data-reply-to` is not decoration: it is how chatEditState answers "has
+  // anyone replied to this yet?" without a query. Drop it and an author can be
+  // offered an edit the database will refuse.
   const msgEl = el(`<div class="wc-msg ${isMe ? "wc-msg-me" : ""}${grouped ? " wc-msg-grp" : ""}"
-       data-mid="${escapeHtml(m.id || "")}" data-user="${escapeHtml(m.user || "")}" data-ts="${escapeHtml(m.ts || "")}">
+       data-mid="${escapeHtml(m.id || "")}" data-user="${escapeHtml(m.user || "")}" data-ts="${escapeHtml(m.ts || "")}"
+       ${m.replyTo ? `data-reply-to="${escapeHtml(m.replyTo)}"` : ""}>
     <div class="wc-avatar">${escapeHtml((m.user || "?")[0].toUpperCase())}</div>
     <div class="wc-bubble">
       ${grouped && !quote ? "" : `<div class="wc-meta"><span class="wc-user">${escapeHtml(m.user || "")}</span></div>`}
       ${quote}
       ${atts ? attachmentsHtml(atts) : ""}
       ${isPlaceholder ? "" : `<div class="wc-text">${highlightMentions(renderMarkdown(m.text || ""))}</div>`}
-      <div class="wc-stamp"><span class="wc-time">${m.pending ? "sending…" : escapeHtml(chatClock(m.ts))}</span></div>
+      <div class="wc-stamp"><span class="wc-time">${m.pending ? "sending…" : escapeHtml(chatClock(m.ts))}</span>${m.editedAt ? `<span class="wc-edited">edited</span>` : ""}</div>
       ${ctx.canDelete ? `<button class="wc-del" title="Delete">✕</button>` : ""}
       ${reacts ? `<div class="wc-reacts">${reacts}</div>` : ""}
     </div>
@@ -2988,6 +3058,10 @@ function openChatStream(wid, msgsEl, ctx) {
     poll: isModerator(),
     onMessage: (m) => {
       chatAppendLive(msgsEl, m, ctx);
+      // A message that has just arrived carries a created_at the server stamped
+      // moments ago — the cheapest reading there is of how far this phone's
+      // clock sits from Postgres's. See noteServerTime.
+      noteServerTime(m.ts);
       // Someone just spoke, so they've plainly stopped typing.
       if (ctx.typing) ctx.typing.clear(m.user);
       // Their message arriving means we've read up to it — and any "Seen by"
@@ -3534,6 +3608,11 @@ async function renderWisdomChat(body, wid, label, opts) {
         <div class="wc-rb-body"><div class="wc-rb-user"></div><div class="wc-rb-text"></div></div>
         <button class="wc-rb-x" title="Cancel reply" aria-label="Cancel reply">✕</button>
       </div>
+      <div class="wc-editbar" id="wc-editbar" hidden>
+        <span class="wc-eb-title">Editing your message</span>
+        <span class="wc-eb-left"></span>
+        <button class="wc-eb-x" title="Cancel editing" aria-label="Cancel editing">✕</button>
+      </div>
       <div class="wc-live" id="wc-live" hidden></div>
       <div class="wc-tray" id="wc-tray" hidden></div>
       <input type="file" id="wc-file" accept="${MEDIA_ACCEPT}" multiple hidden>
@@ -3711,6 +3790,86 @@ async function renderWisdomChat(body, wid, label, opts) {
     // doSend takes them, and has to be able to give them back if the send fails.
     const takeTray = () => { const files = pending; pending = []; paintTray(); return files; };
     const dropFiles = (files) => files.forEach((p) => p.url && URL.revokeObjectURL(p.url));
+
+    // ---- Editing your own message (MSG_EDIT_PLAN.md) --------------------
+    // Five minutes, once, WORDS ONLY — so attach and camera are switched off
+    // while the bar is up, and the database pins `attachments` regardless.
+    //
+    // ⚠ `editing` stashes what the composer was doing before: a half-written
+    // draft AND the files already picked. Both are handed back the moment
+    // editing ends, whichever way it ends. Losing what somebody wrote is the
+    // worst failure this screen has, and entering edit mode overwrites the box.
+    let editing = null;
+    let editTimer = 0;
+    const editBar = footEl.querySelector("#wc-editbar");
+    const editLeftEl = editBar.querySelector(".wc-eb-left");
+    const attachBtns = [...footEl.querySelectorAll(".wc-attach-btn, .wc-cam-btn")];
+    const stopEditClock = () => { if (editTimer) { clearInterval(editTimer); editTimer = 0; } };
+    const paintEditClock = () => {
+      if (!editing) return;
+      const left = editing.until - serverNow();
+      if (left <= 0) { exitEdit(true); toast("The 5-minute window has passed."); return; }
+      const s = Math.round(left / 1000);
+      editLeftEl.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    };
+    // `keepText` is what the composer is left holding. Cancelling puts the
+    // stashed draft back; running out of time keeps what was just typed — but
+    // only if there was no draft to restore, because an unsent message of their
+    // own is worth more than an edit the server has stopped accepting.
+    const exitEdit = (keepText) => {
+      if (!editing) return;
+      const was = editing;
+      editing = null;
+      if (_chatEditClose === was.back) _chatEditClose = null;
+      stopEditClock();
+      editBar.hidden = true;
+      sendBtn.classList.remove("wc-send-ok");
+      sendBtn.textContent = "➤";
+      sendBtn.title = "Send";
+      attachBtns.forEach((b) => { b.disabled = false; });
+      if (!keepText || was.draft) ta.value = was.draft || "";
+      pending = was.files.concat(pending);
+      autoGrow();
+      paintTray();
+      paintSendState();
+      chatDraftSet(wid, ta.value);
+    };
+    // Called from the action sheet. `ctx` carries it (not a module variable) so
+    // it dies with this render and can never point into a thread you have left.
+    ctx.startEdit = (m) => {
+      if (editing) exitEdit(false);
+      // ⚠ Answers FALSE once this composer has left the document — a thread
+      // navigated away from mid-edit must not swallow the next Back press.
+      const back = () => {
+        if (!footEl.isConnected) { _chatEditClose = null; return false; }
+        exitEdit(false);
+        return true;
+      };
+      editing = { id: m.id, was: m.text || "", until: Date.parse(m.ts || "") + EDIT_WINDOW_MS,
+                  draft: ta.value, files: pending, back };
+      _chatEditClose = back;
+      pending = [];
+      paintTray();
+      clearReply();
+      ta.value = m.text || "";
+      editBar.hidden = false;
+      sendBtn.classList.add("wc-send-ok");
+      sendBtn.textContent = "✓";
+      sendBtn.title = "Save";
+      attachBtns.forEach((b) => { b.disabled = true; });
+      autoGrow();
+      paintSendState();
+      paintEditClock();
+      // The interval outlives nothing: the chat body is replaced wholesale on
+      // every re-render, so a footer that is no longer in the document is the
+      // signal to stop rather than a teardown hook that has to be remembered.
+      editTimer = setInterval(() => {
+        if (!footEl.isConnected) { stopEditClock(); return; }
+        paintEditClock();
+      }, 1000);
+      ta.focus();
+    };
+    editBar.querySelector(".wc-eb-x").addEventListener("click", () => exitEdit(false));
     // One intake path for both the gallery picker and the camera (phase E) —
     // a captured photo is just another File, and must go through the same size
     // cap, the same MIME+extension check and the same downscale.
@@ -3755,7 +3914,45 @@ async function renderWisdomChat(body, wid, label, opts) {
     // sending felt sluggish. A message with pictures still waits, because until
     // the bytes are somewhere there is nothing honest to draw.
     let tmpSeq = 0;
+    // Saving an edit is deliberately NOT optimistic, where sending is. A send
+    // that fails can be put back in the composer and nothing on screen has
+    // lied; an edited bubble that repaints and then fails would have to be
+    // un-repainted, and the member would watch their own words change twice.
+    // So the bubble moves only once Postgres says it moved.
+    const doSaveEdit = async () => {
+      if (!editing) return;
+      const text = ta.value.trim();
+      // The rule the operator asked for: modify must never be a way to clear a
+      // message. Postgres refuses it too — this is what makes it a sentence
+      // rather than a round trip.
+      if (!text) { toast("Message can't be totally blank."); return; }
+      if (text === editing.was) { exitEdit(false); return; }   // nothing changed
+      const mid = editing.id;
+      sendBtn.disabled = true;
+      sendBtn.classList.add("wc-send-busy");
+      try {
+        const d = await WA.editMessage(wid, mid, text);
+        exitEdit(false);
+        // Repaints in place, with the "edited" mark. Every other phone in the
+        // thread gets the same repaint from the Realtime UPDATE — onUpdate
+        // already rebuilds the bubble from the row, so no new plumbing here.
+        if (d.message) chatUpdateLive(msgsEl, d.message, ctx);
+        // Rebuilding the bubble takes its "Seen by N" line with it, and this is
+        // the one bubble that is most likely to be carrying one. Through the
+        // usual throttle, so it costs one count and not a round trip per save.
+        if (ctx.pingSeen) ctx.pingSeen(); else paintSeenBy(msgsEl, ctx);
+      } catch (err) {
+        // The refusals are worded by the trigger, for a member to read. Edit
+        // mode stays up with the text intact — every one of them is either
+        // final (the row repaints on its own) or worth seeing before giving up.
+        toast(err.message || "Could not change the message.");
+      } finally {
+        sendBtn.disabled = false;
+        sendBtn.classList.remove("wc-send-busy");
+      }
+    };
     const doSend = async () => {
+      if (editing) { await doSaveEdit(); return; }
       const text = ta.value.trim();
       if (!text && !pending.length) return;
       // Speaking lists you, whatever the switch says — and a media-only message
@@ -3800,6 +3997,11 @@ async function renderWisdomChat(body, wid, label, opts) {
         // stream will echo, which is what stops the same message drawing twice.
         dropTmp(tmpId);
         if (d.message) chatAppendLive(msgsEl, d.message, ctx);
+        // ⚠ THE calibration that matters: the message somebody wants to edit is
+        // almost always the one they have just sent, and this row's created_at
+        // came from Postgres a moment ago. Without it the Edit countdown runs on
+        // a device clock the server does not share.
+        if (d.message) noteServerTime(d.message.ts);
         dropFiles(files);
         sendBtn.disabled = false;
       } catch (err) {
@@ -3819,7 +4021,10 @@ async function renderWisdomChat(body, wid, label, opts) {
       }
     };
     sendBtn.addEventListener("click", doSend);
-    ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !CHAT_TOUCH_ENTER) { e.preventDefault(); doSend(); } });
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && editing) { e.preventDefault(); exitEdit(false); return; }
+      if (e.key === "Enter" && !e.shiftKey && !CHAT_TOUCH_ENTER) { e.preventDefault(); doSend(); }
+    });
   }
 
   // Open on the newest message. renderChatMessages already scrolled to the
@@ -15666,6 +15871,7 @@ const MOBILE_UI = (() => {
     if (_axSheetClose && _axSheetClose()) return;
     if (_moreClose && _moreClose()) return;      // the More sheet, over the जीवन्त Library
     if (_chatSheetClose && _chatSheetClose()) return;   // a chat sheet: actions, forward, who's here
+    if (_chatEditClose && _chatEditClose()) return;     // cancel an edit before leaving the thread
     if (ddOverlayBack()) return;   // a diary popup, or the live sitting's own question
     if (hideExitSheet()) return;
     if (exitZoom()) return;

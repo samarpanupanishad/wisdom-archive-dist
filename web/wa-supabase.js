@@ -114,6 +114,7 @@ function _mapMsg(row) {
     replyUser: row.reply_user || null,
     replySnippet: row.reply_snippet || null,
     deletedAt: row.deleted_at || null,
+    editedAt: row.edited_at || null,
     attachments: Array.isArray(row.attachments) ? row.attachments : null,
     // Admin Talks system lines ("X was added"). Never set on an ordinary
     // message, and never settable by a client — Postgres blanks it on insert
@@ -1144,6 +1145,33 @@ const WA = {
       return { ok: true, hard: true };
     }
     throw new Error(error.message);
+  },
+
+  // Change the words of your OWN message, once, within five minutes of sending
+  // it. Returns {message} — the mapped row, so the caller can repaint the bubble
+  // from exactly what the database now holds.
+  //
+  // ⚠ Sends `text` and NOTHING ELSE. Every other column is pinned by
+  // messages_before_update() anyway (add_message_edit.sql §3C), but a request
+  // that carries only the one field it is allowed to change is the version that
+  // stays honest if that trigger is ever rewritten.
+  //
+  // ⚠ Every REFUSAL a member can cause — blank, too late, already edited,
+  // already replied to — arrives as a plain Postgres exception raised by that
+  // trigger, worded for a member. So the message is passed through untouched,
+  // and only the database-not-migrated case is rewritten here. See
+  // MSG_EDIT_PLAN.md §4 for why the window is not an RLS predicate: it would
+  // return zero rows instead of a sentence.
+  async editMessage(wid, mid, text) {
+    const { data, error } = await _sb.from("messages")
+      .update({ text: text }).eq("id", mid).select("*").single();
+    if (error) {
+      if (/edited_at|column|schema cache/i.test(error.message || "")) {
+        throw new Error("Editing isn't set up yet. (Admin: run supabase/add_message_edit.sql.)");
+      }
+      throw new Error(error.message);
+    }
+    return { message: _mapMsg(data) };
   },
 
   // ----- Attachments (phase D) -------------------------------------------
