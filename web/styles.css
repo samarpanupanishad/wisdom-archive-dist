@@ -3116,6 +3116,16 @@ body.m-mode.m-kb .m-page-ganga { transform: translateY(var(--m-vvtop, 0px)); }
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
+/* THE "your quotes" LINK — its own pinned row between the head and the list,
+   NOT a child of .m-ganga-head (which scrolls internally at max-height:72%, so
+   on a big-font device the link was pushed out of view). flex:none keeps it on
+   screen whatever the head and list do. Empty when signed out -> 0px, no rule
+   fires. While the keyboard is up the member is composing, not looking for
+   this, and the head takes the whole column (.m-kb rule below) — hide it so it
+   cannot be clipped at the fold. */
+.m-page-ganga #m-ganga-mine { flex: none; }
+#m-ganga-mine:not(:empty) { margin: 10px 0 2px; }
+body.m-mode.m-kb #m-ganga-mine { display: none; }
 /* THE SCROLLING PANE, under it. */
 .m-gyan-list {
   flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -3318,6 +3328,12 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
    pill), not two new colours. Still deliberately not the #523f86 ink of the
    नम्र विनंती directly above it: this is a control and that is prose.
 
+   ⚠ POSITION: it is its OWN flex row (#m-ganga-mine) between .m-ganga-head and
+   the list — see the rules up at .m-ganga-head. It lived INSIDE .m-ganga-head
+   as the last child until 2026-09-06; that pane scrolls internally at
+   max-height:72%, so a big-font device pushed the link out of sight. Don't
+   move it back in.
+
    ⚠ THE NAME .m-ganga-mine EXISTED BEFORE AND MEANT SOMETHING ELSE. Until
    2026-08-21 it styled the "Your thoughts" LIST that sat under the compose box,
    which the operator had removed. This is a link to a separate page, not that
@@ -3325,13 +3341,17 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
    anything from #/m/gyanmine onto this screen. */
 .m-ganga-mine {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  margin: 4px 2px 2px; padding: 10px 12px;
+  margin: 0 2px; padding: 10px 12px;
   border: 1px solid #f1c9c9; border-radius: 12px;
   background: #fdecec;
   font: 700 13.5px/1.4 var(--sans); color: #bd1762;
   text-decoration: none;
 }
 .m-ganga-mine-t { text-decoration: underline; text-underline-offset: 3px; }
+/* "U. Ganga quotes send to admin" — smaller than the "Click to see your"
+   lead-in (operator, 2026-09-06). Just the size; weight and the shared
+   underline stay. */
+.m-ganga-mine-sm { font-size: 0.82em; }
 /* The count of quotes sent back for a change. Only drawn when there ARE some —
    it is the one thing behind this link a member has to act on, and before this
    page existed there was no way to discover it once the notification was gone. */

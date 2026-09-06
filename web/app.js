@@ -22821,22 +22821,21 @@ const MOBILE_UI = (() => {
       `<div class="m-ganga-head">` +
         `<div id="m-ganga-compose"></div>` +
         `<div class="m-ganga-instr" id="m-ganga-instr"></div>` +
-        // ⚠ The link to their own quotes goes HERE — below the नम्र विनंती and
-        // above "Latest Notification" (operator, 2026-09-04) — which means
-        // inside the PINNED pane, not at the top of the scrolling list. Two
-        // reasons, and the second is the one that matters:
-        //   · pinned, it is on screen whenever this screen is, and the member
-        //     never has to scroll past three thoughts to find out what became
-        //     of their own;
-        //   · the list is repainted every minute by the timer at the bottom of
-        //     this function. A link inside it would be fine, but the RESEND
-        //     count on it comes from a network call that lands whenever it
-        //     lands — and the one rule of this screen is that nothing painted
-        //     on a timer may share a parent with something a member is
-        //     mid-way through. Its own div, painted twice, is the cheap way to
-        //     never think about that again.
-        `<div id="m-ganga-mine"></div>` +
       `</div>` +
+      // ⚠ The link to their own quotes goes HERE — below the नम्र विनंती and
+      // above "Latest Notification" (operator, 2026-09-04) — as its OWN flex
+      // row between the head and the list, NOT inside .m-ganga-head. It used to
+      // be the head's last child, but the head is capped at max-height:72% and
+      // scrolls internally, so on a big-font device the compose box + the
+      // seven-line नम्र विनंती filled that ceiling and pushed the link out of
+      // view — "pinned" only in that it did not move WITH the list (operator,
+      // 2026-09-06: "it should not scroll for bigger font screen"). As its own
+      // `flex:none` row it is genuinely always on screen: the head scrolls its
+      // own content, this sits fixed on the boundary, the list takes the rest.
+      // Still its own div, painted twice (paintMineLink then loadMine), so the
+      // network-driven RESEND count never shares a parent with the timer-
+      // repainted list or a half-typed compose box.
+      `<div id="m-ganga-mine"></div>` +
       `<div id="m-gyan-list" class="m-gyan-list"></div>`;
     const listEl = node.querySelector("#m-gyan-list");
     const instrEl = node.querySelector("#m-ganga-instr");
@@ -23173,8 +23172,13 @@ const MOBILE_UI = (() => {
       if (!isSignedIn()) { mineEl.innerHTML = ""; return; }
       mineEl.innerHTML =
         `<a class="m-ganga-mine" href="#/m/gyanmine">` +
-          `<span class="m-ganga-mine-t">${escapeHtml(
-            "Click to see your U. Ganga quotes send to admin")}</span>` +
+          // ⚠ Operator label, verbatim (grammar and all — do not tidy "send").
+          // "U. Ganga quotes send to admin" is set SMALLER than the "Click to
+          // see your" lead-in (operator, 2026-09-06) — one span split, not a
+          // reword. The underline still runs the whole length (.m-ganga-mine-t).
+          `<span class="m-ganga-mine-t">${escapeHtml("Click to see your ")}` +
+            `<span class="m-ganga-mine-sm">${escapeHtml(
+              "U. Ganga quotes send to admin")}</span></span>` +
           (returned
             ? `<span class="m-ganga-mine-n">${escapeHtml(
                 returned === 1 ? "1 returned" : `${returned} returned`)}</span>`
