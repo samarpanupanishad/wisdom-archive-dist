@@ -1837,6 +1837,12 @@ body.m-mode.m-notop .m-top { display: none; }
    untouched by the title's transparent text-fill-color either way. */
 .m-title-ico { display: inline-flex; vertical-align: -4px; margin-right: 2px; }
 .m-title-ico svg { display: block; width: 18px; height: 18px; }
+/* ⚠ Upanishad Ganga ONLY — a smaller top-bar title (operator, 2026-09-06:
+   "font only, nothing else"). The diya span (.m-title-ico) is injected on this
+   page alone (gyanPage in app.js), so :has() scopes it here with no body class
+   — the same Chromium-105 :has() the rest of this file already leans on. Just
+   font-size: letter-spacing, transform, the icon size all stay as they are. */
+.m-top .m-title:has(.m-title-ico) { font-size: 13.5px; }
 /* Left-hand date pill (the message sections — see setTopDate in app.js). The
    bar is only 52px of phone width and already carries a back chevron and the
    action slot, so a bar WITH a date shrinks its title to a small bold label —
@@ -3124,7 +3130,7 @@ body.m-mode.m-kb .m-page-ganga { transform: translateY(var(--m-vvtop, 0px)); }
    this, and the head takes the whole column (.m-kb rule below) — hide it so it
    cannot be clipped at the fold. */
 .m-page-ganga #m-ganga-mine { flex: none; }
-#m-ganga-mine:not(:empty) { margin: 10px 0 2px; }
+#m-ganga-mine:not(:empty) { margin: 10px 0 2px; text-align: center; }
 body.m-mode.m-kb #m-ganga-mine { display: none; }
 /* THE SCROLLING PANE, under it. */
 .m-gyan-list {
@@ -3317,21 +3323,25 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
 .gr-dupe-ret { margin-top: 6px; font-size: 12px; padding: 5px 10px; }
 .gr-dupe-a { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
 
-/* ---- the link to a member's own quotes, on #/m/gyan ---------------------
-   "Click to see your U. Ganga quotes sent to admin" — the operator's wording.
-   Was "...send to admin" from 2026-09-04; the operator changed it to "sent"
-   themselves on 2026-09-06.
+/* ---- the way in to a member's own quotes, on #/m/gyan ------------------
+   Label "Your Approved / Pending Quotes" (operator, 2026-09-06) — supersedes
+   the "Click to see your U. Ganga quotes sent to admin" wording (and with it
+   the send/sent edit and the .m-ganga-mine-sm two-size split, both now moot).
 
-   ⚠ COLOURS ARE THE OPERATOR'S INSTRUCTION (2026-09-06): light-red panel,
-   dark-pink text. Was purple (var(--stamp)) on their earlier instruction
-   (2026-09-04) — this supersedes it. #fdecec / #bd1762 are both already in the
-   palette (the light-red of .gm-why and the dark-pink of the active language
-   pill), not two new colours. Still deliberately not the #523f86 ink of the
-   नम्र विनंती directly above it: this is a control and that is prose.
+   ⚠ SHAPE: a centred rounded chip like the Library mantra button `.mm-mantra`
+   (operator, 2026-09-06 — their own reference for "clearly looks like a
+   button"), NOT the full-width underlined bar it was earlier the same day.
+   No underline; the whole chip is the tap target; it sinks on press. Centring
+   is `text-align:center` on #m-ganga-mine (up at the .m-ganga-head rules).
 
-   ⚠ POSITION: it is its OWN flex row (#m-ganga-mine) between .m-ganga-head and
-   the list — see the rules up at .m-ganga-head. It lived INSIDE .m-ganga-head
-   as the last child until 2026-09-06; that pane scrolls internally at
+   ⚠ COLOURS ARE THE OPERATOR'S INSTRUCTION (2026-09-06): light-red panel
+   (#fdecec / #f1c9c9), dark-pink text (#bd1762) — both already in the palette
+   (.gm-why's light-red, the active language pill's dark-pink). Kept from the
+   full-width version; only the shape changed.
+
+   ⚠ POSITION: its OWN flex row (#m-ganga-mine) between .m-ganga-head and the
+   list — see the rules up at .m-ganga-head. It lived INSIDE .m-ganga-head as
+   the last child until 2026-09-06; that pane scrolls internally at
    max-height:72%, so a big-font device pushed the link out of sight. Don't
    move it back in.
 
@@ -3341,18 +3351,18 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
    list coming back — see the note at gangaMinePage() in app.js before moving
    anything from #/m/gyanmine onto this screen. */
 .m-ganga-mine {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  margin: 0 2px; padding: 10px 12px;
-  border: 1px solid #f1c9c9; border-radius: 12px;
+  display: inline-flex; align-items: center; gap: 8px;
+  margin: 0; padding: 10px 18px;
+  border: 1px solid #f1c9c9; border-radius: 999px;
   background: #fdecec;
-  font: 700 13.5px/1.4 var(--sans); color: #bd1762;
-  text-decoration: none;
+  font: 700 13px/1.4 var(--sans); color: #bd1762;
+  text-decoration: none; white-space: nowrap;
+  transition: transform .12s var(--ease), background .12s var(--ease);
 }
-.m-ganga-mine-t { text-decoration: underline; text-underline-offset: 3px; }
-/* "U. Ganga quotes sent to admin" — smaller than the "Click to see your"
-   lead-in (operator, 2026-09-06). Just the size; weight and the shared
-   underline stay. */
-.m-ganga-mine-sm { font-size: 0.82em; }
+.m-ganga-mine:active { transform: scale(.95); background: #fbdede; }
+.m-ganga-mine-t { text-decoration: none; }
+/* The tap-through chevron — quiet, non-bold, mirrors `.mm-mantra-x`. */
+.m-ganga-mine-x { font-size: 12px; opacity: .7; font-weight: 400; }
 /* The count of quotes sent back for a change. Only drawn when there ARE some —
    it is the one thing behind this link a member has to act on, and before this
    page existed there was no way to discover it once the notification was gone. */

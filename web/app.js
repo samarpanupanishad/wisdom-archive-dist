@@ -23156,9 +23156,14 @@ const MOBILE_UI = (() => {
     // Silent on every failure, including "not signed in": it decorates and
     // widens the list, it is not the list.
     // ---- 4a. the way in to their own quotes -------------------------------
-    // ⚠ THE LABEL IS THE OPERATOR'S, VERBATIM. It read "...quotes send to
-    // admin" from 2026-09-04; the operator changed "send" -> "sent" themselves
-    // on 2026-09-06. Still their copy — don't touch it further.
+    // ⚠ Label "Your Approved / Pending Quotes" (operator, 2026-09-06 — supersedes
+    // the "Click to see your U. Ganga quotes sent to admin" wording, and with it
+    // the "send"->"sent" edit and the two-size span split, all now moot). Drawn
+    // as a CENTRED ROUNDED CHIP shaped like the Library mantra button
+    // (.mm-mantra / .m-ganga-mine in styles.css) — the operator's own reference
+    // for "clearly looks like a button". No underline. Whole chip is the tap
+    // target. (The #m-ganga-mine ROW placement + .m-kb hide from 2026-09-06 are
+    // unchanged — this is a restyle of the chip inside it, not a move.)
     //
     // ⚠ Signed-in only. A visitor has no quotes by definition, and the pane
     // above them is already a sign-in form; a second call to action beside it
@@ -23173,17 +23178,13 @@ const MOBILE_UI = (() => {
       if (!isSignedIn()) { mineEl.innerHTML = ""; return; }
       mineEl.innerHTML =
         `<a class="m-ganga-mine" href="#/m/gyanmine">` +
-          // ⚠ Operator label, verbatim. "U. Ganga quotes sent to admin" is set
-          // SMALLER than the "Click to see your" lead-in (operator, 2026-09-06)
-          // — one span split, not a reword. The underline still runs the whole
-          // length (.m-ganga-mine-t).
-          `<span class="m-ganga-mine-t">${escapeHtml("Click to see your ")}` +
-            `<span class="m-ganga-mine-sm">${escapeHtml(
-              "U. Ganga quotes sent to admin")}</span></span>` +
+          `<span class="m-ganga-mine-t">${escapeHtml(
+            "Your Approved / Pending Quotes")}</span>` +
           (returned
             ? `<span class="m-ganga-mine-n">${escapeHtml(
                 returned === 1 ? "1 returned" : `${returned} returned`)}</span>`
             : "") +
+          `<span class="m-ganga-mine-x" aria-hidden="true">›</span>` +
         `</a>`;
     };
     paintMineLink(0);
