@@ -864,7 +864,118 @@ function buildNav() {
     nav.appendChild(el(`<a href="${it.hash}" data-route="${it.route}"${it.modOnly ? ' class="mod-only"' : ""}><span class="ico">${icon(it.icon)}</span><span class="label">${it.label}</span>${badge}</a>`));
   });
 }
-function setActiveNav(route) { document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === route)); }
+// ── Layout B ("Wide Page") top nav — LAYOUT_B_PLAN.md §4 ─────────────────────
+// A SEPARATE array from NAV: the classic sidebar and buildNav() still use NAV,
+// this is a different shape (horizontal bar + dropdown groups) with the shorter
+// labels the operator chose for the bar. Do not fold the two together, reorder
+// NAV, or delete rows from it.
+//
+//  - `key`  — the value setActiveNav() is called with for that page (see route()).
+//  - `pending: true` — an item with NO desktop page yet (Ship 2). Listed so its
+//    slot is decided once; rendered as NOTHING until then. A #/m/... hash on the
+//    desktop silently renders Home, so it must not be clickable — no link to #/,
+//    no greyed row, no "coming soon".
+//  - `modOnly` on the GROUP only, never a child (a child would force the group
+//    permanently open for a moderator — app.js ~16114). Mechanism is the
+//    classic one: the .mod-only class + .app.is-mod (toggled ~267), CSS-only.
+const V2NAV = [
+  { key: "home", label: "Home", hash: "#/" },
+  { group: "gurumsg", label: "Guru's Msg", groupBadge: "data-gurumsg-group-badge", children: [
+    { key: "daily", label: "Daily", hash: "#/?latest=1" },   // == the dropped #latest-btn; Home stays #/
+    { key: "special", label: "Special Telegram", hash: "#/special", badge: "data-special-badge" },
+    { key: "letterpad", label: "Letter Head", hash: "#/letterpad", badge: "data-letterpad-badge" },
+    { key: "anushthan", label: "Anusthan", hash: "#/anushthan" },   // §8.1 — desktop page now exists
+  ] },
+  { group: "satsang", label: "Satsang", groupBadge: "data-satsang-group-badge", children: [
+    { key: "community", label: "Samuhik Satsang", hash: "#/community", badge: "data-satsang-badge" },
+    { key: "anubhuti", label: "Anubhuti Sharing", hash: "#/anubhuti", badge: "data-anubhuti-badge" },
+  ] },
+  { key: "dhyan", label: "Dhyan Diary", hash: "#/dhyan" },
+  { key: "random", label: "Lucky Msg", hash: "#/random" },
+  { group: "more", label: "More", groupBadge: "data-v2-more-group-badge", children: [
+    { key: "favorites", label: "Favorites", hash: "#/favorites" },
+    { key: "broadcast", label: "Announcements", hash: "#/broadcast", badge: "data-broadcast-badge" },
+    { key: "gyan", label: "Upanishad Ganga", hash: "#/gyan" },   // §8.2 — desktop page now exists
+    { key: "browse-date", label: "Browse by Date", hash: "#/browse/date" },
+    { key: "contact", label: "Msg to Admin", hash: "#/contact", badge: "data-adminmsg-badge" },   // §8.4 — one row, every role
+    { key: "settings", label: "Settings", hash: "#/settings" },
+    { key: "about", label: "Our Goal", hash: "#/about" },
+    { key: "help", label: "Help & Support", hash: "#/help" },
+  ] },
+  { group: "sutradhar", label: "Sutradhar", modOnly: true, groupBadge: "data-sutradhar-group-badge", children: [
+    { key: "moderator", label: "Moderator", hash: "#/moderator" },
+    { key: "gyanreview", label: "Ganga Review", hash: "#/gyanreview" },   // §8.3 — desktop page now exists
+    { key: "admintalks", label: "Admin Talks", hash: "#/admintalks", badge: "data-admintalk-badge" },
+    { key: "admin", label: "Add Guru's Msg", hash: "#/admin" },
+    { key: "stats", label: "Statistics", hash: "#/stats" },
+  ] },
+];
+function buildV2Nav() {
+  const nav = document.getElementById("v2nav");
+  if (!nav) return;
+  nav.innerHTML = "";
+  const badgeSpan = (attr) => attr ? `<span class="v2-badge" ${attr} hidden></span>` : "";
+  V2NAV.forEach((it) => {
+    if (!it.group) {
+      nav.appendChild(el(`<a class="v2-item" href="${it.hash}" data-route="${it.key}">${it.label}</a>`));
+      return;
+    }
+    const rows = it.children.filter((c) => !c.pending)
+      .map((c) => `<a href="${c.hash}" data-route="${c.key}">${c.label}${badgeSpan(c.badge)}</a>`).join("");
+    if (!rows) return;   // a group whose items are all Ship-2 renders nothing
+    nav.appendChild(el(
+      `<div class="v2-group${it.modOnly ? " mod-only" : ""}" data-group="${it.group}">` +
+        `<button type="button" class="v2-item v2-grp-btn" aria-haspopup="true" aria-expanded="false">` +
+          `${it.label}${badgeSpan(it.groupBadge)}<span class="v2-caret" aria-hidden="true">▾</span></button>` +
+        `<div class="v2-menu">${rows}</div>` +
+      `</div>`
+    ));
+  });
+  wireV2Nav(nav);
+}
+// Dropdowns: click to open, one group at a time, Escape / click-outside to
+// close, keyboard reachable (buttons + links). NOT hover — these hold the
+// moderation queue and a hover menu is easy to lose (LAYOUT_B_PLAN.md §4.5).
+function wireV2Nav(nav) {
+  const groups = [...nav.querySelectorAll(".v2-group")];
+  const shut = (g) => { g.classList.remove("open"); const b = g.querySelector(".v2-grp-btn"); if (b) b.setAttribute("aria-expanded", "false"); };
+  const shutAll = (except) => groups.forEach((g) => { if (g !== except) shut(g); });
+  groups.forEach((g) => {
+    const btn = g.querySelector(".v2-grp-btn");
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = !g.classList.contains("open");
+      shutAll(g);
+      g.classList.toggle("open", open);
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    g.querySelectorAll(".v2-menu a").forEach((a) => a.addEventListener("click", () => shutAll(null)));
+  });
+  if (!wireV2Nav._doc) {
+    wireV2Nav._doc = true;
+    document.addEventListener("click", (e) => {
+      if (e.target.closest("#v2nav")) return;
+      document.querySelectorAll("#v2nav .v2-group.open").forEach(shut);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") document.querySelectorAll("#v2nav .v2-group.open").forEach(shut);
+    });
+  }
+}
+function setActiveNav(route) {
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === route));
+  // Layout B nav (§4.3) — same active mark on #v2nav, PLUS the parent group of
+  // an active child so "Guru's Msg" lights while on Special. Extend, never
+  // replace: the #nav query above is still the classic layout's.
+  const v2 = document.getElementById("v2nav");
+  if (!v2) return;
+  v2.querySelectorAll("a[data-route]").forEach((a) => a.classList.toggle("active", a.dataset.route === route));
+  v2.querySelectorAll(".v2-group").forEach((g) => {
+    let hit = false;
+    g.querySelectorAll(".v2-menu a[data-route]").forEach((a) => { if (route && a.dataset.route === route) hit = true; });
+    g.classList.toggle("active", hit);
+  });
+}
 
 // --------------------------------------------------------------------------
 // Toast + read-more
@@ -1182,6 +1293,12 @@ function buildDetail(e, opts = {}) {
   tx.appendChild(transcriptCell("Hindi (Transcript)", txHi, "No Hindi transcript"));
   tx.appendChild(transcriptCell("English (Transcript)", txEn, "No English transcript"));
   wireCollapsible(txSection);
+  // LAYOUT_B_PLAN.md §6.1 — Transcripts start collapsed in the Wide Page (the
+  // mockup shows a closed "Open ▾" bar). Guarded on the BODY CLASS, not
+  // WA_NATIVE_ACTIVE: buildDetail runs on both surfaces and the discriminator
+  // here is the layout. `.collapsed` is the same class wireCollapsible() toggles,
+  // so the bar still opens on click.
+  if (document.body.classList.contains("wa-v2")) txSection.classList.add("collapsed");
   wrap.appendChild(txSection);
 
   wrap.querySelectorAll(".panel img.zoomable").forEach((im) => im.addEventListener("click", () => openLightbox(im.src)));
@@ -4233,7 +4350,7 @@ async function renderStage(id) {
   stage.replaceChildren(detail);
   updateIdNav(e.id, e.date);
   dropStageDetailBar(detail);   // id/date now in the ID button; fav/share on the images
-  wireCarousel(detail, id);     // ‹ › arrows over the images to step to the prev/next dated wisdom
+  attachDayCarousel(detail, id, selectStage, () => _stageId === id);   // swipe sideways -> prev/next day, both languages together
   // Refresh the per-wisdom Sadhak's Conclusion if it's open (right sidebar or overlay).
   loadConclusion(id);
   if (document.getElementById("conc-panel-body")) renderConclusionPanelBody(id);
@@ -4255,15 +4372,144 @@ function carouselArrow(dir, onClick) {
   btn.addEventListener("click", onClick);
   return btn;
 }
-async function wireCarousel(detail, id) {
-  const dual = detail.querySelector(".dual");
-  if (!dual) return;
-  let neighbors;
-  try { neighbors = await api("/api/entry/" + encodeURIComponent(id) + "/neighbors"); }
+// The Hindi + English original-scan pair for one day, as a carousel slide.
+// Reuses imageCell so an off-screen day's images carry the same fav/share/
+// download/copy actions as the one on screen.
+function daySlideImages(e) {
+  const d = el(`<div class="dual"></div>`);
+  d.appendChild(imageCell("Hindi (Original)", e.img_hi_url, `${e.id}_Hin.jpg`, e.id,
+    shareCaption(e.topic_hi, e.body_hi, "बाबास्वामी", e.date)));
+  d.appendChild(imageCell("English (Original)", e.img_en_url, `${e.id}_Eng.jpg`, e.id,
+    shareCaption(e.topic_en, e.body_en, "Baba Swami", e.date)));
+  d.querySelectorAll(".panel img.zoomable").forEach((im) =>
+    im.addEventListener("click", () => openLightbox(im.src)));
+  return d;
+}
+
+// Wrap the daily message's image pair (`.dual`) in a horizontal carousel:
+// dragging or swiping sideways slides BOTH the Hindi and English panels
+// together to the previous / next day's message. `opts.prev` / `opts.next`
+// are each null or `{ entry, go }` — the neighbouring entry to preview in the
+// off-screen slide, and the navigation to run once the track settles there.
+// Falls back to the plain arrow buttons when there is a neighbour on neither
+// side (nothing to slide to).
+function wireDayCarousel(detail, opts) {
+  const o = opts || {};
+  const mid = detail.querySelector(".dual");
+  if (!mid) return;
+  if (!o.prev && !o.next) return;
+
+  const car = el(`<div class="day-car"><div class="day-car-track"></div></div>`);
+  const track = car.querySelector(".day-car-track");
+  mid.replaceWith(car);
+
+  const slide = (node) => { const s = el(`<div class="day-car-slide"></div>`); s.appendChild(node); return s; };
+  const midIdx = o.prev ? 1 : 0;
+  if (o.prev) track.appendChild(slide(daySlideImages(o.prev.entry)));
+  const midSlide = slide(mid);
+  track.appendChild(midSlide);
+  if (o.next) track.appendChild(slide(daySlideImages(o.next.entry)));
+
+  if (o.prev) car.appendChild(carouselArrow("prev", () => goSlide(midIdx - 1)));
+  if (o.next) car.appendChild(carouselArrow("next", () => goSlide(midIdx + 1)));
+
+  const slides = [...track.children];
+  if (slides.length > 1) {
+    const dotsEl = el(`<div class="day-car-dots"></div>`);
+    slides.forEach((s, i) => {
+      const b = el(`<button class="day-car-dot${i === midIdx ? " on" : ""}" type="button" aria-label="Message ${i + 1}"></button>`);
+      b.addEventListener("click", () => goSlide(i));
+      dotsEl.appendChild(b);
+    });
+    car.appendChild(dotsEl);
+  }
+
+  // Transform-based pager (not a scroll container): translateX is immune to the
+  // scroll-anchoring / clamp-at-mount quirks that fight a freshly built
+  // overflow scroller, and it keeps the Hindi and English panels locked
+  // together as one slide.
+  const W = () => car.clientWidth || 1;
+  let navigated = false;
+  const setX = (frac, animate) => {
+    track.style.transition = animate ? "transform .28s var(--ease, ease)" : "none";
+    track.style.transform = `translateX(${frac * -100}%)`;
+  };
+  setX(midIdx, false);
+
+  const goSlide = (i) => {
+    if (navigated) return;
+    if (i === midIdx || i < 0 || i >= slides.length) { setX(midIdx, true); return; }
+    navigated = true;
+    setX(i, true);
+    const nb = i < midIdx ? o.prev : o.next;
+    setTimeout(nb.go, 180);   // let the slide animation read before the rebuild
+  };
+
+  let down = false, startX = 0, dx = 0, dragging = false;
+  track.addEventListener("pointerdown", (e) => {
+    if (navigated || (e.pointerType === "mouse" && e.button !== 0)) return;
+    down = true; dragging = false; startX = e.clientX; dx = 0;
+  });
+  track.addEventListener("pointermove", (e) => {
+    if (!down) return;
+    dx = e.clientX - startX;
+    if (!dragging && Math.abs(dx) > 5) {
+      dragging = true;
+      try { track.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    if (!dragging) return;
+    // Resist dragging toward an edge that has no neighbour.
+    let d = dx;
+    if ((d > 0 && !o.prev) || (d < 0 && !o.next)) d /= 4;
+    track.style.transition = "none";
+    track.style.transform = `translateX(calc(${midIdx * -100}% + ${d}px))`;
+  });
+  const release = (e) => {
+    if (!down) return;
+    down = false;
+    try { track.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (!dragging) return;
+    const threshold = Math.min(120, W() * 0.22);
+    if (dx > threshold && o.prev) goSlide(midIdx - 1);
+    else if (dx < -threshold && o.next) goSlide(midIdx + 1);
+    else setX(midIdx, true);
+  };
+  track.addEventListener("pointerup", release);
+  track.addEventListener("pointercancel", release);
+  // Swallow the click that ends a real drag so it never lands on an image or
+  // an action button inside the panel.
+  track.addEventListener("click", (e) => {
+    if (dragging) { e.preventDefault(); e.stopPropagation(); dragging = false; }
+  }, true);
+  // Trackpad / shift-wheel horizontal intent — one nudge per gesture.
+  let wheelLock = 0;
+  car.addEventListener("wheel", (e) => {
+    if (navigated || Math.abs(e.deltaX) < 24 || Math.abs(e.deltaX) < Math.abs(e.deltaY)) return;
+    const now = Date.now();
+    if (now - wheelLock < 600) return;
+    wheelLock = now;
+    if (e.deltaX > 0 && o.next) goSlide(midIdx + 1);
+    else if (e.deltaX < 0 && o.prev) goSlide(midIdx - 1);
+  }, { passive: true });
+}
+
+// Fetch a daily entry's neighbours (by date, the order every list uses) plus
+// their full rows, then wire the swipe carousel. `navFn(id)` performs the
+// navigation; `guard()` returns false once a newer view has superseded this.
+async function attachDayCarousel(detail, id, navFn, guard) {
+  let nb;
+  try { nb = await api("/api/entry/" + encodeURIComponent(id) + "/neighbors"); }
   catch { return; }
-  if (_stageId !== id) return;   // a newer selection superseded this
-  if (neighbors.older_id) dual.appendChild(carouselArrow("prev", () => selectStage(neighbors.older_id)));
-  if (neighbors.newer_id) dual.appendChild(carouselArrow("next", () => selectStage(neighbors.newer_id)));
+  if (guard && !guard()) return;
+  const [older, newer] = await Promise.all([
+    nb.older_id ? api("/api/entry/" + encodeURIComponent(nb.older_id)).catch(() => null) : null,
+    nb.newer_id ? api("/api/entry/" + encodeURIComponent(nb.newer_id)).catch(() => null) : null,
+  ]);
+  if (guard && !guard()) return;
+  wireDayCarousel(detail, {
+    prev: older ? { entry: older, go: () => navFn(older.id) } : null,
+    next: newer ? { entry: newer, go: () => navFn(newer.id) } : null,
+  });
 }
 
 // The wisdom's id + date now live in the "ID" button, and its Favorite/Share
@@ -4427,16 +4673,23 @@ function renderThumbList(items, opts) {
 
     const detail = buildDetail(e, { context: "home" });
     dropStageDetailBar(detail);   // same trimming Home's stage uses
-    const dual = detail.querySelector(".dual");
-    if (dual) {
-      if (i > 0) dual.appendChild(carouselArrow("prev", () => showDetail(i - 1)));
-      if (i < items.length - 1) dual.appendChild(carouselArrow("next", () => showDetail(i + 1)));
-    }
     wrap.appendChild(detail);
     $view.replaceChildren(wrap);
     loadConclusion(e.id);
     if (document.getElementById("conc-panel-body")) renderConclusionPanelBody(e.id);
     window.scrollTo(0, 0);
+
+    // Swipe carousel — steps by position in THIS list (search results /
+    // favorites), not by archive date, so it stays scoped to the results.
+    const [prevE, nextE] = await Promise.all([
+      i > 0 ? Promise.resolve(fetchEntry(items[i - 1])).catch(() => null) : null,
+      i < items.length - 1 ? Promise.resolve(fetchEntry(items[i + 1])).catch(() => null) : null,
+    ]);
+    if (token !== detailToken || !current(nav)) return;
+    wireDayCarousel(detail, {
+      prev: prevE ? { entry: prevE, go: () => showDetail(i - 1) } : null,
+      next: nextE ? { entry: nextE, go: () => showDetail(i + 1) } : null,
+    });
   }
 
   showList();
@@ -4999,8 +5252,10 @@ async function renderEntry(id) {
   store.setLastViewed(id);
   _stageId = id;   // so the right-sidebar Conclusion panel targets this wisdom
   updateIdNav(e.id, e.date);
-  $view.replaceChildren(buildDetail(e, { context: "page" }));
+  const detail = buildDetail(e, { context: "page" });
+  $view.replaceChildren(detail);
   if (document.getElementById("conc-panel-body")) renderConclusionPanelBody(id);
+  attachDayCarousel(detail, e.id, (nid) => go("#/entry/" + encodeURIComponent(nid)), () => current(nav));
 }
 
 async function renderFavorites() {
@@ -5425,8 +5680,14 @@ function wireVerBand() {
 
 function renderInfo(kind) {
   const title = { settings: "Settings", about: "Our Goal", help: "Help & Support" }[kind];
+  // Layout B toggle + copy — LAYOUT_B_PLAN.md §2.4/§2.5. Desktop only (R3): the
+  // phone's Settings page never shows the row, and with no sidebar in layout B
+  // the « / » tip is conditional on the classic layout.
+  const _v2 = (() => { try { return localStorage.getItem("wa:layout") === "v2"; } catch { return false; } })();
+  const _sidebarTip = _v2 ? "" : `<li>Use the « / » button to collapse or expand the sidebar.</li>`;
+  const _layoutRow = window.WA_NATIVE_ACTIVE ? "" : `<li>Page layout: <button class="btn" id="layout-classic-btn"${_v2 ? "" : " disabled"}>Classic</button> <button class="btn" id="layout-v2-btn"${_v2 ? " disabled" : ""}>Wide Page</button></li>`;
   const body = {
-    settings: `<h3>Settings</h3><p>Samarpan Upanishad runs locally on your computer. There is no account — your <strong>favorites</strong> and <strong>notes</strong> are stored privately in this browser.</p><ul><li>Use the « / » button to collapse or expand the sidebar.</li><li>Dark mode is coming soon.</li><li>To add a new day's Guru's msg, open <strong>Add Guru's Msg</strong> in the sidebar and drop in that day's files — it appears instantly, no restart needed.</li><li>To bulk-rebuild from all folders at once, you can still run the importer (<code>reimport.bat</code>).</li></ul>
+    settings: `<h3>Settings</h3><p>Samarpan Upanishad runs locally on your computer. There is no account — your <strong>favorites</strong> and <strong>notes</strong> are stored privately in this browser.</p><ul>${_sidebarTip}${_layoutRow}<li>Dark mode is coming soon.</li><li>To add a new day's Guru's msg, open <strong>Add Guru's Msg</strong> in the sidebar and drop in that day's files — it appears instantly, no restart needed.</li><li>To bulk-rebuild from all folders at once, you can still run the importer (<code>reimport.bat</code>).</li></ul>
       <div class="sync-box">
         <h3 style="margin-top:0">Latest Guru's Msg Sync</h3>
         <p>Checks the central archive for any new day's Guru's msg and adds it here automatically.</p>
@@ -5495,6 +5756,12 @@ function renderInfo(kind) {
   }
   if (kind === "settings") {
     wireSyncBox();
+    // Layout B toggle — LAYOUT_B_PLAN.md §2.4. Write the pref, then reload (do
+    // not hot-swap the shell). Wired like #sync-now-btn just above.
+    const _lc = document.getElementById("layout-classic-btn");
+    const _lv = document.getElementById("layout-v2-btn");
+    if (_lc) _lc.addEventListener("click", () => { try { localStorage.setItem("wa:layout", "classic"); } catch {} location.reload(); });
+    if (_lv) _lv.addEventListener("click", () => { try { localStorage.setItem("wa:layout", "v2"); } catch {} location.reload(); });
     // Mobile app only: daily-reminder settings + mobile-appropriate wording
     // (wa-native.js owns all of it; no-op on desktop).
     if (window.WA_NATIVE && WA_NATIVE.enhanceSettings) WA_NATIVE.enhanceSettings();
@@ -6208,6 +6475,10 @@ async function route() {
   if (seg[0] === "broadcast") { setActiveNav("broadcast"); return renderBroadcast(); }
   if (seg[0] === "special") { setActiveNav("special"); return renderSpecial(); }
   if (seg[0] === "letterpad") { setActiveNav("letterpad"); return renderLetterpad(); }
+  if (seg[0] === "anushthan") { setActiveNav("anushthan"); return renderAnushthan(); }
+  if (seg[0] === "gyan") { setActiveNav("gyan"); return renderGangaDesktop(); }   // §8.2 — Upanishad Ganga
+  if (seg[0] === "gyanreview") { setActiveNav("gyanreview"); return renderGangaReview(params); }   // §8.3 — Ganga Review (mod-only)
+  if (seg[0] === "contact") { setActiveNav("contact"); return renderContact(params); }   // §8.4 — Msg to Admin (branches by role)
   // ⚠ `#/community`, not `#/m/community`: the mobile route is MOBILE_UI's and is
   // claimed above by MOBILE_UI.handles(). This is the desktop page and the two
   // never meet. It deliberately takes no `?wid=` — a bare route means the index
@@ -6248,6 +6519,99 @@ function goReplace(hash) {
 // Sidebar collapse + year dropdown + search wiring
 // --------------------------------------------------------------------------
 function applyCollapsed() { const v = localStorage.getItem("wa:collapsed"); const collapsed = v === null ? true : v === "1"; document.getElementById("app").classList.toggle("collapsed", collapsed); }
+
+// Layout B ("Wide Page") opt-in — LAYOUT_B_PLAN.md §2. Desktop only (R3): the
+// phone shell must never carry `wa-v2`. `?ui=classic` / `?ui=v2` in the query
+// string — never the hash, which belongs to the router — is the one-shot way
+// back if a bug ever hides the Settings toggle: it is consumed into `wa:layout`
+// and then stripped from the address bar, so the Settings toggle is not left
+// silently overridden by a `?ui=` that outlived its escape.
+// Default when unset is "classic"; the operator opts in.
+function applyLayout() {
+  if (window.WA_NATIVE_ACTIVE) return;
+  try {
+    const q = new URLSearchParams(location.search).get("ui");
+    if (q === "classic" || q === "v2") {
+      localStorage.setItem("wa:layout", q);
+      // Strip the param — keeps the hash, and replaceState fires no hashchange,
+      // so the router is untouched.
+      const u = new URL(location.href);
+      u.searchParams.delete("ui");
+      history.replaceState(null, "", u);
+    }
+  } catch {}
+  let pref = "classic";
+  try { pref = localStorage.getItem("wa:layout") || "classic"; } catch {}
+  document.body.classList.toggle("wa-v2", pref === "v2");
+  if (pref === "v2") {
+    // LAYOUT_B_PLAN.md §3.2 — the ONE #search-input and #avatar-btn are
+    // *relocated* (appendChild moves, never clones) out of the now-hidden
+    // .topbar into the wide header. Classic and the phone never reach this
+    // branch, so their markup is byte-for-byte today's.
+    const right = document.getElementById("v2-right");
+    const sb = document.querySelector(".searchbox");
+    const av = document.getElementById("avatar-wrap");
+    const hi = document.getElementById("hi-seg");   // §5.2 — search language, so it lives with the search box, not in the strip
+    if (right && sb) right.appendChild(sb);
+    if (right && hi) right.appendChild(hi);
+    if (right && av) right.appendChild(av);
+    buildV2Strip();   // LAYOUT_B_PLAN.md §5 — the context strip under the header
+  }
+}
+
+// LAYOUT_B_PLAN.md §5 — the context strip: one bar under the header showing the
+// daily message's id/date (left) and Favorite / Satsang / Fullscreen (right).
+// Built ONCE; the controls are the SAME single nodes as classic, relocated by
+// appendChild the same way §3.2 does the search box (index.html untouched).
+// syncV2Strip() then follows the shown message; §5.3 hides the whole thing on
+// any route that is not a daily-message view.
+function buildV2Strip() {
+  if (window.WA_NATIVE_ACTIVE) return;
+  const bar = document.getElementById("v2bar");
+  if (!bar || document.getElementById("v2strip")) return;
+  const strip = el(`<div class="v2strip" id="v2strip" hidden>` +
+    `<div class="v2strip-left" id="v2strip-left"></div>` +
+    `<div class="v2strip-right" id="v2strip-right">` +
+      `<button class="btn v2-fav" id="v2-fav" type="button" data-fav data-id="" title="Add to Favorites">${HEART_ICON}<span>Add to Favorites</span></button>` +
+    `</div></div>`);
+  bar.after(strip);
+  const left = strip.querySelector("#v2strip-left");
+  const idw = document.getElementById("id-nav-wrap");
+  const calw = document.getElementById("cal-nav-wrap");
+  if (left && idw) left.appendChild(idw);
+  if (left && calw) left.appendChild(calw);
+  const right = strip.querySelector("#v2strip-right");
+  const comm = document.getElementById("community-btn");
+  const fs = document.getElementById("fs-btn");
+  if (right && comm) right.appendChild(comm);   // "Satsang" in the mockup
+  if (right && fs) right.appendChild(fs);       // "Fullscreen"
+  // The favourite button cannot be relocated like the others: .detail-bar is
+  // rebuilt by buildDetail() on every render, so there is no stable node. The
+  // strip renders its OWN button; it carries data-fav + data-id so the shared
+  // applyFavState() keeps it in sync with the image hearts, and syncV2Strip()
+  // repoints data-id + the active class every time the shown message changes.
+  const favBtn = strip.querySelector("#v2-fav");
+  favBtn.addEventListener("click", () => { const id = favBtn.dataset.id; if (id) toggleFavFor(id); });
+}
+
+// Show the strip only for a daily-message view (id is a bare number), and point
+// its favourite button at that message. Called from updateIdNav(), which every
+// view funnels through — updateIdNav(null) at the top of route() hides it again.
+function syncV2Strip(id) {
+  const strip = document.getElementById("v2strip");
+  if (!strip) return;   // classic / phone / not built
+  const show = !!id && /^\d+$/.test(String(id));
+  strip.hidden = !show;
+  if (!show) return;
+  const fav = document.getElementById("v2-fav");
+  if (!fav) return;
+  fav.dataset.id = String(id);
+  const on = store.isFav(String(id));
+  fav.classList.toggle("active", on);
+  fav.title = on ? "In Favorites" : "Add to Favorites";
+  const s = fav.querySelector("span"); if (s) s.textContent = on ? "In Favorites" : "Add to Favorites";
+}
+
 document.getElementById("collapse-btn").addEventListener("click", () => { localStorage.setItem("wa:collapsed", "1"); applyCollapsed(); });
 document.getElementById("expand-btn").addEventListener("click", () => { localStorage.setItem("wa:collapsed", "0"); applyCollapsed(); });
 document.getElementById("latest-btn").addEventListener("click", () => go("#/?latest=1"));
@@ -6602,6 +6966,9 @@ function updateIdNav(id, date) {
     numEl.textContent = id ? String(id) : "";
     dateEl.textContent = id && date ? "· " + fmtDate(date) : "";
   }
+  // Layout B context strip follows the same signal (LAYOUT_B_PLAN.md §5.3):
+  // shown for a daily message, hidden by the updateIdNav(null) at route() start.
+  if (typeof syncV2Strip === "function") syncV2Strip(id);
   // Every place the viewed wisdom changes (Home's carousel, search/favorites
   // detail, the standalone entry page) funnels through here — so an already-
   // open Community panel's chat follows along to whichever wisdom is now
@@ -7315,6 +7682,11 @@ function refreshAnyMsgDot() {
   // carries it — the sin the note above describes.
   group("[data-more-group-badge]", broadcast + adminmsg);
   group("[data-sutradhar-group-badge]", admintalk);
+  // Layout B's More badge (LAYOUT_B_PLAN.md §4.4). Ship 2 §8.4 put Msg to Admin
+  // in the desktop's More group, so — like the phone's [data-more-group-badge]
+  // above — it now sums broadcast + adminmsg. `group()` no-ops when the element
+  // is absent (classic). Do not touch [data-more-group-badge] above.
+  group("[data-v2-more-group-badge]", broadcast + adminmsg);
 
   // The Join Satsang card's NEW dot is NOT one of these sums — it speaks for a
   // single thread (see refreshJoinBadge). It is repainted from here anyway
@@ -8963,17 +9335,24 @@ function letterpadCardHtml(m, lang) {
 
 // Renders the whole section into `container`. `getLang` returns the current
 // display language (mobile follows the bottom toggle; desktop defaults hi).
-async function renderLetterpadInto(container, getLang) {
+// `opts.msgs` feeds a caller-supplied row array (Anushthan — LAYOUT_B_PLAN.md
+// §8.1 — passes MSG_CORPUS.anushthanRows(), which is letterpad-shaped);
+// `opts.emptyMsg` overrides the empty-state text for that case.
+async function renderLetterpadInto(container, getLang, opts = {}) {
   container.innerHTML = `<div class="loading">Loading…</div>`;
-  const index = await LETTERPAD.loadIndex();
-  const msgs = index.messages || [];
+  let msgs = opts.msgs;
+  if (!msgs) {
+    const index = await LETTERPAD.loadIndex();
+    msgs = index.messages || [];
+  }
+  const emptyMsg = opts.emptyMsg || "No letterpad messages yet. Guru's handwritten messages will appear here.";
   const wireCards = (scope) => scope.querySelectorAll(".lp-card").forEach((card) =>
     wireCarousel(card, { pages: +card.dataset.pages || 1 }));
   const paint = () => {
     const lang = getLang ? getLang() : "hi";
     container.innerHTML = msgs.length
       ? msgs.map((m) => letterpadCardHtml(m, lang)).join("")
-      : `<div class="empty">No letterpad messages yet. Guru's handwritten messages will appear here.</div>`;
+      : `<div class="empty">${emptyMsg}</div>`;
     wireCards(container);
   };
   paint();
@@ -9001,6 +9380,1000 @@ async function renderLetterpad() {
   });
   await renderLetterpadInto(lpList, () => "hi");
   LETTERPAD.markSeen();
+}
+
+// Anushthan — LAYOUT_B_PLAN.md §8.1. Anushthan messages ARE Letterpad messages
+// surfaced in a second section (MSG_CORPUS.anushthanRows() returns them, already
+// in letterpad shape), so this is the Letterpad list renderer fed that array —
+// not a new list. The desktop-only route #/anushthan; the phone keeps its own
+// #/m/anushthan index and the shared MSG_SECTIONS row still points search hits
+// at #/letterpad. No markSeen: Anushthan carries no unread state.
+async function renderAnushthan() {
+  const nav = _nav;
+  $view.innerHTML = `<div class="lp-page"><h2 class="lp-headline">🪔 Anushthan Messages</h2>
+    <div class="lp-list"></div></div>`;
+  if (!current(nav)) return;
+  const list = $view.querySelector(".lp-list");
+  await LETTERPAD.loadIndex();   // populate LETTERPAD.items() so anushthanRows() can borrow from it
+  if (!current(nav)) return;
+  wireDesktopChatTarget(list, "letterpad", (card) => {   // the discussion thread is letterpad:<id>
+    const t = card.querySelector(".lp-title");
+    return t ? t.textContent.trim() : "";
+  });
+  await renderLetterpadInto(list, () => "hi", {
+    msgs: MSG_CORPUS.anushthanRows(),
+    emptyMsg: "No anushthan messages yet. They will appear here once added.",
+  });
+}
+
+// ==========================================================================
+// UPANISHAD GANGA — desktop (LAYOUT_B_PLAN.md §8.2)
+//
+// The phone's version is gyanPage() inside MOBILE_UI (a stub on the desktop),
+// so this is a separate view over the SAME window.WA data layer. Three rules
+// from GANGA_SUGGESTIONS_PLAN.md, none negotiable:
+//   1. HINDI ONLY — no language toggle, `_ggWords` takes hi and falls back only
+//      to a pre-2026-08-20 row's text_en.
+//   2. The suggester's NAME is admin-only and Postgres enforces it
+//      (wa_recent_thoughts returns "" to everyone else). This page — like the
+//      phone's card since 2026-08-21 — never renders the name at all; an admin
+//      reads it on Ganga Review (§8.3), not here.
+//   3. The compose box is #gg-compose and the list is #gg-list — SEPARATE
+//      subtrees. renderGangaList() only ever writes #gg-list, so the 60-second
+//      timer can never wipe a half-typed suggestion.
+//
+// ⚠ No hour-window filter (unlike the phone's GYAN.recent). The phone shows the
+// thoughts it would have been NOTIFIED about, in its chosen hours; the desktop
+// gets no notifications, so it shows the actual last GG_KEEP hourly thoughts.
+const GG_KEEP = 3;   // mirrors MOBILE_UI's GYAN_KEEP (three since 2026-08-22)
+
+const _ggWords = (t) => (t.hi || t.en) || "";
+// "11 AM" / "8 PM" for an IST hour slot.
+function _ggSlotLabel(slot) {
+  const h = Number(slot);
+  if (!(h >= 0 && h <= 23)) return "";
+  const ampm = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12} ${ampm}`;
+}
+// "11 AM" today, "8 PM · yesterday", "8 PM · 2026-09-10" older. ⚠ IST date from
+// the EPOCH (getTime() is already UTC-anchored; add 5½h and read the UTC date) —
+// getTimezoneOffset() here is a double correction and lands a day out west of
+// UTC. Verbatim from MOBILE_UI's gyanWhen().
+function _ggWhen(t) {
+  const at = _ggSlotLabel(t.slot);
+  const istNow = new Date(Date.now() + 330 * 60000);
+  const today = istNow.toISOString().slice(0, 10);
+  if (!t.date || t.date === today) return at;
+  const y = new Date(istNow.getTime() - 86400000).toISOString().slice(0, 10);
+  if (t.date === y) return `${at} · yesterday`;
+  return `${at} · ${t.date}`;
+}
+// One instruction segment → escaped HTML with the b/i/u/wow wrapper. The text
+// itself always goes through escapeHtml; the flag is the only thing that adds
+// markup. Verbatim from MOBILE_UI's instrSeg().
+function _ggInstrSeg(s) {
+  if (typeof s === "string") s = { t: s };
+  let h = escapeHtml(s.t || "");
+  if (s.b) h = `<b>${h}</b>`;
+  if (s.i) h = `<i>${h}</i>`;
+  if (s.u) h = `<u>${h}</u>`;
+  if (s.wow) h = `<span class="gg-wow">${h}</span>`;
+  return h;
+}
+
+async function renderGangaDesktop() {
+  const nav = _nav;
+  // Two separate subtrees (rule 3): the pinned head holds the box + instructions
+  // and is painted ONCE; the list is painted by renderGangaList() and a timer.
+  $view.innerHTML =
+    `<div class="gg-page">` +
+      `<h2 class="gg-headline">📿 Upanishad Ganga</h2>` +
+      `<div class="gg-head">` +
+        `<div class="gg-compose" id="gg-compose"></div>` +
+        `<div class="gg-instr" id="gg-instr"></div>` +
+      `</div>` +
+      `<div class="gg-list" id="gg-list"></div>` +
+    `</div>`;
+  if (!current(nav)) return;
+  const page = $view.querySelector(".gg-page");
+  const composeEl = $view.querySelector("#gg-compose");
+  const instrEl = $view.querySelector("#gg-instr");
+  const listEl = $view.querySelector("#gg-list");
+
+  // ---- the instructions (painted once, never in a repaint path) ------------
+  instrEl.innerHTML =
+    (GANGA_INSTRUCTIONS.title
+      ? `<div class="gg-instr-h">${escapeHtml(GANGA_INSTRUCTIONS.title)}</div>` : "") +
+    (GANGA_INSTRUCTIONS.lines || []).map((l) =>
+      `<div>${(typeof l === "string" ? [l] : l).map(_ggInstrSeg).join("")}</div>`).join("") +
+    (GANGA_INSTRUCTIONS.note
+      ? `<div class="gg-note">${escapeHtml(GANGA_INSTRUCTIONS.note)}</div>` : "");
+
+  // ---- the thoughts ------------------------------------------------------
+  let mineSlots = new Set();   // "date:slot" keys of thoughts this member suggested
+  let lastSig = null;
+  const renderGangaList = (items, note) => {
+    const shown = (items || []).slice(0, GG_KEEP);
+    const sig = shown.map((t) => `${t.date}:${t.slot}`).join("|") + "|" + (note || "") +
+                "|" + mineSlots.size;
+    if (sig === lastSig) return;   // don't repaint under a reader's text selection
+    lastSig = sig;
+    if (!shown.length) {
+      listEl.innerHTML = `<div class="gg-hint">${escapeHtml(
+        note || "No thoughts have gone out yet — they will appear here.")}</div>`;
+      return;
+    }
+    listEl.innerHTML =
+      `<div class="gg-latest-h">Latest Notification</div>` +
+      (note ? `<div class="gg-hint" style="margin-bottom:10px">${escapeHtml(note)}</div>` : "") +
+      shown.map((t, i) =>
+        `<div class="gg-item${i === 0 ? " hit" : ""}">` +
+          `<div class="gg-text${i === 0 ? " latest" : ""}">${escapeHtml(_ggWords(t))}</div>` +
+          `<div class="gg-ts">${escapeHtml(_ggWhen(t))}</div>` +
+          (mineSlots.has(`${t.date}:${t.slot}`)
+            ? `<div class="gg-yours">Your Suggestion</div>` : "") +
+        `</div>`).join("");
+  };
+
+  let items = [];
+  try { items = JSON.parse(localStorage.getItem("wa:gyan:cache") || "[]"); } catch (_) {}
+  let note = "";
+  const paint = () => renderGangaList(items, note);
+  if (items.length) paint();
+
+  let lastFetch = 0;
+  const refresh = async () => {
+    lastFetch = Date.now();
+    try {
+      items = await WA.recentThoughts(48);   // SLOTS to look back over; we keep GG_KEEP
+      try { localStorage.setItem("wa:gyan:cache", JSON.stringify(items)); } catch (_) {}
+      note = "";
+    } catch (_) {
+      note = items.length ? "" :
+        "Couldn't reach the server just now. The thoughts will appear when you're back online.";
+    }
+    paint();
+  };
+  refresh();   // not awaited — the box + instructions are already on screen
+
+  // ---- the member's compose box (painted once — rule 3) -----------------
+  let limit = 100;
+  try { const n = parseInt(localStorage.getItem("wa:ganga:limit"), 10); if (n >= 1) limit = n; } catch (_) {}
+
+  const paintQuota = (q) => {
+    const slot = composeEl.querySelector("#gg-quota");
+    if (!slot || !q) return;
+    const left = Math.max(0, (q.limit || 0) - (q.used || 0));
+    slot.textContent = left === 0
+      ? "You have sent today's quotes. Please send more tomorrow."
+      : `${left} of ${q.limit} left today`;
+    slot.classList.toggle("none", left === 0);
+  };
+
+  const loadMine = async () => {
+    if (!isSignedIn()) return;
+    let rows;
+    try { rows = await WA.myGangaSuggestions(50); } catch (_) { return; }
+    const next = new Set();
+    rows.forEach((r) => {
+      if (r.first_sent && r.first_slot_date != null && r.first_slot != null) {
+        next.add(`${r.first_slot_date}:${r.first_slot}`);
+      }
+    });
+    if (next.size === mineSlots.size && [...next].every((k) => mineSlots.has(k))) return;
+    mineSlots = next;
+    paint();
+  };
+
+  const paintCompose = () => {
+    if (!isSignedIn()) {
+      composeEl.innerHTML =
+        `<div class="gg-box"><div class="gg-hint" style="margin-bottom:12px">` +
+        escapeHtml("Sign in to send a thought of your own to the admins.") + `</div></div>`;
+      const box = composeEl.querySelector(".gg-box");
+      box.insertAdjacentHTML("beforeend", modSignInHtml());
+      wireModSignIn(box, () => renderGangaDesktop());
+      return;
+    }
+    // An admin on a device the Sutradhar has not approved may READ the thoughts
+    // but not add to the pool (Postgres enforces it on the insert too).
+    if (DEVICE_GATE.blocksAction()) {
+      composeEl.innerHTML =
+        `<div class="gg-box"><div class="gg-hint">` +
+        escapeHtml("Register this device to send a thought of your own. Moderator and "
+          + "Sutradhar accounts work only on devices the Sutradhar has approved.") + `</div></div>`;
+      return;
+    }
+    composeEl.innerHTML =
+      `<div class="gg-box">` +
+        `<textarea id="gg-ta" rows="4" maxlength="${limit}" ` +
+          `placeholder="${escapeHtml(GANGA_PLACEHOLDER)}"></textarea>` +
+        `<div class="gg-row">` +
+          `<span class="gg-count" id="gg-count">0 / ${limit}</span>` +
+          `<button class="btn primary gg-sendbtn" id="gg-send" disabled>Send to Admin for Quote Approval</button>` +
+        `</div>` +
+        `<div class="gg-quota" id="gg-quota"></div>` +
+      `</div>`;
+    const ta = composeEl.querySelector("#gg-ta");
+    const count = composeEl.querySelector("#gg-count");
+    const send = composeEl.querySelector("#gg-send");
+    const sync = () => {
+      const n = ta.value.length;
+      count.textContent = `${n} / ${limit}`;
+      count.classList.toggle("full", n >= limit);
+      send.disabled = !ta.value.trim();
+    };
+    ta.addEventListener("input", sync);
+    sync();
+    send.addEventListener("click", async () => {
+      const text = ta.value.trim();
+      if (!text) return;
+      send.disabled = true;
+      const had = send.textContent;
+      send.textContent = "Sending…";
+      try {
+        const res = await WA.submitGangaSuggestion(text);
+        if (res && res.id) WA.notifyGangaPending(res.id);   // fire-and-forget
+        ta.value = "";
+        sync();
+        toast("Sent to the admins 🙏");
+        loadMine();
+        WA.myGangaQuota().then(paintQuota).catch(() => {});
+      } catch (e) {
+        toast((e && e.message) || "Couldn't send that just now.");
+      } finally {
+        send.textContent = had;
+        sync();
+      }
+    });
+  };
+  paintCompose();
+
+  // The authoritative limit + today's allowance, in one call, after the box is
+  // already usable. Repainting the box is safe ONLY here — once, within a second
+  // of opening, and only if nothing is typed yet.
+  if (isSignedIn()) {
+    (async () => {
+      let chars = 0;
+      try {
+        const q = await WA.myGangaQuota();
+        if (q) { paintQuota(q); chars = q.chars; }
+      } catch (_) {}
+      if (!chars) { try { chars = await WA.gangaCharLimit(); } catch (_) { return; } }
+      if (chars && chars !== limit) {
+        limit = chars;
+        try { localStorage.setItem("wa:ganga:limit", String(chars)); } catch (_) {}
+        const ta = composeEl.querySelector("#gg-ta");
+        if (!ta || !ta.value) {
+          paintCompose();
+          try { paintQuota(await WA.myGangaQuota()); } catch (_) {}
+        }
+      }
+    })();
+  }
+  loadMine();
+
+  // ---- the timer: repaint the LIST only (never composeEl) --------------
+  const tick = setInterval(() => {
+    if (!page.isConnected) { clearInterval(tick); return; }
+    paint();
+    if (Date.now() - lastFetch > 60000) refresh();
+  }, 60000);
+}
+
+// ==========================================================================
+// UPANISHAD GANGA REVIEW — desktop (LAYOUT_B_PLAN.md §8.3, Sutradhar menu)
+//
+// The phone's version is gangaReviewRoute/gangaHubPage/gangaListPage/
+// gangaOnePage inside MOBILE_UI (a stub on the desktop). This is a fresh view
+// over the SAME window.WA data layer:
+//   #/gyanreview            hub — Pending | Approved | All tabs, plus the
+//                           admin's own compose box and the two member limits
+//   #/gyanreview?tab=<k>    the same page, that tab active (survives a reload)
+//   #/gyanreview?id=<n>     one pending quote, decided on its own page
+//
+// ⚠ Three rules, all from GANGA_SUGGESTIONS_PLAN.md:
+//   1. "All" reads the `thoughts` POOL (WA.listGangaThoughts), a DIFFERENT
+//      table from ganga_suggestions — an admin's own line has no suggestion
+//      row. The Pending/Approved tabs read ganga_suggestions.
+//   2. The duplicate check goes through the shared module-scope engine
+//      (gangaDuplicates → gangaPrep, which strips the danda via GANGA_PUNCT
+//      BEFORE GANGA_SPLIT — U+0964 is in the Devanagari range and would
+//      otherwise be a letter).
+//   3. The suggester's NAME appears here and only here, and only because it
+//      arrives on the admin RPCs (list_ganga_suggestions / list_ganga_thoughts,
+//      both wa_is_mod()-gated in Postgres). Never read it off `thoughts`.
+//
+// ⚠ Mod-only is COURTESY (the V2NAV row is under the mod-only Sutradhar group,
+// and this renderer shows a hint to a non-mod). The lock is Postgres: every
+// RPC re-checks wa_is_mod(), and the anon key ships in wa-supabase.js.
+// ⚠ The search box / filter chips on the All tab, and the admin compose box and
+// the limits, all sit OUTSIDE #grv-list — the region a tab switch repaints —
+// so a half-typed line is never destroyed.
+const GRV_TABS = [
+  { k: "pending",  label: "Pending",  sub: "Waiting for a decision" },
+  { k: "approved", label: "Approved", sub: "What has been accepted" },
+  { k: "all",      label: "All",      sub: "Every quote in the pool" },
+];
+
+async function renderGangaReview(params) {
+  const id = params && params.get("id");
+  if (id) return gangaReviewOne(Number(id));
+  let tab = params && params.get("tab");
+  if (!GRV_TABS.some((t) => t.k === tab)) tab = "pending";
+  return gangaReviewHub(tab);
+}
+
+function grvGate() {
+  $view.innerHTML =
+    `<div class="grv-page"><h2 class="grv-headline">📿 Upanishad Ganga Review</h2>` +
+    `<div class="gg-hint">${escapeHtml("This screen is for the sutradhar and the moderators.")}</div></div>`;
+}
+
+async function gangaReviewHub(tab) {
+  const nav = _nav;
+  if (!isModerator()) return grvGate();
+  $view.innerHTML =
+    `<div class="grv-page">` +
+      `<h2 class="grv-headline">📿 Upanishad Ganga Review</h2>` +
+      `<div class="grv-tabs" id="grv-tabs">` +
+        GRV_TABS.map((t) =>
+          `<button class="grv-tab${t.k === tab ? " active" : ""}" data-tab="${t.k}" type="button">` +
+            `<span class="grv-tab-l">${escapeHtml(t.label)}</span>` +
+            `<span class="grv-tab-n" data-n="${t.k}"></span>` +
+            `<span class="grv-tab-s">${escapeHtml(t.sub)}</span>` +
+          `</button>`).join("") +
+      `</div>` +
+      `<div class="grv-toolbar" id="grv-toolbar"></div>` +
+      `<div id="grv-list"><div class="loading">Loading…</div></div>` +
+      `<div class="grv-extra" id="grv-add"></div>` +
+      `<div class="grv-extra" id="grv-limits"></div>` +
+    `</div>`;
+  if (!current(nav)) return;
+  const page = $view.querySelector(".grv-page");
+  const tabsEl = $view.querySelector("#grv-tabs");
+  const toolbarEl = $view.querySelector("#grv-toolbar");
+  const listEl = $view.querySelector("#grv-list");
+
+  let cur = tab;
+  let rows = [];
+  let filter = "all";   // All tab: all | member | admin | off
+  let q = "";           // All tab: search text
+
+  // ---- the three list renderers (write #grv-list ONLY) -----------------
+  const pendingHtml = () => {
+    if (!rows.length) return `<div class="gg-hint">${escapeHtml("Nothing is waiting right now.")}</div>`;
+    return `<div class="grv-n">${escapeHtml(rows.length === 1 ? "1 quote waiting" : `${rows.length} quotes waiting`)}</div>` +
+      rows.map((r) =>
+        `<a class="grv-row link" href="#/gyanreview?id=${encodeURIComponent(String(r.id))}">` +
+          `<div class="grv-row-top">` +
+            `<span class="grv-who">${escapeHtml(r.username || "A member")}</span>` +
+            (r.resubmit_of ? `<span class="grv-tag">sent again</span>` : "") +
+            `<span class="grv-when">${escapeHtml(timeAgo(r.created_at))}</span>` +
+          `</div>` +
+          `<div class="grv-t">${escapeHtml(r.text || "")}</div>` +
+          `<span class="grv-go">Review →</span>` +
+        `</a>`).join("");
+  };
+  const approvedHtml = () => {
+    if (!rows.length) return `<div class="gg-hint">${escapeHtml("Nothing has been approved yet.")}</div>`;
+    return `<div class="grv-n">${escapeHtml(rows.length === 1 ? "1 approved quote" : `${rows.length} approved quotes`)}</div>` +
+      rows.map((r) => {
+        const words = r.approved_text || r.text || "";
+        const sent = r.sent_count ? `sent ${r.sent_count}×` : "waiting its turn";
+        const when = (r.first_slot != null && r.first_slot_date)
+          ? ` · first at ${_ggWhen({ slot: r.first_slot, date: r.first_slot_date })}` : "";
+        return `<div class="grv-row">` +
+          `<div class="grv-row-top">` +
+            `<span class="grv-who">${escapeHtml(r.username || "A member")}</span>` +
+            `<span class="grv-when">${escapeHtml(timeAgo(r.decided_at || r.created_at))}</span>` +
+          `</div>` +
+          `<div class="grv-t">${escapeHtml(words)}</div>` +
+          `<div class="grv-meta">${escapeHtml(sent + when + (r.decider_name ? ` · approved by ${r.decider_name}` : ""))}</div>` +
+        `</div>`;
+      }).join("");
+  };
+  const allHtml = () => {
+    const needle = q.trim().toLowerCase();
+    const show = rows.filter((r) => {
+      if (filter === "member" && r.source !== "member") return false;
+      if (filter === "admin" && r.source !== "admin") return false;
+      if (filter === "off" && r.active !== false) return false;
+      if (needle && String(r.text_hi || "").toLowerCase().indexOf(needle) < 0) return false;
+      return true;
+    });
+    if (!rows.length) return `<div class="gg-hint">${escapeHtml("There are no quotes in the pool yet.")}</div>`;
+    if (!show.length) return `<div class="gg-hint">${escapeHtml("Nothing here matches that.")}</div>`;
+    return `<div class="grv-n">${escapeHtml(show.length === rows.length
+      ? `${rows.length} quotes in the pool` : `${show.length} of ${rows.length} quotes`)}</div>` +
+      show.map((r) =>
+        `<div class="grv-row${r.active === false ? " off" : ""}" data-tid="${escapeHtml(String(r.id))}">` +
+          `<div class="grv-row-top">` +
+            `<span class="grv-src ${r.source === "member" ? "mem" : "adm"}">${escapeHtml(r.source === "member" ? "Member" : "Admin")}</span>` +
+            (r.suggested_name ? `<span class="grv-who">${escapeHtml(r.suggested_name)}</span>` : "") +
+            (r.active === false ? `<span class="grv-tag off">Withdrawn</span>` : "") +
+            `<span class="grv-when">${escapeHtml(r.last_sent_at ? "last " + timeAgo(r.last_sent_at) : "not sent yet")}</span>` +
+          `</div>` +
+          `<div class="grv-t">${escapeHtml(r.text_hi || "")}</div>` +
+          `<div class="grv-meta">${escapeHtml((r.sent_count ? `sent ${r.sent_count}×` : "never sent") + ` · #${r.id}`)}</div>` +
+          `<div class="grv-row-acts">` +
+            `<button class="btn" data-act="${r.active === false ? "on" : "off"}" type="button">` +
+              `${r.active === false ? "Put back" : "Withdraw"}</button>` +
+          `</div>` +
+        `</div>`).join("");
+  };
+  const renderList = () => {
+    listEl.innerHTML = cur === "pending" ? pendingHtml()
+                     : cur === "approved" ? approvedHtml() : allHtml();
+  };
+
+  // ---- the All-tab toolbar (search + chips), OUTSIDE #grv-list --------
+  const paintToolbar = () => {
+    if (cur !== "all") { toolbarEl.innerHTML = ""; return; }
+    toolbarEl.innerHTML =
+      `<input class="grv-q" id="grv-q" type="search" autocomplete="off" ` +
+        `placeholder="${escapeHtml("Search the quotes…")}" value="${escapeHtml(q)}">` +
+      `<div class="grv-chips" id="grv-chips">` +
+        [["all", "All"], ["member", "From members"], ["admin", "From admins"], ["off", "Withdrawn"]]
+          .map(([f, l]) => `<button class="grv-chip${f === filter ? " active" : ""}" data-f="${f}" type="button">${escapeHtml(l)}</button>`).join("") +
+      `</div>`;
+    const qEl = toolbarEl.querySelector("#grv-q");
+    qEl.addEventListener("input", () => { q = qEl.value; renderList(); });
+    toolbarEl.querySelector("#grv-chips").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-f]");
+      if (!b) return;
+      filter = b.dataset.f;
+      toolbarEl.querySelectorAll(".grv-chip").forEach((x) => x.classList.toggle("active", x.dataset.f === filter));
+      renderList();
+    });
+  };
+
+  // Withdraw / put back a pool line (All tab). The words are never edited —
+  // a line already sent to every phone cannot be un-sent.
+  listEl.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    const row = btn.closest(".grv-row");
+    const tid = Number(row.dataset.tid);
+    const on = btn.dataset.act === "on";
+    btn.disabled = true;
+    try {
+      await WA.setThoughtActive(tid, on);
+      const hit = rows.find((r) => Number(r.id) === tid);
+      if (hit) hit.active = on;
+      _gangaPool = null;   // the duplicate check reads `active`
+      toast(on ? "Back in the rotation." : "Taken out of the rotation.");
+      renderList();
+    } catch (err) {
+      toast((err && err.message) || "Couldn't change that.");
+      btn.disabled = false;
+    }
+  });
+
+  const loadTab = async () => {
+    q = ""; filter = "all";
+    paintToolbar();
+    listEl.innerHTML = `<div class="loading">Loading…</div>`;
+    try {
+      if (cur === "all") rows = await gangaPool(true);
+      else {
+        rows = await WA.listGangaSuggestions(cur, 500);
+        if (cur === "pending") rows = rows.filter((r) => !r.superseded);
+      }
+    } catch (err) {
+      listEl.innerHTML = `<div class="gg-hint">${escapeHtml((err && err.message) || "Couldn't reach the server just now.")}</div>`;
+      return;
+    }
+    if (!page.isConnected) return;
+    renderList();
+  };
+
+  tabsEl.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-tab]");
+    if (!b || b.dataset.tab === cur) return;
+    cur = b.dataset.tab;
+    tabsEl.querySelectorAll(".grv-tab").forEach((x) => x.classList.toggle("active", x.dataset.tab === cur));
+    // Keep the hash in step WITHOUT routing (route() would tear the page down).
+    try { history.replaceState(null, "", "#/gyanreview?tab=" + cur); } catch (_) {}
+    loadTab();
+  });
+
+  // ---- the three counts (silent on failure) ---------------------------
+  const setN = (k, v) => { const s = $view.querySelector(`.grv-tab-n[data-n="${k}"]`); if (s) s.textContent = v || ""; };
+  WA.listGangaSuggestions("pending", 500).then((r) => setN("pending", r.filter((x) => !x.superseded).length)).catch(() => {});
+  WA.listGangaSuggestions("approved", 500).then((r) => setN("approved", r.length)).catch(() => {});
+  gangaPool(true).then((r) => setN("all", r.length)).catch(() => {});
+
+  loadTab();
+
+  // ---- the admin's own quote box (OUTSIDE #grv-list) -----------------
+  const addEl = $view.querySelector("#grv-add");
+  addEl.innerHTML =
+    `<div class="grv-box">` +
+      `<div class="grv-box-h">Add a quote yourself</div>` +
+      `<div class="gg-hint" style="margin-bottom:10px">${escapeHtml(
+        "Goes straight into the pool. “By member” jumps the queue and is sent at the top of the next hour; “by admin” joins the ordinary rotation.")}</div>` +
+      `<textarea id="grv-new" rows="3" placeholder="${escapeHtml("विचार लिखें…")}"></textarea>` +
+      `<div class="grv-warn" id="grv-new-warn"></div>` +
+      `<div class="grv-box-acts">` +
+        `<button class="btn" id="grv-add-member" type="button">Send by member</button>` +
+        `<button class="btn primary" id="grv-add-admin" type="button">Send by admin</button>` +
+      `</div>` +
+    `</div>`;
+  const newTa = addEl.querySelector("#grv-new");
+  const newWarn = addEl.querySelector("#grv-new-warn");
+  let pendingOrigin = null;
+  const doAdd = async (origin) => {
+    const text = (newTa.value || "").trim();
+    if (!text) { toast("Write something first."); return; }
+    addEl.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    try {
+      await WA.addGangaThought(text, origin);
+      newTa.value = ""; newWarn.innerHTML = "";
+      _gangaPool = null;
+      toast(origin === "member" ? "Added — it goes out at the top of the next hour 🌸" : "Added to the pool.");
+      if (cur === "all") loadTab();
+    } catch (err) {
+      toast((err && err.message) || "Couldn't add that.");
+    } finally {
+      addEl.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    }
+  };
+  addEl.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    if (btn.dataset.dupe === "cancel") { newWarn.innerHTML = ""; pendingOrigin = null; return; }
+    if (btn.dataset.dupe === "go") { const o = pendingOrigin; newWarn.innerHTML = ""; pendingOrigin = null; return doAdd(o || "admin"); }
+    if (btn.dataset.dupe) return;   // "return as duplicate" is meaningless for an admin's own line
+    const origin = btn.id === "grv-add-member" ? "member" : btn.id === "grv-add-admin" ? "admin" : null;
+    if (!origin) return;
+    const text = (newTa.value || "").trim();
+    if (!text) { toast("Write something first."); return; }
+    pendingOrigin = origin;
+    const hits = await gangaDuplicates(text);
+    if (hits.length) { newWarn.innerHTML = grvDupeHtml(hits, "Add anyway"); return; }
+    pendingOrigin = null;
+    return doAdd(origin);
+  });
+
+  // ---- the two member limits (OUTSIDE #grv-list) --------------------
+  const limEl = $view.querySelector("#grv-limits");
+  const paintLimits = (chars, daily) => {
+    limEl.innerHTML =
+      `<div class="grv-box">` +
+        `<div class="grv-box-h">How long a member's quote may be</div>` +
+        `<div class="grv-inputrow"><input id="grv-lim" type="number" min="1" max="5000" value="${escapeHtml(String(chars))}">` +
+          `<button class="btn primary" id="grv-lim-save" type="button">Save</button></div>` +
+      `</div>` +
+      `<div class="grv-box">` +
+        `<div class="grv-box-h">How many a member may send in a day</div>` +
+        `<div class="gg-hint" style="margin-bottom:10px">${escapeHtml("Counted over the last 24 hours. Sending a returned quote back again counts as one.")}</div>` +
+        `<div class="grv-inputrow"><input id="grv-day" type="number" min="1" max="50" value="${escapeHtml(String(daily))}">` +
+          `<button class="btn primary" id="grv-day-save" type="button">Save</button></div>` +
+      `</div>`;
+    limEl.querySelector("#grv-lim-save").addEventListener("click", async () => {
+      const v = parseInt(limEl.querySelector("#grv-lim").value, 10);
+      if (!(v >= 1 && v <= 5000)) { toast("Give a number between 1 and 5000."); return; }
+      const b = limEl.querySelector("#grv-lim-save"); b.disabled = true;
+      try { await WA.setGangaCharLimit(v); try { localStorage.setItem("wa:ganga:limit", String(v)); } catch (_) {} toast(`Members may now write ${v} characters.`); }
+      catch (err) { toast((err && err.message) || "Couldn't save that."); }
+      finally { b.disabled = false; }
+    });
+    limEl.querySelector("#grv-day-save").addEventListener("click", async () => {
+      const v = parseInt(limEl.querySelector("#grv-day").value, 10);
+      if (!(v >= 1 && v <= 50)) { toast("Give a number between 1 and 50."); return; }
+      const b = limEl.querySelector("#grv-day-save"); b.disabled = true;
+      try { await WA.setGangaDailyLimit(v); toast(`Members may now send ${v} a day.`); }
+      catch (err) { toast((err && err.message) || "Couldn't save that."); }
+      finally { b.disabled = false; }
+    });
+  };
+  (async () => {
+    let chars = 100, daily = 3;
+    try { chars = await WA.gangaCharLimit(); } catch (_) {}
+    try { daily = await WA.gangaDailyLimit(); } catch (_) {}
+    if (page.isConnected) paintLimits(chars, daily);
+  })();
+}
+
+// The duplicate panel, desktop markup (the phone's gangaDupeHtml stays mobile).
+// `goLabel` is the primary button's verb ("Approve anyway" / "Add anyway").
+function grvDupeHtml(hits, goLabel) {
+  if (!hits.length) {
+    return `<div class="grv-dupe ok"><div class="grv-dupe-h">${escapeHtml("Nothing like it in the pool. This looks new.")}</div>` +
+      `<div class="grv-dupe-a"><button class="btn" data-dupe="cancel" type="button">Close</button></div></div>`;
+  }
+  return `<div class="grv-dupe">` +
+    `<div class="grv-dupe-h">${escapeHtml(hits.length === 1
+      ? "One line in the pool is like this one:" : `${hits.length} lines in the pool are like this one:`)}</div>` +
+    hits.map((h, i) =>
+      `<div class="grv-dupe-row">` +
+        `<div class="grv-dupe-b ${h.band.k}">${escapeHtml(h.band.label)}<span class="grv-dupe-pc">${Math.round(h.score * 100)}%</span></div>` +
+        `<div class="grv-dupe-t">${gangaHighlight(h.row.text_hi, h.shared)}</div>` +
+        `<div class="grv-dupe-n">${escapeHtml(
+          (h.row.active === false ? "withdrawn" : "in the pool") +
+          (h.row.sent_count ? ` · sent ${h.row.sent_count}×` : " · not sent yet") +
+          (h.row.suggested_name ? ` · from ${h.row.suggested_name}` : ""))}</div>` +
+        `<button class="btn grv-dupe-ret" data-dupe="return" data-hit="${i}" type="button">Return as duplicate</button>` +
+      `</div>`).join("") +
+    `<div class="grv-dupe-a">` +
+      `<button class="btn" data-dupe="cancel" type="button">Look again</button>` +
+      `<button class="btn primary" data-dupe="go" type="button">${escapeHtml(goLabel || "Approve anyway")}</button>` +
+    `</div></div>`;
+}
+
+// ---- one pending quote, the whole page to it (full-width reason box) -----
+async function gangaReviewOne(sid) {
+  const nav = _nav;
+  if (!isModerator()) return grvGate();
+  $view.innerHTML = `<div class="grv-page grv-one"><div class="loading">Loading…</div></div>`;
+  const page = $view.querySelector(".grv-page");
+
+  let queue = [];
+  try { queue = await WA.listGangaSuggestions("pending", 500); }
+  catch (e) {
+    page.innerHTML = `<div class="gg-hint">${escapeHtml((e && e.message) || "Couldn't reach the server just now.")}</div>`;
+    return;
+  }
+  if (!current(nav)) return;
+  queue = queue.filter((r) => !r.superseded);
+  const i = queue.findIndex((r) => Number(r.id) === Number(sid));
+  if (i < 0) {
+    page.innerHTML =
+      `<h2 class="grv-headline">📿 Review quote</h2>` +
+      `<div class="gg-hint">${escapeHtml("That quote has already been decided.")}</div>` +
+      `<div class="grv-box-acts" style="justify-content:flex-start;margin-top:14px">` +
+        `<a class="btn" href="#/gyanreview?tab=pending">Back to the queue</a></div>`;
+    return;
+  }
+  const r = queue[i];
+  const nextId = queue[i + 1] ? queue[i + 1].id : null;
+  const onward = () => go(nextId ? `#/gyanreview?id=${encodeURIComponent(String(nextId))}` : "#/gyanreview?tab=pending");
+
+  page.innerHTML =
+    `<h2 class="grv-headline">📿 Review quote</h2>` +
+    `<div class="grv-one-head">` +
+      `<span class="grv-who">${escapeHtml(r.username || "A member")}</span>` +
+      `<span class="grv-when">${escapeHtml(timeAgo(r.created_at))}</span>` +
+      (r.resubmit_of ? `<span class="grv-tag">sent again after being returned</span>` : "") +
+      (nextId ? `<span class="grv-left">${escapeHtml(`${queue.length - i - 1} more waiting after this`)}</span>` : "") +
+    `</div>` +
+    `<textarea class="grv-one-text" id="grv-text" rows="4">${escapeHtml(r.text || "")}</textarea>` +
+    `<div class="gg-hint">${escapeHtml("You may correct a word before approving. The member's own wording is kept on their page beside yours.")}</div>` +
+    `<div class="grv-warn" id="grv-warn"></div>` +
+    `<div class="grv-one-acts">` +
+      `<button class="btn" id="grv-dupe" type="button">Check duplicate</button>` +
+      `<button class="btn" id="grv-return" type="button">Return…</button>` +
+      `<button class="btn primary" id="grv-approve" type="button">Approve</button>` +
+    `</div>` +
+    // Built and merely un-hidden — a repaint would throw away a reason begun.
+    `<div class="grv-why" id="grv-why" hidden>` +
+      `<div class="grv-box-h">${escapeHtml("Why are you returning it? The member is shown this, word for word.")}</div>` +
+      `<div class="grv-chips" id="grv-why-chips">` +
+        GANGA_REASONS.map((t, n) => `<button class="grv-chip" data-r="${n}" type="button">${escapeHtml(t)}</button>`).join("") +
+      `</div>` +
+      `<textarea class="grv-reason" id="grv-reason" rows="4" maxlength="400" placeholder="${escapeHtml("कारण लिखें…")}"></textarea>` +
+      `<div class="grv-one-acts">` +
+        `<button class="btn" id="grv-why-x" type="button">Cancel</button>` +
+        `<button class="btn primary" id="grv-why-send" type="button">Send back</button>` +
+      `</div>` +
+    `</div>`;
+
+  const ta = page.querySelector("#grv-text");
+  const warn = page.querySelector("#grv-warn");
+  const why = page.querySelector("#grv-why");
+  const reason = page.querySelector("#grv-reason");
+  const busy = (on) => page.querySelectorAll("button").forEach((b) => (b.disabled = on));
+
+  const approve = async () => {
+    const text = (ta.value || "").trim();
+    if (!text) { toast("There is nothing to approve."); return; }
+    busy(true);
+    try {
+      await WA.approveGangaSuggestion(r.id, text);
+      WA.notifyGangaDecision(r.id, true);
+      _gangaPool = null;
+      toast("Approved — it goes out at the top of the next hour 🌸");
+      onward();
+    } catch (err) { toast((err && err.message) || "Couldn't approve that."); busy(false); }
+  };
+  const sendBack = async (text) => {
+    const words = (text || "").trim();
+    if (!words) { toast("Please give a reason — the member is shown it."); return; }
+    busy(true);
+    try {
+      await WA.declineGangaSuggestion(r.id, words);
+      WA.notifyGangaDecision(r.id, false);
+      toast("Sent back with your reason.");
+      onward();
+    } catch (err) { toast((err && err.message) || "Couldn't return that."); busy(false); }
+  };
+
+  let hits = [];
+  const showDupes = async () => {
+    warn.innerHTML = `<div class="grv-dupe ok"><div class="grv-dupe-h">${escapeHtml("Looking through the pool…")}</div></div>`;
+    hits = await gangaDuplicates((ta.value || "").trim());
+    warn.innerHTML = grvDupeHtml(hits, "Approve anyway");
+    return hits.length > 0;
+  };
+  page.querySelector("#grv-dupe").addEventListener("click", showDupes);
+  page.querySelector("#grv-approve").addEventListener("click", async () => {
+    if (await showDupes()) return;   // advisory — the panel still offers "Approve anyway"
+    warn.innerHTML = "";
+    return approve();
+  });
+  page.querySelector("#grv-return").addEventListener("click", () => { why.hidden = false; reason.focus(); });
+  page.querySelector("#grv-why-x").addEventListener("click", () => { why.hidden = true; });
+  page.querySelector("#grv-why-send").addEventListener("click", () => sendBack(reason.value));
+  page.querySelector("#grv-why-chips").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-r]");
+    if (!b) return;
+    reason.value = GANGA_REASONS[Number(b.dataset.r)] || "";
+    reason.focus();
+  });
+  warn.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-dupe]");
+    if (!b) return;
+    if (b.dataset.dupe === "cancel") { warn.innerHTML = ""; return; }
+    if (b.dataset.dupe === "go") { warn.innerHTML = ""; return approve(); }
+    if (b.dataset.dupe === "return") {
+      const h = hits[Number(b.dataset.hit)];
+      warn.innerHTML = "";
+      why.hidden = false;
+      reason.value = h ? `यह विचार पहले से है — “${h.row.text_hi}”` : GANGA_REASONS[0];
+      reason.focus();
+    }
+  });
+}
+
+// ==========================================================================
+// MSG TO ADMIN — desktop (LAYOUT_B_PLAN.md §8.4)
+//
+// The phone's version is contactPage/memberMsgPage/adminMsgInboxPage/
+// adminMsgThreadPage inside MOBILE_UI (a stub on the desktop). This is a fresh
+// view over the SAME window.WA data layer and the SAME shared helpers
+// (amBubbleHtml / amWireAttach / amWhoOf / amPaintThread / amOnPush, moved to
+// module scope above). THREE screens behind ONE route, chosen by role — no
+// second menu row, ever (operator, 2026-09-06): a Sutradhar-only row would
+// leave members, and the visitors who use this to ask for Samuhik Satsang
+// access, with no way to reach admins.
+//
+//   a member / visitor          → their own conversation  (contactMember)
+//   a moderator                 → the inbox: Pending | Replied  (contactInbox)
+//   a moderator with ?u=<uuid>  → that member's conversation  (contactThread)
+//
+// ⚠ The four §8.4 traps: (1) amWhoOf never gives a member a moderator's name
+// (the server also blanks author_name for non-admins); (2) notify* is passed
+// the fresh MESSAGE id (send-push dedupes per message, not per thread); (3) it
+// stays on admin_messages via WA.sendAdminMessage/replyAdminMessage — never the
+// `messages` table; (4) amWireAttach's <threadUserId>/<rand> path IS the
+// storage access rule, so a flat key is refused.
+// ⚠ The composer sits in .ct-head; the conversation in .ct-scroll. The load()
+// paths only ever write the thread box — a half-typed line survives a refresh
+// and a push.
+async function renderContact(params) {
+  const uid = params && params.get("u");
+  // isModerator() is a DISPLAY test only — a member typing ?u=<someone> lands on
+  // their own conversation, and Postgres would refuse the cross-thread read even
+  // if this branch were wrong (admin_msg_thread raises; the RLS never returns it).
+  if (isModerator()) return uid ? contactThread(uid) : contactInbox();
+  return contactMember();
+}
+
+// ---- the member's own conversation --------------------------------------
+async function contactMember() {
+  const nav = _nav;
+  const node = el(`<div class="ct-page"></div>`);
+  $view.innerHTML = "";
+  $view.appendChild(node);
+  if (!isSignedIn()) {
+    node.innerHTML =
+      `<h2 class="ct-headline">✉️ Msg to Admin</h2>` +
+      `<p class="gg-hint" style="margin-bottom:14px">${escapeHtml("Sign in to send a message to the admin.")}</p>`;
+    node.insertAdjacentHTML("beforeend", modSignInHtml());
+    wireModSignIn(node, () => renderContact(new URLSearchParams()));
+    return;
+  }
+  node.innerHTML =
+    `<h2 class="ct-headline">✉️ Msg to Admin</h2>` +
+    `<div class="ct-head">` +
+      `<div class="ct-inputcol">` +
+        `<textarea id="ct-msg" rows="3" maxlength="2000" placeholder="${escapeHtml("Write your message to the admin…")}"></textarea>` +
+        `<div class="am-picks"></div>` +
+        `<div class="am-acts">${AM_ATTACH_BTNS}<button class="btn primary" id="ct-send" type="button">Send</button></div>` +
+      `</div>` +
+      `<div class="am-note">${escapeHtml(ADMIN_MSG_NOTE)}</div>` +
+      AM_ATTACH_INPUTS +
+    `</div>` +
+    `<div class="ct-scroll"><div class="am-thread" id="ct-thread"><div class="loading">Loading…</div></div></div>`;
+
+  const thread = node.querySelector("#ct-thread");
+  const load = async () => {
+    let rows;
+    try { rows = await WA.adminMsgThread(null, 200); }
+    catch (err) { thread.innerHTML = `<div class="gg-hint">${escapeHtml((err && err.message) || "Couldn't load your messages.")}</div>`; return; }
+    if (!node.isConnected) return;
+    amPaintThread(thread, rows, false, "Nothing yet — write to the admin above.");
+    const newestReply = rows.find((m) => m.fromAdmin);
+    ADMINMSG.markSeen(newestReply ? newestReply.ts : "");
+  };
+
+  // The member's own id — their attachments live under their own folder, the
+  // only folder the storage policy lets them write to.
+  const attach = amWireAttach(node, () => (currentUser() || {}).id);
+  const send = node.querySelector("#ct-send");
+  send.addEventListener("click", async () => {
+    const ta = node.querySelector("#ct-msg");
+    const typed = ta.value.trim();
+    if (!typed && !attach.any()) return;   // a photo alone is a complete report
+    send.disabled = true; send.textContent = "Sending…";
+    try {
+      const atts = await attach.upload();
+      const r = await WA.sendAdminMessage(typed || mediaPlaceholder(atts), atts);
+      ta.value = ""; attach.clear();
+      WA.notifyAdminMsg(r.id);   // fresh MESSAGE id — send-push dedupes per message
+      toast("Message sent 🙏");
+      load();
+    } catch (err) { toast((err && err.message) || "Couldn't send that."); }
+    finally { send.disabled = false; send.textContent = "Send"; }
+  });
+
+  amOnPush(node, load);
+  if (!current(nav)) return;
+  load();
+}
+
+// ---- the admins' inbox -------------------------------------------------
+async function contactInbox(tab) {
+  const nav = _nav;
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  let cur = tab || params.get("tab");
+  if (cur !== "pending" && cur !== "replied") cur = "pending";
+  const node = el(`<div class="ct-page"></div>`);
+  $view.innerHTML = "";
+  $view.appendChild(node);
+  node.innerHTML =
+    `<h2 class="ct-headline">✉️ Msg to Admin</h2>` +
+    `<div class="ct-head">` +
+      `<div class="grv-tabs" id="ct-seg">` +
+        `<button class="grv-tab${cur === "pending" ? " active" : ""}" data-want="pending" type="button"><span class="grv-tab-l">Pending</span></button>` +
+        `<button class="grv-tab${cur === "replied" ? " active" : ""}" data-want="replied" type="button"><span class="grv-tab-l">Replied</span></button>` +
+      `</div>` +
+    `</div>` +
+    `<div class="ct-scroll"><div class="ct-list" id="ct-list"><div class="loading">Loading…</div></div></div>`;
+
+  const seg = node.querySelector("#ct-seg");
+  const list = node.querySelector("#ct-list");
+  let rows = [];
+
+  const rowHtml = (t) => {
+    // The chip says who spoke LAST — the only cheap thing that stops two admins
+    // answering the same conversation.
+    const chip = t.lastFromAdmin
+      ? `<span class="am-chip ans">Answered</span>`
+      : `<span class="am-chip wait">Waiting</span>`;
+    const done = (!t.lastFromAdmin && t.doneAt)
+      ? `<span class="am-chip done">Done${t.doneName ? " · " + escapeHtml(t.doneName) : ""}</span>` : "";
+    return `<a class="ct-row" href="#/contact?u=${encodeURIComponent(t.userId)}">` +
+      `<div class="ct-row-top">` +
+        `<span class="ct-row-name">${escapeHtml(t.username)}</span>` +
+        `<span class="ct-row-when">${escapeHtml(timeAgo(t.lastAt))}</span>` +
+      `</div>` +
+      `<div class="ct-row-prev">${escapeHtml(t.lastText)}</div>` +
+      `<div class="ct-row-tags">${chip}${done}<span class="am-chip n">${t.count} msg${t.count === 1 ? "" : "s"}</span></div>` +
+    `</a>`;
+  };
+  const paint = () => {
+    const pend = rows.filter((t) => t.status === "pending");
+    const rep  = rows.filter((t) => t.status !== "pending");
+    seg.querySelector('[data-want="pending"] .grv-tab-l').textContent = `Pending (${pend.length})`;
+    seg.querySelector('[data-want="replied"] .grv-tab-l').textContent = `Replied (${rep.length})`;
+    seg.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.want === cur));
+    const show = cur === "pending" ? pend : rep;
+    list.innerHTML = show.length
+      ? show.map(rowHtml).join("")
+      : `<div class="gg-hint">${escapeHtml(cur === "pending" ? "Nothing waiting. 🙏" : "No answered conversations yet.")}</div>`;
+  };
+  const load = async () => {
+    try { rows = await WA.adminMsgThreads("all", 500); }
+    catch (err) { list.innerHTML = `<div class="gg-hint">${escapeHtml((err && err.message) || "Couldn't load the inbox.")}</div>`; return; }
+    if (!node.isConnected) return;
+    paint();
+    ADMINMSG.refresh(true).catch(() => {});
+  };
+  seg.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-want]");
+    if (!b || b.dataset.want === cur) return;
+    cur = b.dataset.want;
+    try { history.replaceState(null, "", "#/contact?tab=" + cur); } catch (_) {}
+    paint();
+  });
+
+  amOnPush(node, load);
+  if (!current(nav)) return;
+  load();
+}
+
+// ---- one member's conversation, as an admin sees it ------------------
+async function contactThread(uid) {
+  const nav = _nav;
+  const node = el(`<div class="ct-page"></div>`);
+  $view.innerHTML = "";
+  $view.appendChild(node);
+  node.innerHTML =
+    `<h2 class="ct-headline"><a class="ct-back" href="#/contact?tab=pending">‹ Inbox</a> <span id="ct-name">Msg to Admin</span></h2>` +
+    `<div class="ct-head">` +
+      `<div class="ct-inputcol">` +
+        `<textarea id="ct-reply" rows="3" maxlength="2000" placeholder="${escapeHtml("Write your reply…")}"></textarea>` +
+        `<div class="am-picks"></div>` +
+        `<div class="am-acts">${AM_ATTACH_BTNS}` +
+          `<button class="btn" id="ct-done" type="button">Done</button>` +
+          `<button class="btn primary" id="ct-reply-send" type="button">Send reply</button></div>` +
+      `</div>` +
+      AM_ATTACH_INPUTS +
+    `</div>` +
+    `<div class="ct-scroll"><div class="am-thread" id="ct-thread"><div class="loading">Loading…</div></div></div>`;
+
+  const thread = node.querySelector("#ct-thread");
+  const doneBtn = node.querySelector("#ct-done");
+  const send = node.querySelector("#ct-reply-send");
+  let doneAt = null;
+  const paintDone = () => {
+    doneBtn.textContent = doneAt ? "Undo done" : "Done";
+    doneBtn.classList.toggle("am-is-done", !!doneAt);
+  };
+  const load = async () => {
+    let rows;
+    try { rows = await WA.adminMsgThread(uid, 200); }
+    catch (err) { thread.innerHTML = `<div class="gg-hint">${escapeHtml((err && err.message) || "Couldn't load the conversation.")}</div>`; return; }
+    if (!node.isConnected) return;
+    const nameEl = node.querySelector("#ct-name");
+    if (nameEl && rows.threadName) nameEl.textContent = rows.threadName;
+    amPaintThread(thread, rows, true, "Nothing in this conversation.");
+    const d = await WA.adminMsgDoneState(uid);
+    // "Done" means done SINCE THE LAST MESSAGE — Date.parse, not string compare
+    // (PostgREST gives "…+00:00", the optimistic stamp is "…Z").
+    const newestTs = rows[0] ? rows[0].ts : null;
+    doneAt = (d.doneAt && (!newestTs || Date.parse(d.doneAt) >= Date.parse(newestTs))) ? d.doneAt : null;
+    paintDone();
+  };
+
+  // ⚠ The MEMBER's id, not the admin's: a reply's attachment belongs in that
+  // member's folder, which the policy allows because the writer is wa_is_mod().
+  const attach = amWireAttach(node, () => uid);
+  send.addEventListener("click", async () => {
+    const ta = node.querySelector("#ct-reply");
+    const typed = ta.value.trim();
+    if (!typed && !attach.any()) return;
+    send.disabled = true; doneBtn.disabled = true; send.textContent = "Sending…";
+    try {
+      const atts = await attach.upload();
+      const r = await WA.replyAdminMessage(uid, typed || mediaPlaceholder(atts), atts);
+      ta.value = ""; attach.clear();
+      WA.notifyAdminMsgReply(r.id);
+      toast("Reply sent 🙏");
+      await load();
+      ADMINMSG.refresh(true).catch(() => {});
+    } catch (err) { toast((err && err.message) || "Couldn't send that."); }
+    finally { send.disabled = false; doneBtn.disabled = false; send.textContent = "Send reply"; }
+  });
+  doneBtn.addEventListener("click", async () => {
+    const next = !doneAt;
+    doneBtn.disabled = true;
+    try {
+      await WA.setAdminMsgDone(uid, next);
+      doneAt = next ? new Date().toISOString() : null;
+      paintDone();
+      toast(next ? "Marked done." : "Done mark removed.");
+      ADMINMSG.refresh(true).catch(() => {});
+    } catch (err) { toast((err && err.message) || "Couldn't do that."); }
+    finally { doneBtn.disabled = false; }
+  });
+
+  amOnPush(node, load);
+  if (!current(nav)) return;
+  load();
 }
 
 // --------------------------------------------------------------------------
@@ -15208,7 +16581,9 @@ async function renderDhyanDiary() {
 // Init
 // --------------------------------------------------------------------------
 buildNav();
+if (!window.WA_NATIVE_ACTIVE) buildV2Nav();   // LAYOUT_B_PLAN.md §4 — desktop only (R3)
 applyCollapsed();
+applyLayout();   // LAYOUT_B_PLAN.md §2.2 — before the first route renders
 initAvatar();
 // (initAuthState() is NOT called here any more — AUTH_GATE.boot() at the bottom
 // of this file owns it, because the hard gate has to know the answer before the
@@ -15886,6 +17261,402 @@ const SADHANA = (() => {
 // standard views, framed with the mobile top bar. Hindi/English switches with
 // a book-flip; swipe (or the edge arrows) steps older/newer.
 // ==========================================================================
+
+// ---- Upanishad Ganga: the operator's नम्र विनंती + compose-box placeholder --
+// ⚠ MOVED OUT OF MOBILE_UI (LAYOUT_B_PLAN.md §8.2) so the desktop Upanishad
+// Ganga page (renderGangaDesktop) reads the SAME copy — MOBILE_UI is a stub on
+// the desktop, so anything defined inside it does not exist there. Same reason
+// MSG_CORPUS's Anushthan list lives at module scope. The phone's gyanPage()
+// still references these as bare identifiers and resolves them here.
+//
+// ⚠ OPERATOR COPY. Rewritten 2026-08-26 in the operator's own words (not from
+// the "ug ganga.docx" — the 2026-08-22 two-paragraph text is GONE, don't
+// restore it from git). "Wow" opens the first paragraph and is deliberately
+// styled — see the `wow` segment flag and `.m-ganga-wow` / `.gg-wow` in
+// styles.css. `note` is a THIRD, visually separate block: small and grey, one
+// blank line below the paragraphs. Each segment ({t,b,i,u,wow}) is escaped
+// individually at paint time and the flag becomes the wrapper — never fold this
+// into an HTML string.
+// ⚠ THE ENGLISH INSIDE THE DEVANAGARI IS DELIBERATE ("Upanishad Ganga",
+// "imprint", "share", "Wow", "quotes", "notification"); so is the title
+// "विनंती" rather than the usual विनती — that is how the operator addresses the
+// sadhaks everywhere and it has shipped since 9.41. Hindi only, no English
+// variant. The one 2026-08-22 correction to spelling/agreement was for that
+// text on that day and is NOT a licence to edit operator copy.
+const GANGA_INSTRUCTIONS = {
+  title: "नम्र विनंती",
+  lines: [
+    [
+      { t: "Wow", wow: true },
+      { t: " quotes or statements जो गुरु के शिविर में आपकी आत्मा में stamped हुए हैं, उन्हें सभी साधकों के साथ share करें।" },
+    ],
+    [
+      { t: "ये quotes every hour आपको notification के माध्यम से मिलेंगे। गुरु को hourly याद करने का एक छोटा सा प्रयास है।" },
+    ],
+  ],
+  note: "(Note: If you don't want the notification on hourly basis, go to Settings and switch it off.)",
+};
+const GANGA_PLACEHOLDER = "आत्मा में stamped शब्दों को शेयर करें।";
+
+// ==========================================================================
+// THE DUPLICATE CHECK (2026-09-04) — themes, not just identical strings
+//
+// ⚠ IT IS ADVISORY AND MUST STAY THAT WAY. Everything below is a ranking, not
+// a verdict: it will flag lines that merely share a subject and miss real
+// duplicates that share no vocabulary. Every path out of it offers "Approve
+// anyway", and blocking on it would put an admin in an argument with a regex
+// about the guru's words.
+//
+// WHY IT MOVED OFF THE SERVER. ganga_similar_thoughts() (part three, still
+// there, still used as the fallback) matches punctuation-stripped text either
+// exactly or by containment. That answers "is this the same line?" and cannot
+// answer the question the operator actually asked (2026-09-04): a member sends
+// something about डर एक विचार and the admin wants to see what is already in
+// the pool ON THAT THEME, so they can decide between approving it and
+// returning it as a duplicate. Containment finds nothing there.
+//
+// So the pool — which this screen downloads anyway for the All list — is
+// scored on the phone:
+//   · split into words, drop the words that carry no subject (है, का, में, एक…);
+//   · a shared word counts 1, a shared 4-character STEM counts 0.6, which is
+//     what makes विचार / विचारों / विचारों-में one word;
+//   · Dice over those, plus a bonus for shared adjacent PAIRS, because two
+//     lines that both say डर and विचार next to each other are far more alike
+//     than two that happen to use both words apart;
+//   · identical or contained text short-circuits to the top.
+//
+// ⚠ Being in JS is the point, not an accident: the operator will want to tune
+// what counts as "the same theme", and here that is an OTA publish rather than
+// a migration. It also runs offline and instantly, on a pool already in hand.
+//
+// ⚠ The stopword list is deliberately SHORT. Every word removed is a word two
+// unrelated lines can no longer be judged by — but it is also a word that can
+// no longer make them look alike. Grammar goes; anything that could be a
+// subject stays. "एक" is in it (it is a number, not a theme) and that is what
+// makes डर एक विचार reduce to डर + विचार, which is the operator's example.
+const GANGA_STOP = new Set((
+  "है हैं हूँ हूं था थे थी थीं हो होना होता होती होते होगा होगी करना करने करता " +
+  "करती करते किया किये किए की गई गए गया जाता जाती जाते रहा रही रहे रहना लिया " +
+  "दिया का की के को में से पर तक और या भी ही तो कि जो यह वह ये वो इस उस इन उन " +
+  "अपना अपनी अपने मैं मुझे मेरा मेरी मेरे हम हमें हमारा हमारी आप आपका आपकी आपके " +
+  "नहीं ना मत कोई कुछ सब सभी जब तब अगर लेकिन क्योंकि लिए द्वारा साथ बाद पहले " +
+  "एक दो कर बहुत ऐसा ऐसे जैसे वहाँ यहाँ अब फिर " +
+  "the a an is are was were be been am of to in on at for and or but if it its " +
+  "this that these those with as by from we you your our i my me not no yes do " +
+  "does did so then than there here very can will would should"
+).split(/\s+/).filter(Boolean));
+
+// Devanagari block + word characters; everything else (spaces, ASCII
+// punctuation, quotes) is a separator.
+// ⚠ An explicit range rather than a \p{...} property escape: those need the
+// `u` flag and a WebView new enough for Unicode property escapes, and this
+// file runs inside whatever WebView the installed APK happens to carry.
+const GANGA_SPLIT = /[^ऀ-ॿ0-9A-Za-z]+/;
+// ⚠ THE DANDA IS INSIDE THAT RANGE AND MUST BE STRIPPED FIRST. । and ॥ are
+// Devanagari code points (U+0964/U+0965), so the class above treats them as
+// LETTERS — which silently made "है।" a different word from "है", kept it out of
+// GANGA_STOP, and gave every sentence ending in a danda a content word in
+// common with every other. Measured before the fix: an exact-match query
+// dragged five unrelated lines up as "Same theme" purely on "है।". That is
+// precisely the crying-wolf this check must not do.
+// ॰/ॱ are the abbreviation signs, here for the same reason.
+// SQL's ganga_norm() names ।॥ explicitly too, and for the same reason
+// ([[:punct:]] does not cover them) — the two must agree.
+const GANGA_PUNCT = /[।॥॰ॱ]+/g;
+
+function gangaPrep(text) {
+  const words = String(text || "").toLowerCase()
+    .replace(GANGA_PUNCT, " ").split(GANGA_SPLIT).filter(Boolean);
+  const content = words.filter((w) => !GANGA_STOP.has(w));
+  const stem = (w) => (w.length > 4 ? w.slice(0, 4) : w);
+  const bi = [];
+  for (let i = 1; i < content.length; i++) bi.push(stem(content[i - 1]) + " " + stem(content[i]));
+  return {
+    norm: words.join(""),                     // the same idea as SQL's ganga_norm()
+    set: new Set(content),
+    stems: new Set(content.map(stem)),
+    bigrams: new Set(bi),
+    n: content.length,
+  };
+}
+
+// 0..1, with the words that made the case. `shared` drives the highlighting —
+// an admin should be able to see WHY two lines were called alike, or the
+// ranking is just a number to be distrusted.
+function gangaMatch(a, b) {
+  if (!a.norm || !b.norm) return { score: 0, shared: [] };
+  if (a.norm === b.norm) return { score: 1, shared: [...a.set] };
+  const contained = a.norm.length > 6 && b.norm.length > 6 &&
+    (a.norm.indexOf(b.norm) >= 0 || b.norm.indexOf(a.norm) >= 0);
+
+  const shared = [];
+  let weight = 0;
+  a.set.forEach((w) => { if (b.set.has(w)) { shared.push(w); weight += 1; } });
+  // Stems only for words that did NOT already match whole, or a word would be
+  // paid for twice.
+  a.stems.forEach((s) => {
+    if (b.stems.has(s) && !shared.some((w) => (w.length > 4 ? w.slice(0, 4) : w) === s)) {
+      weight += 0.6;
+    }
+  });
+  let score = (a.n + b.n) ? (2 * weight) / (a.n + b.n) : 0;
+
+  let pairs = 0;
+  a.bigrams.forEach((g) => { if (b.bigrams.has(g)) pairs++; });
+  if (pairs) score += Math.min(0.3, 0.15 * pairs);
+
+  if (contained) score = Math.max(score, 0.92);
+  return { score: Math.min(0.99, score), shared: shared };
+}
+
+// The bands the admin actually reads. Below GANGA_DUP_MIN nothing is shown at
+// all — a single shared word between two long lines is noise, and a warning
+// that cries wolf is one an admin learns to tap through.
+const GANGA_DUP_MIN = 0.22;
+const gangaBand = (s) => (s >= 0.85 ? { k: "same", label: "Same line" }
+                        : s >= 0.5  ? { k: "close", label: "Very close" }
+                        :             { k: "theme", label: "Same theme" });
+
+// The pool, held for the life of the screen. Five minutes is long enough that
+// working through a queue does not re-download it per quote, and short enough
+// that a line approved two quotes ago is found by the next check.
+let _gangaPool = null, _gangaPoolAt = 0;
+async function gangaPool(force) {
+  if (!force && _gangaPool && Date.now() - _gangaPoolAt < 300000) return _gangaPool;
+  const rows = await WA.listGangaThoughts(3000);
+  rows.forEach((r) => { r._p = gangaPrep(r.text_hi); });
+  _gangaPool = rows;
+  _gangaPoolAt = Date.now();
+  return _gangaPool;
+}
+
+// Returns [{ row, score, shared, band }], best first. Falls back to part
+// three's server check when the pool cannot be read — a server that has not
+// run add_ganga_member_view.sql still gets the old exact/containment warning
+// rather than nothing at all.
+async function gangaDuplicates(text) {
+  const p = gangaPrep(text);
+  if (!p.n) return [];
+  let pool;
+  try { pool = await gangaPool(false); }
+  catch (_) {
+    let hits = [];
+    try { hits = await WA.gangaSimilarThoughts(text); } catch (__) { return []; }
+    return hits.map((h) => ({ row: h, score: 0.9, shared: [], band: gangaBand(0.9) }));
+  }
+  const out = [];
+  pool.forEach((r) => {
+    const m = gangaMatch(p, r._p);
+    if (m.score >= GANGA_DUP_MIN) {
+      out.push({ row: r, score: m.score, shared: m.shared, band: gangaBand(m.score) });
+    }
+  });
+  out.sort((x, y) => y.score - x.score);
+  return out.slice(0, 8);
+}
+
+// ---- 3. ONE pending quote, the whole page to it -------------------------
+// The operator's shape (2026-09-04): the list is for choosing, this is for
+// deciding — so the reason box can be as big as the decision deserves rather
+// than the one-line input that was squeezed into a queue row before.
+//
+// ⚠ The quote is in a TEXTAREA, not static text: the admin may fix a typo
+// before approving, and the alternative is returning a hundred-character line
+// and asking somebody to retype the whole thing. What is approved is whatever
+// is in this box; what the member wrote is kept untouched on the row
+// (approve_ganga_suggestion keeps both, and the member's own page shows both).
+const GANGA_REASONS = [
+  "यह विचार पहले से है (duplicate)",
+  "कृपया थोड़ा और स्पष्ट लिखें",
+  "कृपया छोटा करें",
+  "गुरुवाणी के अनुरूप नहीं है",
+];
+
+// ==========================================================================
+// MSG TO ADMIN — shared bits (moved out of MOBILE_UI, LAYOUT_B_PLAN.md §8.4)
+// A private admin ↔ member conversation on the admin_messages table.
+// ADMIN_MSG_PLAN.md; rules in supabase/add_admin_msg_threads.sql.
+//  · amWhoOf: a MEMBER always sees "Samarpan Upanishad Team"; an ADMIN sees the
+//    real replier. The server also returns author_name empty to non-admins —
+//    this is the outer of the two walls, not the only one.
+//  · amWireAttach: the storage path <threadUserId>/<rand>.<ext> IS the access
+//    rule (add_admin_msg_media.sql §4) — a flat key is refused. Upload first,
+//    insert the row second.
+//  · the composer is never inside a repainted region (amPaintThread only ever
+//    writes the thread box), so a half-typed line survives a refresh.
+// ==========================================================================
+const ADMIN_MSG_TEAM = "Samarpan Upanishad Team";
+
+// The note under Send. ⚠ The operator's words, verbatim (2026-08-22) — this is
+// the whole reason the note exists, so don't tighten the grammar.
+const ADMIN_MSG_NOTE =
+  "Any bugs and any enhancement required in the app, please feel free to send " +
+  "msg to admin. Your valuable suggestion will be considered on priority basis.";
+
+// ---- attachments (phase two) -------------------------------------------
+// The two hidden inputs, shared by both composers. ⚠ The camera one is a
+// SECOND input with capture="environment" and NOT a plugin — the WebView
+// delegates to the system camera by intent, which needs no permission unless
+// the app declares one, and declaring CAMERA without a runtime request would
+// break capture instead of enabling it. Don't "fix" that by adding it.
+const AM_ATTACH_INPUTS =
+  `<input type="file" class="am-file" accept="${MEDIA_ACCEPT}" multiple hidden>` +
+  `<input type="file" class="am-cam" accept="image/*" capture="environment" hidden>`;
+
+// The clip / camera buttons for an .am-acts row.
+// ⚠ icon(), NOT emoji. See the note on PATHS.clip — the emoji version shipped
+// in 9.70 and Android drew them as full-colour stickers that fought with
+// everything around them. `icon()` is evaluated when this IIFE runs, which is
+// long after PATHS is declared at module top, so there is no TDZ trap here.
+const AM_ATTACH_BTNS =
+  `<button class="btn am-iconbtn am-clip" type="button" title="Attach a photo or PDF" aria-label="Attach a photo or PDF">${icon("clip")}</button>` +
+  `<button class="btn am-iconbtn am-cam-btn" type="button" title="Take a photo" aria-label="Take a photo">${icon("camera")}</button>`;
+
+// One place that knows how to pick, cap, shrink and upload — both composers
+// use it, so the gates cannot drift apart between them.
+//
+// `getThreadUid` is called at UPLOAD time, not now: for a member it is their
+// own id, for an admin the member's, and it becomes the first folder of the
+// storage path — which IS the access rule (add_admin_msg_media.sql §4).
+function amWireAttach(node, getThreadUid) {
+  const picksEl = node.querySelector(".am-picks");
+  const fileEl = node.querySelector(".am-file");
+  const camEl = node.querySelector(".am-cam");
+  const picked = [];
+  const paint = () => {
+    picksEl.innerHTML = picked.map((pk, i) =>
+      `<div class="am-pick"><span class="am-pick-n">${escapeHtml(
+          pk.name || (pk.blob.type === "application/pdf" ? "File" : "Photo"))}</span>` +
+      `<button type="button" class="am-pick-x" data-drop="${i}" aria-label="Remove">✕</button></div>`).join("");
+  };
+  picksEl.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-drop]"); if (!b) return;
+    picked.splice(parseInt(b.dataset.drop, 10), 1);
+    paint();
+  });
+  const take = async (inputEl) => {
+    const files = [...(inputEl.files || [])];
+    inputEl.value = "";                    // so re-picking the same file fires
+    for (const f of files) {
+      if (picked.length >= MEDIA_MAX) { toast("Up to " + MEDIA_MAX + " attachments."); break; }
+      // ⚠ MIME *and* extension, so a renamed .mp4 fails here as well as at
+      // the bucket. Audio and video are never allowed — three separate gates.
+      if (!isMediaOk(f)) { toast("Only images and PDF files can be attached."); continue; }
+      if (f.size > MEDIA_MAX_BYTES) { toast((f.name || "That file") + " is too large (max 10 MB)."); continue; }
+      const { blob, w, h } = await downscaleImage(f);
+      picked.push({ blob, w, h, name: f.name || "" });
+    }
+    paint();
+  };
+  fileEl.addEventListener("change", () => take(fileEl));
+  camEl.addEventListener("change", () => take(camEl));
+  node.querySelectorAll(".am-clip").forEach((b) => b.addEventListener("click", () => fileEl.click()));
+  node.querySelectorAll(".am-cam-btn").forEach((b) => b.addEventListener("click", () => camEl.click()));
+  return {
+    any: () => picked.length > 0,
+    // ⚠ Upload FIRST, insert the message second (the caller does that): a
+    // row pointing at a missing object is unrecoverable, an orphan object is
+    // just garbage. Nothing uploads until Send, so an abandoned message leaves
+    // nothing in the bucket at all.
+    async upload() {
+      const uid = getThreadUid();
+      const out = [];
+      for (const pk of picked) {
+        out.push(await WA.uploadAdminMsgMedia(uid, pk.blob, pk.name, { w: pk.w, h: pk.h }));
+      }
+      return out;
+    },
+    clear() { picked.length = 0; paint(); },
+  };
+}
+
+// Who a bubble is signed by. ⚠ A member NEVER sees a moderator's name: the
+// server does not send it (admin_msg_thread returns author_name empty to
+// anyone but an admin), and this is the second wall, not the first.
+function amWhoOf(m, forAdmin) {
+  if (!m.fromAdmin) return "";                       // the header names them
+  // ⚠ TWO AUDIENCES, TWO ANSWERS, AND THIS HAS ALREADY BEEN FLIPPED ONCE AND
+  // FLIPPED BACK (operator, 2026-08-22). Read this before "simplifying" it:
+  //
+  //   a MEMBER   → always "Samarpan Upanishad Team". One identity, so no
+  //                moderator becomes personally accountable for an answer and
+  //                nobody starts addressing them directly.
+  //   an ADMIN   → the real name of whoever replied, because with several
+  //                moderators "who answered this" is the thing that stops the
+  //                same person being answered twice.
+  //
+  // 9.57 made it the team name for EVERYONE, on a misreading of "whatever
+  // admin reply Samarpan Upanishad Team should display" as covering the admin's
+  // own screen too. It was reverted in 9.58. The member half is the promise;
+  // the admin half is a working tool. Don't collapse them again.
+  //
+  // ⚠ The member half is NOT enforced here. admin_msg_thread() returns
+  // author_name as '' to anyone who fails wa_is_mod(), so a member's device is
+  // never sent a name at all — this line only decides what to draw with what
+  // the server was willing to send. That is the order of the two walls, and
+  // this one is the outer one.
+  return forAdmin ? (m.author || "Admin") : ADMIN_MSG_TEAM;
+}
+// `forAdmin` decides which side is "mine": the admin's replies on an admin's
+// screen, the member's messages on the member's.
+function amBubbleHtml(m, forAdmin) {
+  const mine = forAdmin ? m.fromAdmin : !m.fromAdmin;
+  const who = amWhoOf(m, forAdmin);
+  const atts = (m.atts && m.atts.length) ? m.atts : null;
+  // ⚠ A media-only message's `text` IS the placeholder (the column is NOT
+  // NULL, so there is always something there), and printing it above the photo
+  // it describes is noise. Same rule as the Satsang bubble.
+  const caption = (atts && m.text === mediaPlaceholder(atts)) ? "" : m.text;
+  return `<div class="am-msg ${mine ? "me" : "them"}" data-mid="${escapeHtml(String(m.id))}">
+    <div class="am-bubble">
+      ${who ? `<div class="am-who">${escapeHtml(who)}</div>` : ""}
+      ${caption ? `<div class="am-text">${escapeHtml(caption)}</div>` : ""}
+      ${atts ? bcAttachmentsHtml(atts) : ""}
+      <div class="am-ts">${escapeHtml(timeAgo(m.ts))}</div>
+    </div></div>`;
+}
+// Newest first, matching the RPC and the box above it.
+//
+// Attachments reuse Important Updates' renderers (bcAttachmentsHtml /
+// bcPaintAttachments / bcOpenAttachment) with amMediaUrls passed in as the
+// signer — same markup, same one-round-trip batching, same offline caching
+// and zoom, different bucket. A third copy would be two more places to fix a
+// rendering bug in.
+//
+// ⚠ One thread is on screen at a time, so this map is module-level rather
+// than per-box, and it is rebuilt on every paint so a stale row cannot be
+// opened by a tap that arrives after a refresh.
+const _amAtts = new Map();            // mid -> attachment records
+function amPaintThread(box, rows, forAdmin, emptyMsg) {
+  _amAtts.clear();
+  box.innerHTML = rows.length
+    ? rows.map((m) => amBubbleHtml(m, forAdmin)).join("")
+    : `<div class="m-hint">${escapeHtml(emptyMsg)}</div>`;
+  rows.forEach((m) => {
+    if (!m.atts || !m.atts.length) return;
+    _amAtts.set(String(m.id), m.atts);
+    const root = box.querySelector(`.am-msg[data-mid="${CSS.escape(String(m.id))}"]`);
+    if (root) bcPaintAttachments(root, m.atts, amMediaUrls);
+  });
+  // Bound once per box, delegated — a repaint must not stack a second handler.
+  if (!box.dataset.amWired) {
+    box.dataset.amWired = "1";
+    box.addEventListener("click", (ev) => {
+      const b = ev.target.closest(".bc-att-img, .bc-att-doc"); if (!b) return;
+      const msg = b.closest(".am-msg"); if (!msg) return;
+      const atts = _amAtts.get(msg.dataset.mid); if (!atts) return;
+      bcOpenAttachment(atts, parseInt(b.dataset.att, 10) || 0, amMediaUrls);
+    });
+  }
+}
+// Repaint an open screen when a push lands. Self-removing: a page that has
+// been navigated away from must not keep answering (and must not keep a
+// reference to its own DOM alive).
+function amOnPush(node, fn) {
+  const h = () => { if (!node.isConnected) { window.removeEventListener("wa:adminmsg", h); return; } fn(); };
+  window.addEventListener("wa:adminmsg", h);
+}
+
 const MOBILE_UI = (() => {
   const active = !!window.WA_NATIVE_ACTIVE;
   if (!active) return { active, handles: () => false, route: () => {}, fallthrough: () => {} };
@@ -20971,60 +22742,12 @@ const MOBILE_UI = (() => {
   // re-checks it); this is only what the counter counts against.
   const GANGA_LIMIT_KEY = "wa:ganga:limit";
 
-  // The operator's own words to the sadhaks. REWRITTEN 2026-08-22 from a Word
-  // document they supplied ("ug ganga.docx"); the single line that stood here
-  // from 2026-08-20 until then is GONE and should not come back from git.
-  //
-  // ⚠ THE FORMATTING IS PART OF THE TEXT, and that is why `lines` is no longer a
-  // list of strings. The document underlines "Upanishad Ganga" in bold and
-  // "“imprint”" in italic, so each line is a list of SEGMENTS carrying b/i/u
-  // flags. Each segment is escaped separately at render time — see the paint
-  // below — so no HTML ever passes through a string here. A plain string is
-  // still accepted and means one unformatted segment.
-  //
-  // ⚠ THE ENGLISH INSIDE THE DEVANAGARI IS DELIBERATE — "Upanishad Ganga",
-  // "imprint", "share". Don't translate it. Ditto the title "विनंती" rather than
-  // the more usual Hindi विनती: that is how the operator addresses the sadhaks
-  // everywhere in the app, it has been shipped since 9.41, and it is not a typo.
-  //
-  // ⚠ But the BODY is no longer verbatim, and this is the one place in the app
-  // where that is true. The operator typed the document at speed and asked, on
-  // 2026-08-22, that the Hindi be corrected rather than transcribed — so
-  // "चैतन्य पूर्ण"→"चैतन्यपूर्ण", "मोक्ष दायिनी है"→"मोक्षदायी हैं" (the subject is
-  // शब्द, masculine plural, not गंगा), "ऊन"→"उन", "आत्माओ"→"आत्माओं", the doubled
-  // spaces closed and the commas moved onto the relative clauses. Their wording,
-  // their order, their English — only the spelling and agreement changed. That
-  // permission was for this text on that day; it is NOT a standing licence to
-  // edit operator copy elsewhere.
-  //
-  // ⚠ Hindi only, like everything else on this screen — there is no English
-  // variant to keep in step (the language toggle is gone).
-  //
-  // To change it: edit here and publish. One entry per paragraph, not per visual
-  // line — the wrapping is the phone's business.
-  // ⚠ REWRITTEN AGAIN 2026-08-26, operator's own words this time (not from the
-  // docx) — the 2026-08-22 two-paragraph text above is GONE, don't restore it.
-  // "Wow" opens the first paragraph and is deliberately styled — see the `wow`
-  // segment flag and `.m-ganga-wow` in styles.css. `note` is a THIRD, visually
-  // separate block: small and grey, one blank line below the paragraphs — see
-  // `.m-ganga-note`. It is escaped and painted the same way a plain-string line
-  // is, just never bold/italic/underlined.
-  const GANGA_INSTRUCTIONS = {
-    title: "नम्र विनंती",
-    lines: [
-      [
-        { t: "Wow", wow: true },
-        { t: " quotes or statements जो गुरु के शिविर में आपकी आत्मा में stamped हुए हैं, उन्हें सभी साधकों के साथ share करें।" },
-      ],
-      [
-        { t: "ये quotes every hour आपको notification के माध्यम से मिलेंगे। गुरु को hourly याद करने का एक छोटा सा प्रयास है।" },
-      ],
-    ],
-    note: "(Note: If you don't want the notification on hourly basis, go to Settings and switch it off.)",
-  };
-  // The compose box's placeholder — rewritten with GANGA_INSTRUCTIONS above,
-  // 2026-08-26.
-  const GANGA_PLACEHOLDER = "आत्मा में stamped शब्दों को शेयर करें।";
+  // ⚠ GANGA_INSTRUCTIONS + GANGA_PLACEHOLDER now live at MODULE SCOPE (search
+  // "MOVED OUT OF MOBILE_UI"), just above this IIFE, so the desktop Upanishad
+  // Ganga page can read the same operator copy. The long history — the docx
+  // rewrite, the one place BODY is not verbatim, "विनंती" not "विनती", Hindi
+  // only — moved with them. `gyanPage` below still references them as bare
+  // identifiers.
 
   function gyanCached() {
     try { return JSON.parse(localStorage.getItem(GYAN_CACHE) || "[]"); } catch (_) { return []; }
@@ -21719,6 +23442,7 @@ const MOBILE_UI = (() => {
     segEl.addEventListener("click", (e) => {
       const b = e.target.closest("button[data-want]");
       if (!b || b.dataset.want === want) return;
+      hapticTick();   // a tab tap buzzes everywhere else in the app (see #am-seg)
       want = b.dataset.want;
       segEl.querySelectorAll("button").forEach((x) =>
         x.classList.toggle("active", x.dataset.want === want));
@@ -21830,162 +23554,14 @@ const MOBILE_UI = (() => {
   // ⚠ Hiding these routes from members is COURTESY, not security. Every RPC they
   // call re-checks wa_is_mod() in Postgres, and the anon key ships in
   // wa-supabase.js — so the queue is shut by the database, not by the drawer.
-  // ==========================================================================
-  // THE DUPLICATE CHECK (2026-09-04) — themes, not just identical strings
-  //
-  // ⚠ IT IS ADVISORY AND MUST STAY THAT WAY. Everything below is a ranking, not
-  // a verdict: it will flag lines that merely share a subject and miss real
-  // duplicates that share no vocabulary. Every path out of it offers "Approve
-  // anyway", and blocking on it would put an admin in an argument with a regex
-  // about the guru's words.
-  //
-  // WHY IT MOVED OFF THE SERVER. ganga_similar_thoughts() (part three, still
-  // there, still used as the fallback) matches punctuation-stripped text either
-  // exactly or by containment. That answers "is this the same line?" and cannot
-  // answer the question the operator actually asked (2026-09-04): a member sends
-  // something about डर एक विचार and the admin wants to see what is already in
-  // the pool ON THAT THEME, so they can decide between approving it and
-  // returning it as a duplicate. Containment finds nothing there.
-  //
-  // So the pool — which this screen downloads anyway for the All list — is
-  // scored on the phone:
-  //   · split into words, drop the words that carry no subject (है, का, में, एक…);
-  //   · a shared word counts 1, a shared 4-character STEM counts 0.6, which is
-  //     what makes विचार / विचारों / विचारों-में one word;
-  //   · Dice over those, plus a bonus for shared adjacent PAIRS, because two
-  //     lines that both say डर and विचार next to each other are far more alike
-  //     than two that happen to use both words apart;
-  //   · identical or contained text short-circuits to the top.
-  //
-  // ⚠ Being in JS is the point, not an accident: the operator will want to tune
-  // what counts as "the same theme", and here that is an OTA publish rather than
-  // a migration. It also runs offline and instantly, on a pool already in hand.
-  //
-  // ⚠ The stopword list is deliberately SHORT. Every word removed is a word two
-  // unrelated lines can no longer be judged by — but it is also a word that can
-  // no longer make them look alike. Grammar goes; anything that could be a
-  // subject stays. "एक" is in it (it is a number, not a theme) and that is what
-  // makes डर एक विचार reduce to डर + विचार, which is the operator's example.
-  const GANGA_STOP = new Set((
-    "है हैं हूँ हूं था थे थी थीं हो होना होता होती होते होगा होगी करना करने करता " +
-    "करती करते किया किये किए की गई गए गया जाता जाती जाते रहा रही रहे रहना लिया " +
-    "दिया का की के को में से पर तक और या भी ही तो कि जो यह वह ये वो इस उस इन उन " +
-    "अपना अपनी अपने मैं मुझे मेरा मेरी मेरे हम हमें हमारा हमारी आप आपका आपकी आपके " +
-    "नहीं ना मत कोई कुछ सब सभी जब तब अगर लेकिन क्योंकि लिए द्वारा साथ बाद पहले " +
-    "एक दो कर बहुत ऐसा ऐसे जैसे वहाँ यहाँ अब फिर " +
-    "the a an is are was were be been am of to in on at for and or but if it its " +
-    "this that these those with as by from we you your our i my me not no yes do " +
-    "does did so then than there here very can will would should"
-  ).split(/\s+/).filter(Boolean));
-
-  // Devanagari block + word characters; everything else (spaces, ASCII
-  // punctuation, quotes) is a separator.
-  // ⚠ An explicit range rather than a \p{...} property escape: those need the
-  // `u` flag and a WebView new enough for Unicode property escapes, and this
-  // file runs inside whatever WebView the installed APK happens to carry.
-  const GANGA_SPLIT = /[^ऀ-ॿ0-9A-Za-z]+/;
-  // ⚠ THE DANDA IS INSIDE THAT RANGE AND MUST BE STRIPPED FIRST. । and ॥ are
-  // Devanagari code points (U+0964/U+0965), so the class above treats them as
-  // LETTERS — which silently made "है।" a different word from "है", kept it out of
-  // GANGA_STOP, and gave every sentence ending in a danda a content word in
-  // common with every other. Measured before the fix: an exact-match query
-  // dragged five unrelated lines up as "Same theme" purely on "है।". That is
-  // precisely the crying-wolf this check must not do.
-  // ॰/ॱ are the abbreviation signs, here for the same reason.
-  // SQL's ganga_norm() names ।॥ explicitly too, and for the same reason
-  // ([[:punct:]] does not cover them) — the two must agree.
-  const GANGA_PUNCT = /[।॥॰ॱ]+/g;
-
-  function gangaPrep(text) {
-    const words = String(text || "").toLowerCase()
-      .replace(GANGA_PUNCT, " ").split(GANGA_SPLIT).filter(Boolean);
-    const content = words.filter((w) => !GANGA_STOP.has(w));
-    const stem = (w) => (w.length > 4 ? w.slice(0, 4) : w);
-    const bi = [];
-    for (let i = 1; i < content.length; i++) bi.push(stem(content[i - 1]) + " " + stem(content[i]));
-    return {
-      norm: words.join(""),                     // the same idea as SQL's ganga_norm()
-      set: new Set(content),
-      stems: new Set(content.map(stem)),
-      bigrams: new Set(bi),
-      n: content.length,
-    };
-  }
-
-  // 0..1, with the words that made the case. `shared` drives the highlighting —
-  // an admin should be able to see WHY two lines were called alike, or the
-  // ranking is just a number to be distrusted.
-  function gangaMatch(a, b) {
-    if (!a.norm || !b.norm) return { score: 0, shared: [] };
-    if (a.norm === b.norm) return { score: 1, shared: [...a.set] };
-    const contained = a.norm.length > 6 && b.norm.length > 6 &&
-      (a.norm.indexOf(b.norm) >= 0 || b.norm.indexOf(a.norm) >= 0);
-
-    const shared = [];
-    let weight = 0;
-    a.set.forEach((w) => { if (b.set.has(w)) { shared.push(w); weight += 1; } });
-    // Stems only for words that did NOT already match whole, or a word would be
-    // paid for twice.
-    a.stems.forEach((s) => {
-      if (b.stems.has(s) && !shared.some((w) => (w.length > 4 ? w.slice(0, 4) : w) === s)) {
-        weight += 0.6;
-      }
-    });
-    let score = (a.n + b.n) ? (2 * weight) / (a.n + b.n) : 0;
-
-    let pairs = 0;
-    a.bigrams.forEach((g) => { if (b.bigrams.has(g)) pairs++; });
-    if (pairs) score += Math.min(0.3, 0.15 * pairs);
-
-    if (contained) score = Math.max(score, 0.92);
-    return { score: Math.min(0.99, score), shared: shared };
-  }
-
-  // The bands the admin actually reads. Below GANGA_DUP_MIN nothing is shown at
-  // all — a single shared word between two long lines is noise, and a warning
-  // that cries wolf is one an admin learns to tap through.
-  const GANGA_DUP_MIN = 0.22;
-  const gangaBand = (s) => (s >= 0.85 ? { k: "same", label: "Same line" }
-                          : s >= 0.5  ? { k: "close", label: "Very close" }
-                          :             { k: "theme", label: "Same theme" });
-
-  // The pool, held for the life of the screen. Five minutes is long enough that
-  // working through a queue does not re-download it per quote, and short enough
-  // that a line approved two quotes ago is found by the next check.
-  let _gangaPool = null, _gangaPoolAt = 0;
-  async function gangaPool(force) {
-    if (!force && _gangaPool && Date.now() - _gangaPoolAt < 300000) return _gangaPool;
-    const rows = await WA.listGangaThoughts(3000);
-    rows.forEach((r) => { r._p = gangaPrep(r.text_hi); });
-    _gangaPool = rows;
-    _gangaPoolAt = Date.now();
-    return _gangaPool;
-  }
-
-  // Returns [{ row, score, shared, band }], best first. Falls back to part
-  // three's server check when the pool cannot be read — a server that has not
-  // run add_ganga_member_view.sql still gets the old exact/containment warning
-  // rather than nothing at all.
-  async function gangaDuplicates(text) {
-    const p = gangaPrep(text);
-    if (!p.n) return [];
-    let pool;
-    try { pool = await gangaPool(false); }
-    catch (_) {
-      let hits = [];
-      try { hits = await WA.gangaSimilarThoughts(text); } catch (__) { return []; }
-      return hits.map((h) => ({ row: h, score: 0.9, shared: [], band: gangaBand(0.9) }));
-    }
-    const out = [];
-    pool.forEach((r) => {
-      const m = gangaMatch(p, r._p);
-      if (m.score >= GANGA_DUP_MIN) {
-        out.push({ row: r, score: m.score, shared: m.shared, band: gangaBand(m.score) });
-      }
-    });
-    out.sort((x, y) => y.score - x.score);
-    return out.slice(0, 8);
-  }
+  // ⚠ THE DUPLICATE-CHECK ENGINE (GANGA_STOP / gangaPrep / gangaMatch /
+  //   gangaPool / gangaDuplicates / GANGA_DUP_MIN / gangaBand) MOVED to module
+  //   scope (search "THE DUPLICATE CHECK") so the desktop Ganga Review
+  //   (renderGangaReview) scores the pool the same way. Must still agree with
+  //   SQL's ganga_norm(). gangaDupeHtml() + gangaHighlight() stay here (mobile
+  //   markup); the desktop writes its own. gangaReviewRoute/gangaHubPage/
+  //   gangaListPage/gangaOnePage below reference the moved names as bare
+  //   identifiers and resolve them at module scope.
 
   // The hit's own words, with the words it shares with the quote under review
   // in bold. ⚠ Escaped FIRST, then wrapped — the bold is a wrapper this function
@@ -22429,22 +24005,7 @@ const MOBILE_UI = (() => {
     render();
   }
 
-  // ---- 3. ONE pending quote, the whole page to it -------------------------
-  // The operator's shape (2026-09-04): the list is for choosing, this is for
-  // deciding — so the reason box can be as big as the decision deserves rather
-  // than the one-line input that was squeezed into a queue row before.
-  //
-  // ⚠ The quote is in a TEXTAREA, not static text: the admin may fix a typo
-  // before approving, and the alternative is returning a hundred-character line
-  // and asking somebody to retype the whole thing. What is approved is whatever
-  // is in this box; what the member wrote is kept untouched on the row
-  // (approve_ganga_suggestion keeps both, and the member's own page shows both).
-  const GANGA_REASONS = [
-    "यह विचार पहले से है (duplicate)",
-    "कृपया थोड़ा और स्पष्ट लिखें",
-    "कृपया छोटा करें",
-    "गुरुवाणी के अनुरूप नहीं है",
-  ];
+  // GANGA_REASONS: see module scope (moved with the duplicate-check engine).
 
   async function gangaOnePage(sid) {
     const node = el(`<div class="m-gr m-go"></div>`);
@@ -22667,177 +24228,14 @@ const MOBILE_UI = (() => {
   // listens for. `admin_messages` IS published now, so if this ever needs to be
   // live while the app is backgrounded, subscribing is the change — not polling.
   // ==========================================================================
-  const ADMIN_MSG_TEAM = "Samarpan Upanishad Team";
-
-  // The note under Send. ⚠ The operator's words, verbatim (2026-08-22) — this is
-  // the whole reason the note exists, so don't tighten the grammar.
-  const ADMIN_MSG_NOTE =
-    "Any bugs and any enhancement required in the app, please feel free to send " +
-    "msg to admin. Your valuable suggestion will be considered on priority basis.";
-
-  // ---- attachments (phase two) -------------------------------------------
-  // The two hidden inputs, shared by both composers. ⚠ The camera one is a
-  // SECOND input with capture="environment" and NOT a plugin — the WebView
-  // delegates to the system camera by intent, which needs no permission unless
-  // the app declares one, and declaring CAMERA without a runtime request would
-  // break capture instead of enabling it. Don't "fix" that by adding it.
-  const AM_ATTACH_INPUTS =
-    `<input type="file" class="am-file" accept="${MEDIA_ACCEPT}" multiple hidden>` +
-    `<input type="file" class="am-cam" accept="image/*" capture="environment" hidden>`;
-
-  // The clip / camera buttons for an .am-acts row.
-  // ⚠ icon(), NOT emoji. See the note on PATHS.clip — the emoji version shipped
-  // in 9.70 and Android drew them as full-colour stickers that fought with
-  // everything around them. `icon()` is evaluated when this IIFE runs, which is
-  // long after PATHS is declared at module top, so there is no TDZ trap here.
-  const AM_ATTACH_BTNS =
-    `<button class="btn am-iconbtn am-clip" type="button" title="Attach a photo or PDF" aria-label="Attach a photo or PDF">${icon("clip")}</button>` +
-    `<button class="btn am-iconbtn am-cam-btn" type="button" title="Take a photo" aria-label="Take a photo">${icon("camera")}</button>`;
-
-  // One place that knows how to pick, cap, shrink and upload — both composers
-  // use it, so the gates cannot drift apart between them.
-  //
-  // `getThreadUid` is called at UPLOAD time, not now: for a member it is their
-  // own id, for an admin the member's, and it becomes the first folder of the
-  // storage path — which IS the access rule (add_admin_msg_media.sql §4).
-  function amWireAttach(node, getThreadUid) {
-    const picksEl = node.querySelector(".am-picks");
-    const fileEl = node.querySelector(".am-file");
-    const camEl = node.querySelector(".am-cam");
-    const picked = [];
-    const paint = () => {
-      picksEl.innerHTML = picked.map((pk, i) =>
-        `<div class="am-pick"><span class="am-pick-n">${escapeHtml(
-            pk.name || (pk.blob.type === "application/pdf" ? "File" : "Photo"))}</span>` +
-        `<button type="button" class="am-pick-x" data-drop="${i}" aria-label="Remove">✕</button></div>`).join("");
-    };
-    picksEl.addEventListener("click", (ev) => {
-      const b = ev.target.closest("[data-drop]"); if (!b) return;
-      picked.splice(parseInt(b.dataset.drop, 10), 1);
-      paint();
-    });
-    const take = async (inputEl) => {
-      const files = [...(inputEl.files || [])];
-      inputEl.value = "";                    // so re-picking the same file fires
-      for (const f of files) {
-        if (picked.length >= MEDIA_MAX) { toast("Up to " + MEDIA_MAX + " attachments."); break; }
-        // ⚠ MIME *and* extension, so a renamed .mp4 fails here as well as at
-        // the bucket. Audio and video are never allowed — three separate gates.
-        if (!isMediaOk(f)) { toast("Only images and PDF files can be attached."); continue; }
-        if (f.size > MEDIA_MAX_BYTES) { toast((f.name || "That file") + " is too large (max 10 MB)."); continue; }
-        const { blob, w, h } = await downscaleImage(f);
-        picked.push({ blob, w, h, name: f.name || "" });
-      }
-      paint();
-    };
-    fileEl.addEventListener("change", () => take(fileEl));
-    camEl.addEventListener("change", () => take(camEl));
-    node.querySelectorAll(".am-clip").forEach((b) => b.addEventListener("click", () => fileEl.click()));
-    node.querySelectorAll(".am-cam-btn").forEach((b) => b.addEventListener("click", () => camEl.click()));
-    return {
-      any: () => picked.length > 0,
-      // ⚠ Upload FIRST, insert the message second (the caller does that): a
-      // row pointing at a missing object is unrecoverable, an orphan object is
-      // just garbage. Nothing uploads until Send, so an abandoned message leaves
-      // nothing in the bucket at all.
-      async upload() {
-        const uid = getThreadUid();
-        const out = [];
-        for (const pk of picked) {
-          out.push(await WA.uploadAdminMsgMedia(uid, pk.blob, pk.name, { w: pk.w, h: pk.h }));
-        }
-        return out;
-      },
-      clear() { picked.length = 0; paint(); },
-    };
-  }
-
-  // Who a bubble is signed by. ⚠ A member NEVER sees a moderator's name: the
-  // server does not send it (admin_msg_thread returns author_name empty to
-  // anyone but an admin), and this is the second wall, not the first.
-  function amWhoOf(m, forAdmin) {
-    if (!m.fromAdmin) return "";                       // the header names them
-    // ⚠ TWO AUDIENCES, TWO ANSWERS, AND THIS HAS ALREADY BEEN FLIPPED ONCE AND
-    // FLIPPED BACK (operator, 2026-08-22). Read this before "simplifying" it:
-    //
-    //   a MEMBER   → always "Samarpan Upanishad Team". One identity, so no
-    //                moderator becomes personally accountable for an answer and
-    //                nobody starts addressing them directly.
-    //   an ADMIN   → the real name of whoever replied, because with several
-    //                moderators "who answered this" is the thing that stops the
-    //                same person being answered twice.
-    //
-    // 9.57 made it the team name for EVERYONE, on a misreading of "whatever
-    // admin reply Samarpan Upanishad Team should display" as covering the admin's
-    // own screen too. It was reverted in 9.58. The member half is the promise;
-    // the admin half is a working tool. Don't collapse them again.
-    //
-    // ⚠ The member half is NOT enforced here. admin_msg_thread() returns
-    // author_name as '' to anyone who fails wa_is_mod(), so a member's device is
-    // never sent a name at all — this line only decides what to draw with what
-    // the server was willing to send. That is the order of the two walls, and
-    // this one is the outer one.
-    return forAdmin ? (m.author || "Admin") : ADMIN_MSG_TEAM;
-  }
-  // `forAdmin` decides which side is "mine": the admin's replies on an admin's
-  // screen, the member's messages on the member's.
-  function amBubbleHtml(m, forAdmin) {
-    const mine = forAdmin ? m.fromAdmin : !m.fromAdmin;
-    const who = amWhoOf(m, forAdmin);
-    const atts = (m.atts && m.atts.length) ? m.atts : null;
-    // ⚠ A media-only message's `text` IS the placeholder (the column is NOT
-    // NULL, so there is always something there), and printing it above the photo
-    // it describes is noise. Same rule as the Satsang bubble.
-    const caption = (atts && m.text === mediaPlaceholder(atts)) ? "" : m.text;
-    return `<div class="am-msg ${mine ? "me" : "them"}" data-mid="${escapeHtml(String(m.id))}">
-      <div class="am-bubble">
-        ${who ? `<div class="am-who">${escapeHtml(who)}</div>` : ""}
-        ${caption ? `<div class="am-text">${escapeHtml(caption)}</div>` : ""}
-        ${atts ? bcAttachmentsHtml(atts) : ""}
-        <div class="am-ts">${escapeHtml(timeAgo(m.ts))}</div>
-      </div></div>`;
-  }
-  // Newest first, matching the RPC and the box above it.
-  //
-  // Attachments reuse Important Updates' renderers (bcAttachmentsHtml /
-  // bcPaintAttachments / bcOpenAttachment) with amMediaUrls passed in as the
-  // signer — same markup, same one-round-trip batching, same offline caching
-  // and zoom, different bucket. A third copy would be two more places to fix a
-  // rendering bug in.
-  //
-  // ⚠ One thread is on screen at a time, so this map is module-level rather
-  // than per-box, and it is rebuilt on every paint so a stale row cannot be
-  // opened by a tap that arrives after a refresh.
-  const _amAtts = new Map();            // mid -> attachment records
-  function amPaintThread(box, rows, forAdmin, emptyMsg) {
-    _amAtts.clear();
-    box.innerHTML = rows.length
-      ? rows.map((m) => amBubbleHtml(m, forAdmin)).join("")
-      : `<div class="m-hint">${escapeHtml(emptyMsg)}</div>`;
-    rows.forEach((m) => {
-      if (!m.atts || !m.atts.length) return;
-      _amAtts.set(String(m.id), m.atts);
-      const root = box.querySelector(`.am-msg[data-mid="${CSS.escape(String(m.id))}"]`);
-      if (root) bcPaintAttachments(root, m.atts, amMediaUrls);
-    });
-    // Bound once per box, delegated — a repaint must not stack a second handler.
-    if (!box.dataset.amWired) {
-      box.dataset.amWired = "1";
-      box.addEventListener("click", (ev) => {
-        const b = ev.target.closest(".bc-att-img, .bc-att-doc"); if (!b) return;
-        const msg = b.closest(".am-msg"); if (!msg) return;
-        const atts = _amAtts.get(msg.dataset.mid); if (!atts) return;
-        bcOpenAttachment(atts, parseInt(b.dataset.att, 10) || 0, amMediaUrls);
-      });
-    }
-  }
-  // Repaint an open screen when a push lands. Self-removing: a page that has
-  // been navigated away from must not keep answering (and must not keep a
-  // reference to its own DOM alive).
-  function amOnPush(node, fn) {
-    const h = () => { if (!node.isConnected) { window.removeEventListener("wa:adminmsg", h); return; } fn(); };
-    window.addEventListener("wa:adminmsg", h);
-  }
+  // ⚠ THE MSG-TO-ADMIN SHARED BITS (ADMIN_MSG_TEAM / ADMIN_MSG_NOTE /
+  //   AM_ATTACH_* / amWireAttach / amWhoOf / amBubbleHtml / amPaintThread /
+  //   amOnPush) MOVED to module scope (search "MSG TO ADMIN — shared") so the
+  //   desktop Msg to Admin page (renderContact, LAYOUT_B_PLAN.md §8.4) reuses
+  //   them — same bubble builder, same attachment picker whose path IS the
+  //   access rule, same 'a member never sees a moderator's name'. contactPage /
+  //   memberMsgPage / adminMsgInboxPage / adminMsgThreadPage below reference the
+  //   moved names as bare identifiers and resolve them at module scope.
 
   async function contactPage(params) {
     const uid = params && params.get("u");
