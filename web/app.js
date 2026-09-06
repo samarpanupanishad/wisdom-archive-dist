@@ -23156,8 +23156,9 @@ const MOBILE_UI = (() => {
     // Silent on every failure, including "not signed in": it decorates and
     // widens the list, it is not the list.
     // ---- 4a. the way in to their own quotes -------------------------------
-    // ⚠ THE LABEL IS THE OPERATOR'S, VERBATIM (2026-09-04), grammar and all —
-    // house rule for operator copy. Don't tidy "send" to "sent".
+    // ⚠ THE LABEL IS THE OPERATOR'S, VERBATIM. It read "...quotes send to
+    // admin" from 2026-09-04; the operator changed "send" -> "sent" themselves
+    // on 2026-09-06. Still their copy — don't touch it further.
     //
     // ⚠ Signed-in only. A visitor has no quotes by definition, and the pane
     // above them is already a sign-in form; a second call to action beside it
@@ -23172,13 +23173,13 @@ const MOBILE_UI = (() => {
       if (!isSignedIn()) { mineEl.innerHTML = ""; return; }
       mineEl.innerHTML =
         `<a class="m-ganga-mine" href="#/m/gyanmine">` +
-          // ⚠ Operator label, verbatim (grammar and all — do not tidy "send").
-          // "U. Ganga quotes send to admin" is set SMALLER than the "Click to
-          // see your" lead-in (operator, 2026-09-06) — one span split, not a
-          // reword. The underline still runs the whole length (.m-ganga-mine-t).
+          // ⚠ Operator label, verbatim. "U. Ganga quotes sent to admin" is set
+          // SMALLER than the "Click to see your" lead-in (operator, 2026-09-06)
+          // — one span split, not a reword. The underline still runs the whole
+          // length (.m-ganga-mine-t).
           `<span class="m-ganga-mine-t">${escapeHtml("Click to see your ")}` +
             `<span class="m-ganga-mine-sm">${escapeHtml(
-              "U. Ganga quotes send to admin")}</span></span>` +
+              "U. Ganga quotes sent to admin")}</span></span>` +
           (returned
             ? `<span class="m-ganga-mine-n">${escapeHtml(
                 returned === 1 ? "1 returned" : `${returned} returned`)}</span>`

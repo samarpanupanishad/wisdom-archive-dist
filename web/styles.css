@@ -3318,8 +3318,9 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
 .gr-dupe-a { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
 
 /* ---- the link to a member's own quotes, on #/m/gyan ---------------------
-   "Click to see your U. Ganga quotes send to admin" — the operator's wording,
-   verbatim (2026-09-04), grammar included.
+   "Click to see your U. Ganga quotes sent to admin" — the operator's wording.
+   Was "...send to admin" from 2026-09-04; the operator changed it to "sent"
+   themselves on 2026-09-06.
 
    ⚠ COLOURS ARE THE OPERATOR'S INSTRUCTION (2026-09-06): light-red panel,
    dark-pink text. Was purple (var(--stamp)) on their earlier instruction
@@ -3348,7 +3349,7 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
   text-decoration: none;
 }
 .m-ganga-mine-t { text-decoration: underline; text-underline-offset: 3px; }
-/* "U. Ganga quotes send to admin" — smaller than the "Click to see your"
+/* "U. Ganga quotes sent to admin" — smaller than the "Click to see your"
    lead-in (operator, 2026-09-06). Just the size; weight and the shared
    underline stay. */
 .m-ganga-mine-sm { font-size: 0.82em; }
