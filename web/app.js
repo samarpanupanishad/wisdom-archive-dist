@@ -23101,15 +23101,17 @@ const MOBILE_UI = (() => {
     // ⚠ my_ganga_quota() carries the character limit too, so this is one round
     // trip and not two. It fails soft to gangaCharLimit() on a server that has
     // not run part four — the box must work there exactly as it did before, just
-    // without the "2 of 3 left today" line.
+    // without the "N/N left. Member can send only N quotes per day" line.
+    // ⚠ Wording is the operator's (2026-09-07 — was "2 of 3 left today" / grey,
+    // and a separate "You have sent today's quotes" at zero). ONE line for every
+    // state now: the count runs down to 0/N and the rule beside it never moves.
     const paintQuota = (q) => {
       const slot = composeEl.querySelector("#m-ganga-quota");
       if (!slot || !q) return;
-      const left = Math.max(0, (q.limit || 0) - (q.used || 0));
-      slot.textContent = left === 0
-        ? "You have sent today's quotes. Please send more tomorrow."
-        : `${left} of ${q.limit} left today`;
-      slot.classList.toggle("none", left === 0);
+      const lim = q.limit || 0;
+      const left = Math.max(0, lim - (q.used || 0));
+      slot.textContent =
+        `${left}/${lim} left. Member can send only ${lim} quotes per day`;
     };
     if (isSignedIn()) {
       (async () => {

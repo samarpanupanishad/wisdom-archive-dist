@@ -3138,9 +3138,11 @@ body.m-mode.m-kb #m-ganga-mine { display: none; }
   overscroll-behavior: contain;
   padding-top: 12px;
 }
-/* First thing on the screen now, so it needs no top margin of its own — the
-   .content padding above it is the gap. */
-.m-page-ganga .m-ganga-instr { margin-top: 0; }
+/* ⚠ The compose box is FIRST now, not this — so the नम्र विनंती needs a clear
+   gap ABOVE it or it reads as jammed onto the Send button (operator, 2026-09-07:
+   "namra vinati box ... look improper", "bring little down"). 20px, a touch more
+   than its own default 18px top. */
+.m-page-ganga .m-ganga-instr { margin-top: 20px; }
 /* The divider below the pane is the separation now, so the box's own bottom
    margin would only double it. */
 .m-page-ganga .m-ganga-box { margin-bottom: 0; }
@@ -3370,12 +3372,17 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
   flex: 0 0 auto; background: #bd1762; color: #fff;
   border-radius: 999px; padding: 2px 9px; font: 700 11.5px var(--sans);
 }
-/* "2 of 3 left today", under the compose row. ⚠ Drawn only from the server's
-   answer, never a guess: the cap went 8 -> 3 on 2026-09-04 and a resend spends
-   one, so a member can reach the end of their day without writing anything new
-   — and the Send button is the wrong place to learn that. */
-.m-ganga-quota { margin-top: 6px; font: 400 11.5px var(--sans); color: var(--muted); }
-.m-ganga-quota.none { color: #c62828; font-weight: 700; }
+/* "2/3 left. Member can send only 3 quotes per day", under the compose row
+   (operator, 2026-09-07 — was "2 of 3 left today" in grey, with a separate red
+   line at zero; now ONE bold-red line for every state). ⚠ Drawn only from the
+   server's answer, never a guess: the cap is a setting and a resend spends one,
+   so a member can reach the end of their day without writing anything new — and
+   the Send button is the wrong place to learn that. Small as the Note line
+   (11px), bold red (#c62828, the app's standing red), centred. */
+.m-ganga-quota {
+  margin-top: 8px; text-align: center;
+  font: 700 11px/1.5 var(--sans); color: #c62828;
+}
 
 /* ---- Your U. Ganga Quotes (#/m/gyanmine) — the member's own list --------- */
 .m-gm { min-height: 40vh; }
