@@ -6668,6 +6668,66 @@ body.wa-v2 .v2-badge {
 }
 body.wa-v2 .v2-menu a .v2-badge { margin-left: auto; }
 
+/* Shortcut hint chips — "1".."6" on the bar, "g x" inside an open menu.
+   Deliberately NOT the red .v2-badge language (that means unread); a faint
+   outlined chip reads as "key", not "count". Discoverability answer for the
+   keyboard-map sheet — see V2_GCHORD in app.js. */
+body.wa-v2 .v2-hint {
+  font: 700 10px var(--sans); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 0 4px; line-height: 15px; flex: none;
+}
+body.wa-v2 .v2-item:hover .v2-hint,
+body.wa-v2 .v2-menu a:hover .v2-hint { border-color: var(--accent-2); }
+/* A row's hint chip is what claims the auto-margin now (pushing itself and
+   anything after it to the right, as one group); when a badge follows it,
+   the badge's OWN auto-margin (above) would instead split them apart, each
+   grabbing its own share of the free space — so cancel it in that one
+   configuration and use the row's ordinary flex gap instead. A badge-only
+   row (no hint) is untouched: its auto-margin rule above still applies. */
+body.wa-v2 .v2-menu a .v2-hint { margin-left: auto; }
+body.wa-v2 .v2-menu a .v2-hint + .v2-badge { margin-left: 0; }
+
+/* --- "?" shortcut sheet — NOT scoped to wa-v2; opens in either layout ----- */
+.kb-help-ov {
+  position: fixed; inset: 0; z-index: 1400; background: rgba(20, 16, 28, .5);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.kb-help {
+  background: var(--surface); width: 100%; max-width: 720px; max-height: 86vh;
+  border-radius: 16px; display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+.kb-help-head {
+  display: flex; align-items: center; gap: 10px; padding: 16px 20px;
+  border-bottom: 1px solid var(--border-soft); flex: none;
+}
+.kb-help-title { font: 600 17px var(--serif); color: var(--accent); flex: 1; }
+.kb-help-x {
+  -webkit-appearance: none; appearance: none; border: 0; background: none; cursor: pointer;
+  font-size: 19px; color: var(--muted); padding: 2px 8px; line-height: 1; border-radius: 6px;
+}
+.kb-help-x:hover { background: var(--accent-soft); color: var(--accent); }
+.kb-help-body {
+  padding: 16px 20px 22px; overflow-y: auto; flex: 1; min-height: 0;
+  columns: 2; column-gap: 28px;
+}
+.kb-sec { break-inside: avoid; margin-bottom: 18px; }
+.kb-sec-h {
+  font: 700 11px var(--sans); text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); margin-bottom: 8px;
+}
+.kb-row { display: flex; align-items: baseline; gap: 10px; padding: 4px 0; font-size: 13px; }
+.kb-keys { flex: 0 0 auto; min-width: 96px; color: var(--text); }
+.kb-desc { color: var(--muted); line-height: 1.4; }
+/* Global — a keycap look wherever a <kbd> shows up, not just this sheet
+   (Help & Support's own "press ? " line uses it too). */
+kbd {
+  font: 700 11px var(--sans); color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; line-height: 1.5;
+}
+@media (max-width: 640px) { .kb-help-body { columns: 1; } }
+
 
 /* --- Layout B: hidden classic detail bar + the floating dock -------------- */
 /* R1: .detail-bar stays in the DOM (its Back + fav listeners are bound there),

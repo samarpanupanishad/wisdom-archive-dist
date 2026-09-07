@@ -915,23 +915,41 @@ const V2NAV = [
     { key: "help", label: "Help & Support", hash: "#/help" },
   ] },
 ];
+// Reverse lookup for the "g" then a letter jumps (G_JUMPS/G_JUMPS_MOD, near
+// the digit-shortcut keydown handler below) — route key -> the letter that
+// reaches it, so buildV2Nav() can print a "g x" hint beside a menu row.
+// Two places by hand, same as NAV vs V2NAV above; keep them in step.
+const V2_GCHORD = {
+  home: "h", daily: "d", special: "t", letterpad: "l", anushthan: "a",
+  community: "s", anubhuti: "u", random: "k", favorites: "f",
+  "browse-date": "b", broadcast: "i", gyan: "y", dhyan: "p", contact: "c",
+  moderator: "m", gyanreview: "r",
+};
 function buildV2Nav() {
   const nav = document.getElementById("v2nav");
   if (!nav) return;
   nav.innerHTML = "";
   const badgeSpan = (attr) => attr ? `<span class="v2-badge" ${attr} hidden></span>` : "";
-  V2NAV.forEach((it) => {
+  // The shortcut hint chip itself — "1".."6" on a top-level slot, "g x" on a
+  // menu row. Purely a discoverability aid (keyboard-map sheet); nothing
+  // reads this markup to decide what a key does — the digit/g-chord
+  // handlers below look the target up their own way.
+  const hintSpan = (text) => `<span class="v2-hint">${text}</span>`;
+  V2NAV.forEach((it, idx) => {
     if (!it.group) {
-      nav.appendChild(el(`<a class="v2-item" href="${it.hash}" data-route="${it.key}">${it.label}</a>`));
+      nav.appendChild(el(`<a class="v2-item" href="${it.hash}" data-route="${it.key}">${it.label}${hintSpan(idx + 1)}</a>`));
       return;
     }
     const rows = it.children.filter((c) => !c.pending)
-      .map((c) => `<a href="${c.hash}" data-route="${c.key}">${c.label}${badgeSpan(c.badge)}</a>`).join("");
+      .map((c) => {
+        const letter = V2_GCHORD[c.key];
+        return `<a href="${c.hash}" data-route="${c.key}">${c.label}${letter ? hintSpan("g " + letter) : ""}${badgeSpan(c.badge)}</a>`;
+      }).join("");
     if (!rows) return;   // a group whose items are all Ship-2 renders nothing
     nav.appendChild(el(
       `<div class="v2-group${it.modOnly ? " mod-only" : ""}" data-group="${it.group}">` +
         `<button type="button" class="v2-item v2-grp-btn" aria-haspopup="true" aria-expanded="false">` +
-          `${it.label}${badgeSpan(it.groupBadge)}<span class="v2-caret" aria-hidden="true">▾</span></button>` +
+          `${it.label}${hintSpan(idx + 1)}${badgeSpan(it.groupBadge)}<span class="v2-caret" aria-hidden="true">▾</span></button>` +
         `<div class="v2-menu">${rows}</div>` +
       `</div>`
     ));
@@ -986,14 +1004,9 @@ function wireV2Nav(nav) {
     // Desktop Wide Page only: buildV2Nav() is never called under
     // window.WA_NATIVE_ACTIVE, but a Classic-layout desktop reaches this same
     // wired #v2nav too (CSS alone hides .v2bar there), so the check is live.
-    const v2Digits = [
-      { type: "item", route: "home" },      // 1
-      { type: "group", key: "gurumsg" },    // 2
-      { type: "group", key: "satsang" },    // 3
-      { type: "item", route: "random" },    // 4
-      { type: "group", key: "sutradhar" },  // 5 — offsetParent is null for a non-admin, see below
-      { type: "group", key: "more" },       // 6
-    ];
+    // Read straight from V2NAV (also what buildV2Nav()'s digit-1 badges are
+    // printed from) instead of a hand-kept parallel list — one source, so
+    // the number on screen can never disagree with what pressing it does.
     const openGroup = (group) => {
       shutAll(group);
       group.classList.add("open");
@@ -1010,13 +1023,14 @@ function wireV2Nav(nav) {
       if (document.querySelector(".lightbox")) return;
       const n = Number(e.key);
       if (n >= 1 && n <= 6 && String(n) === e.key) {
-        const spec = v2Digits[n - 1];
-        if (spec.type === "item") {
-          const a = nav.querySelector(`a.v2-item[data-route="${spec.route}"]`);
+        const spec = V2NAV[n - 1];
+        if (!spec) return;
+        if (!spec.group) {
+          const a = nav.querySelector(`a.v2-item[data-route="${spec.key}"]`);
           if (a) { e.preventDefault(); a.click(); }
           return;
         }
-        const group = nav.querySelector(`.v2-group[data-group="${spec.key}"]`);
+        const group = nav.querySelector(`.v2-group[data-group="${spec.group}"]`);
         // offsetParent is null for a hidden .mod-only group (non-admin) and
         // for a group whose children were all pending and rendered nothing.
         if (!group || group.offsetParent === null) return;
@@ -5930,6 +5944,10 @@ function renderInfo(kind) {
   const _v2 = (() => { try { return localStorage.getItem("wa:layout") === "v2"; } catch { return false; } })();
   const _sidebarTip = _v2 ? "" : `<li>Use the « / » button to collapse or expand the sidebar.</li>`;
   const _layoutRow = window.WA_NATIVE_ACTIVE ? "" : `<li>Page layout: <button class="btn" id="layout-classic-btn"${_v2 ? "" : " disabled"}>Classic</button> <button class="btn" id="layout-v2-btn"${_v2 ? " disabled" : ""}>Wide Page</button></li>`;
+  // Desktop only: pointer to the "?" sheet, the one place the whole keyboard
+  // shortcut list lives. A phone has no physical keyboard for these to mean
+  // anything, so this row would be pure noise there.
+  const _kbTip = window.WA_NATIVE_ACTIVE ? "" : `<li>Press <kbd>?</kbd> anywhere to see every keyboard shortcut.</li>`;
   const body = {
     settings: `<h3>Settings</h3><p>Samarpan Upanishad runs locally on your computer. There is no account — your <strong>favorites</strong> and <strong>notes</strong> are stored privately in this browser.</p><ul>${_sidebarTip}${_layoutRow}<li>Dark mode is coming soon.</li><li>To add a new day's Guru's msg, open <strong>Add Guru's Msg</strong> in the sidebar and drop in that day's files — it appears instantly, no restart needed.</li><li>To bulk-rebuild from all folders at once, you can still run the importer (<code>reimport.bat</code>).</li></ul>
       <div class="sync-box">
@@ -5943,7 +5961,7 @@ function renderInfo(kind) {
     // invisible while a paragraph followed it, and glaring once the body was
     // emptied. Put the operator's words in OUR_GOAL, not in a heading.
     about: OUR_GOAL.map((para) => `<p>${para}</p>`).join("") + JAI_BABA_SWAMI_LINE,
-    help: `<h3>Help &amp; Support</h3><p>Search any word in English or Hindi from the bar at the top — matching Guru's msgs appear with the word highlighted in yellow. Click a result to read it in full, with both images and transcripts.</p><ul><li><strong>Add to Favorites</strong> to save an entry; find them under Favorites.</li><li>Write private notes under <strong>My Comments</strong> on any entry.</li><li><strong>Browse</strong> by Date, Month, or Year from the sidebar.</li></ul>`,
+    help: `<h3>Help &amp; Support</h3><p>Search any word in English or Hindi from the bar at the top — matching Guru's msgs appear with the word highlighted in yellow. Click a result to read it in full, with both images and transcripts.</p><ul><li><strong>Add to Favorites</strong> to save an entry; find them under Favorites.</li><li>Write private notes under <strong>My Comments</strong> on any entry.</li><li><strong>Browse</strong> by Date, Month, or Year from the sidebar.</li>${_kbTip}</ul>`,
   }[kind];
   // ⚠ On a PHONE the shell already paints this page's name in the top bar
   // (MOBILE_UI.fallthrough -> setChrome, from PAGE_TITLES), so this heading is a
@@ -7667,6 +7685,77 @@ document.addEventListener("keydown", (e) => {
     clearTimeout(_gTimer);
     _gTimer = setTimeout(() => { _gPending = false; }, 1500);
   }
+});
+
+// "?" opens the shortcut sheet — the discoverability answer for everything
+// above that has no on-screen hint of its own (the g-chords reach 16 pages;
+// only the ones sitting in an open Layout B menu get a "g x" badge). Lists
+// only what actually works right now — nothing aspirational, so it can
+// never contradict itself the way the printed cheat sheet's hollow dots do.
+function openShortcutSheet() {
+  if (document.querySelector(".kb-help-ov")) return;
+  const v2 = document.body.classList.contains("wa-v2");
+  const app = document.querySelector(".app");
+  const mod = !!(app && app.classList.contains("is-mod"));
+  const kbd = (k) => `<kbd>${k}</kbd>`;
+  const row = (keys, desc) => `<div class="kb-row"><span class="kb-keys">${keys}</span><span class="kb-desc">${desc}</span></div>`;
+  const sections = [
+    { title: "Jump anywhere", rows: [
+      row(kbd("g") + " then&hellip;", "h Home &middot; d Daily &middot; t Special Telegram &middot; l Letterhead &middot; a Anushthan &middot; s Samuhik Satsang &middot; u Anubhuti &middot; k Lucky Msg &middot; f Favorites &middot; b Browse by Date &middot; i Important Updates &middot; y Upanishad Ganga &middot; p Dhyan Diary &middot; c Msg to Admin"
+        + (mod ? " &middot; m Moderator &middot; r Ganga Review" : "")),
+    ] },
+    { title: "Search", rows: [
+      row(kbd("/") + " or " + kbd("Ctrl") + "+" + kbd("S"), "Focus the search box"),
+    ] },
+    { title: "Reading", rows: [
+      row(kbd("&larr;") + " " + kbd("&rarr;"), "Previous / next day &mdash; Home, search results"),
+      row(kbd("Tab"), "Reach a Search, Favorites or Browse-by-Date card"),
+      row(kbd("Enter") + " / " + kbd("Space"), "Open the focused card"),
+    ] },
+    { title: "Special Telegram &middot; Letterhead &middot; Anushthan", rows: [
+      row(kbd("Tab"), "Land on the list, selecting message 1"),
+      row(kbd("&darr;") + " " + kbd("&uarr;"), "Move the selection"),
+      row(kbd("Enter"), "Open the Focus Reader"),
+      row(kbd("+") + " " + kbd("&minus;"), "Text size"),
+      row(kbd("Esc"), "Clear the selection"),
+    ] },
+    { title: "Image viewer", rows: [
+      row(kbd("&larr;") + " " + kbd("&rarr;"), "Page"),
+      row(kbd("&uarr;") + " " + kbd("&darr;"), "Zoom"),
+      row(kbd("Esc"), "Close"),
+    ] },
+    { title: "Everywhere", rows: [
+      row(kbd("?"), "This sheet"),
+      row(kbd("Esc"), "Close whatever's on top"),
+      row(kbd("Tab") + " / " + kbd("Shift") + "+" + kbd("Tab"), "Next / previous control"),
+    ] },
+  ];
+  if (v2) sections.splice(1, 0, { title: "Top bar &mdash; Wide Page", rows: [
+    row(kbd("1") + "&ndash;" + kbd("6"), "Home &middot; Guru's Msg &middot; Satsang &middot; Lucky Msg &middot; Sutradhar &middot; More"),
+    row(kbd("&darr;") + " " + kbd("&uarr;"), "Move inside an open menu"),
+    row(kbd("&larr;") + " " + kbd("&rarr;"), "Hop to the next / previous menu"),
+  ] });
+  const ov = el(`<div class="kb-help-ov" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+    <div class="kb-help">
+      <div class="kb-help-head"><div class="kb-help-title">Keyboard shortcuts</div><button type="button" class="kb-help-x" aria-label="Close">&times;</button></div>
+      <div class="kb-help-body">${sections.map((s) => `<div class="kb-sec"><div class="kb-sec-h">${s.title}</div>${s.rows.join("")}</div>`).join("")}</div>
+    </div>
+  </div>`);
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  ov.querySelector(".kb-help-x").addEventListener("click", close);
+  ov.querySelector(".kb-help-x").focus();
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "?" || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  const ae = document.activeElement;
+  if (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable)) return;
+  if (document.querySelector(".lightbox")) return;
+  e.preventDefault();
+  openShortcutSheet();
 });
 
 // Left/Right steps the carousel — Home's date-based one (_stageId set) or a
