@@ -3122,16 +3122,29 @@ body.m-mode.m-kb .m-page-ganga { transform: translateY(var(--m-vvtop, 0px)); }
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
-/* THE "your quotes" LINK — its own pinned row between the head and the list,
-   NOT a child of .m-ganga-head (which scrolls internally at max-height:72%, so
-   on a big-font device the link was pushed out of view). flex:none keeps it on
-   screen whatever the head and list do. Empty when signed out -> 0px, no rule
-   fires. While the keyboard is up the member is composing, not looking for
-   this, and the head takes the whole column (.m-kb rule below) — hide it so it
-   cannot be clipped at the fold. */
-.m-page-ganga #m-ganga-mine { flex: none; }
+/* THE "your quotes" LINK and the "View Last 5 Notifications" button — each its
+   own pinned row between the head and the list, NOT a child of .m-ganga-head
+   (which scrolls internally at max-height:72%, so on a big-font device they'd
+   be pushed out of view). flex:none keeps them on screen whatever the head and
+   list do. #m-ganga-mine is empty when signed out -> 0px, no rule fires;
+   #m-ganga-last5 always has its button (shown to everyone). While the keyboard
+   is up the member is composing, not looking for these, and the head takes the
+   whole column (.m-kb rule below) — hide them so they cannot be clipped. */
+.m-page-ganga #m-ganga-mine, .m-page-ganga #m-ganga-last5 { flex: none; }
 #m-ganga-mine:not(:empty) { margin: 10px 0 2px; text-align: center; }
-body.m-mode.m-kb #m-ganga-mine { display: none; }
+#m-ganga-last5 { margin: 6px 0 2px; text-align: center; }
+body.m-mode.m-kb #m-ganga-mine,
+body.m-mode.m-kb #m-ganga-last5 { display: none; }
+/* "View Last 5 Notifications" — the .m-ganga-mine chip, orange-filled with
+   white text like the Send button (operator, 2026-09-07). Shape, size, chevron
+   and press-shrink all inherited; only the colours change here. ⚠ Compound
+   selector on purpose: `.m-ganga-mine` sets its own background further down the
+   file, so a single-class rule here loses on source order. */
+.m-ganga-mine.m-ganga-last5btn {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.m-ganga-mine.m-ganga-last5btn:active { background: #c25a25; }
+.m-ganga-mine.m-ganga-last5btn .m-ganga-mine-x { opacity: .85; }
 /* THE SCROLLING PANE, under it. */
 .m-gyan-list {
   flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -3233,13 +3246,13 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
    silence and a phone keyboard gives no other sign that it did. */
 .m-ganga-count.full { color: var(--accent); font-weight: 700; }
 /* "Send to Admin for Quote Approval" (2026-08-26, was "Send to Admin") —
-   longer label, smaller font so it still fits one comfortable button, widened
-   so it isn't cramped. Wraps to two lines on a narrow phone rather than
-   truncating — a Send button silently cut off would be worse than one that's
-   two lines tall. */
+   longer label, smaller font so it still fits one comfortable button. Trimmed
+   again 2026-09-07 (operator: "very big, make it smaller") — tighter padding
+   and font, narrower cap. Still wraps to two lines rather than truncating; a
+   Send button silently cut off would be worse than one two lines tall. */
 .m-ganga-sendbtn {
-  font-size: 11.5px; line-height: 1.25; padding: 9px 14px;
-  max-width: 190px; white-space: normal; text-align: center;
+  font-size: 10px; line-height: 1.2; padding: 6px 10px;
+  max-width: 150px; white-space: normal; text-align: center;
 }
 /* "Your Suggestion" — the FINAL line of a card whose words this member sent in
    (operator, 2026-08-21). Their own row, and their own device only: mineSlots is
@@ -3365,13 +3378,8 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
 .m-ganga-mine-t { text-decoration: none; }
 /* The tap-through chevron — quiet, non-bold, mirrors `.mm-mantra-x`. */
 .m-ganga-mine-x { font-size: 12px; opacity: .7; font-weight: 400; }
-/* The count of quotes sent back for a change. Only drawn when there ARE some —
-   it is the one thing behind this link a member has to act on, and before this
-   page existed there was no way to discover it once the notification was gone. */
-.m-ganga-mine-n {
-  flex: 0 0 auto; background: #bd1762; color: #fff;
-  border-radius: 999px; padding: 2px 9px; font: 700 11.5px var(--sans);
-}
+/* (The "N returned" badge .m-ganga-mine-n was removed 2026-09-07 — a returned
+   quote is found by opening #/m/gyanmine now, not counted on the button.) */
 /* "2/3 left. Member can send only 3 quotes per day", under the compose row
    (operator, 2026-09-07 — was "2 of 3 left today" in grey, with a separate red
    line at zero; now ONE bold-red line for every state). ⚠ Drawn only from the
@@ -3386,6 +3394,9 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
 
 /* ---- Your U. Ganga Quotes (#/m/gyanmine) — the member's own list --------- */
 .m-gm { min-height: 40vh; }
+/* #/m/gyanlast5 — a plain scrolling list of .m-msgitem cards, so it needs no
+   rules of its own beyond a floor that stops a one-card page looking broken. */
+.m-gyan5 { min-height: 40vh; }
 .gm-quota { margin: 2px 0 12px; }
 .gm-quota-in {
   padding: 8px 12px; border-radius: 10px;

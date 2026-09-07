@@ -637,7 +637,8 @@ const DEVICE_GATE = (() => {
     "",                                    // home — the day's message
     "entry", "search", "browse", "favorites", "random", "stats",
     "daily", "nomsg", "special", "letterpad", "anushthan",
-    "gyan",        // reading the five thoughts. The compose box gates itself.
+    "gyan",        // reading the thoughts. The compose box gates itself.
+    "gyanlast5",   // the last-5 read-only list off #/m/gyan's orange button
     "dhyan",       // private, on-device, nothing here for a thief
     "contact",     // Msg to Admin — a stranded admin's only way to ask
     "menu", "account", "settings", "about", "help",
@@ -18689,10 +18690,14 @@ const MOBILE_UI = (() => {
     // off by newer ones is old news, not a missing reward. ⚠ That cut got
     // TIGHTER on 2026-08-22 (five → three), so a member's own line now falls off
     // the screen after three more hours rather than five.
-    recent(items, keep) {
+    // `n` (default GYAN_KEEP) is the cut — #/m/gyanlast5 passes 5, the main
+    // screen passes nothing. The window filter and the `keep` override are the
+    // same either way, so the two lists can never disagree about WHICH thoughts
+    // this device received, only how many are shown.
+    recent(items, keep, n) {
       return (items || [])
         .filter((t) => GYAN.covers(t.slot) || (keep && keep.has(`${t.date}:${t.slot}`)))
-        .slice(0, GYAN_KEEP);
+        .slice(0, n || GYAN_KEEP);
     },
 
     // What to say while nothing is live: {hour, tomorrow, coming}. `coming` means
@@ -22759,6 +22764,19 @@ const MOBILE_UI = (() => {
     } catch (_) {}
     return 100;
   }
+  // The quota line's last value, so gyanPage can paint it from the first frame
+  // instead of leaving #m-ganga-quota empty and letting the fetch flash it in
+  // ~1s later — which shoved the नम्र विनंती down (operator, 2026-09-07).
+  // Date-stamped: a new day is back to N/N, and yesterday's "0/3 left" flashing
+  // up for that one second would read as "you are out" when they are not.
+  const GANGA_QUOTA_KEY = "wa:ganga:quota";
+  function gangaQuotaCached() {
+    try {
+      const o = JSON.parse(localStorage.getItem(GANGA_QUOTA_KEY) || "null");
+      if (o && o.d === new Date().toDateString() && o.t) return o.t;
+    } catch (_) {}
+    return "";
+  }
   function gyanSlotLabel(slot) {
     const h = Number(slot);
     if (!(h >= 0 && h <= 23)) return "";
@@ -22836,6 +22854,17 @@ const MOBILE_UI = (() => {
       // network-driven RESEND count never shares a parent with the timer-
       // repainted list or a half-typed compose box.
       `<div id="m-ganga-mine"></div>` +
+      // "View Last 5 Notifications" — its own pinned row below the quotes link,
+      // above the "Latest Notification" list (operator, 2026-09-07). Same chip
+      // as .m-ganga-mine but orange-filled (.m-ganga-last5btn). Static markup,
+      // shown to EVERYONE: reading the thoughts is open, so a visitor gets it
+      // too (they just have no quotes link above it). Opens #/m/gyanlast5.
+      `<div id="m-ganga-last5">` +
+        `<a class="m-ganga-mine m-ganga-last5btn" href="#/m/gyanlast5">` +
+          `<span class="m-ganga-mine-t">${escapeHtml("View Last 5 Notifications")}</span>` +
+          `<span class="m-ganga-mine-x" aria-hidden="true">›</span>` +
+        `</a>` +
+      `</div>` +
       `<div id="m-gyan-list" class="m-gyan-list"></div>`;
     const listEl = node.querySelector("#m-gyan-list");
     const instrEl = node.querySelector("#m-ganga-instr");
@@ -23040,13 +23069,17 @@ const MOBILE_UI = (() => {
             `<span class="m-ganga-count" id="m-ganga-count">0 / ${limit}</span>` +
             `<button class="btn primary m-ganga-sendbtn" id="m-ganga-send" disabled>Send to Admin for Quote Approval</button>` +
           `</div>` +
-          // How much of today's allowance is left. ⚠ It is drawn EMPTY and
-          // filled by the quota fetch below — never a guessed number. The cap
-          // went from eight a day to THREE on 2026-09-04 and a resend spends
-          // one of them, so a member can now reach the end of their day in a
-          // way they never could before; being told at the Send button, after
-          // composing, is exactly the moment not to find out.
-          `<div class="m-ganga-quota" id="m-ganga-quota"></div>` +
+          // How much of today's allowance is left. ⚠ Painted NOW, at its final
+          // height, from the cached line (or an N/N placeholder) — never left
+          // empty for the fetch to flash in, which pushed the नम्र विनंती down
+          // (operator, 2026-09-07). The fetch below still corrects it in place;
+          // it just no longer moves anything when it lands. The cap went 8 -> 3
+          // on 2026-09-04 and a resend spends one, so a member can reach the
+          // end of their day without composing — the Send button is the wrong
+          // place to find that out.
+          `<div class="m-ganga-quota" id="m-ganga-quota">${escapeHtml(
+            gangaQuotaCached()
+            || "3/3 left. Member can send only 3 quotes per day")}</div>` +
         `</div>`;
 
       const ta = composeEl.querySelector("#m-ganga-ta");
@@ -23110,8 +23143,14 @@ const MOBILE_UI = (() => {
       if (!slot || !q) return;
       const lim = q.limit || 0;
       const left = Math.max(0, lim - (q.used || 0));
-      slot.textContent =
-        `${left}/${lim} left. Member can send only ${lim} quotes per day`;
+      const txt = `${left}/${lim} left. Member can send only ${lim} quotes per day`;
+      slot.textContent = txt;
+      // Remember it for the next open, so the line is right from the first frame
+      // (see gangaQuotaCached). Date-stamped against a stale "0/3" flash.
+      try {
+        localStorage.setItem(GANGA_QUOTA_KEY, JSON.stringify(
+          { d: new Date().toDateString(), t: txt }));
+      } catch (_) {}
     };
     if (isSignedIn()) {
       (async () => {
@@ -23171,37 +23210,26 @@ const MOBILE_UI = (() => {
     // above them is already a sign-in form; a second call to action beside it
     // would send them to a page that could only say "nothing here".
     //
-    // The badge is the only reason this is drawn twice. A returned quote is the
-    // one thing on the far side of this link that a member must ACT on, and
-    // before part four there was no way to discover it at all once the
-    // notification was swiped away — so it is counted on the link itself
-    // rather than waiting to be found.
-    const paintMineLink = (returned) => {
+    // ⚠ The "N returned" badge was REMOVED (operator, 2026-09-07). A returned
+    // quote is discovered by opening the page now, like everything else behind
+    // this link — nothing is counted on the button. So it is painted ONCE here;
+    // loadMine no longer repaints it (it still runs, only for mineSlots).
+    const paintMineLink = () => {
       if (!isSignedIn()) { mineEl.innerHTML = ""; return; }
       mineEl.innerHTML =
         `<a class="m-ganga-mine" href="#/m/gyanmine">` +
           `<span class="m-ganga-mine-t">${escapeHtml(
             "Your Approved / Pending Quotes")}</span>` +
-          (returned
-            ? `<span class="m-ganga-mine-n">${escapeHtml(
-                returned === 1 ? "1 returned" : `${returned} returned`)}</span>`
-            : "") +
           `<span class="m-ganga-mine-x" aria-hidden="true">›</span>` +
         `</a>`;
     };
-    paintMineLink(0);
+    paintMineLink();
 
     const loadMine = async () => {
       if (!isSignedIn()) return;
       let rows;
       try { rows = await WA.myGangaSuggestions(50); }
       catch (_) { return; }
-      // Returned, and not already dealt with. `resubmitted_at` is the test and
-      // not `resubmitted_as`, for the reason given in add_ganga_member_view.sql
-      // section 2 — the link is `on delete set null`, so a deleted row would
-      // otherwise put a badge back on a quote the member has already resent.
-      paintMineLink(rows.filter(
-        (r) => r.status === "declined" && !r.resubmitted_at).length);
       const next = new Set();
       rows.forEach((r) => {
         if (r.first_sent && r.first_slot_date != null && r.first_slot != null) {
@@ -23533,6 +23561,69 @@ const MOBILE_UI = (() => {
     WA.myGangaQuota().then(paintQuota).catch(() => {});
 
     await load();
+  }
+
+  // ---- Last 5 Notifications (#/m/gyanlast5) -------------------------------
+  // The orange button on #/m/gyan opens this. Same list as the main screen's
+  // "Latest Notification", cut to 5 instead of GYAN_KEEP — same window filter,
+  // same "Your Suggestion" mark, so the two can never disagree about WHICH
+  // thoughts this device received. A plain scrolling page, no pinned panes.
+  // ⚠ Open to everyone (in DEVICE_GATE's OPEN set): it only reads the guru's
+  // words. mineSlots is loaded only when signed in and only decorates.
+  async function gangaLast5Page() {
+    const node = el(`<div class="m-gyan5"></div>`);
+    pageFrame("Last 5 Notifications", node);
+
+    const wordsOf = (t) => (t.hi || t.en) || "";
+    let mineSlots = new Set();
+
+    const render = (items) => {
+      const shown = GYAN.recent(items, mineSlots, 5);
+      if (!shown.length) {
+        node.innerHTML = `<div class="m-hint">${escapeHtml(
+          "No notifications yet. They arrive hourly within your chosen hours "
+          + "(Settings › Upanishad Ganga).")}</div>`;
+        return;
+      }
+      node.innerHTML = shown.map((t, i) =>
+        `<div class="m-msgitem${i === 0 ? " m-gyan-hit" : ""}">` +
+          `<div class="m-msgtext${i === 0 ? " m-ganga-latest-txt" : ""}" ` +
+            `style="font-family:var(--serif);font-size:17px;line-height:1.6">` +
+            escapeHtml(wordsOf(t)) +
+          `</div>` +
+          `<div class="m-msgts">${escapeHtml(gyanWhen(t))}</div>` +
+          (mineSlots.has(`${t.date}:${t.slot}`)
+            ? `<div class="m-ganga-yours">Your Suggestion</div>` : "") +
+        `</div>`).join("");
+    };
+
+    render(gyanCached());
+
+    let items;
+    try {
+      items = await WA.recentThoughts(48);
+      try { localStorage.setItem(GYAN_CACHE, JSON.stringify(items)); } catch (_) {}
+    } catch (_) {
+      if (!GYAN.recent(gyanCached(), mineSlots, 5).length) {
+        node.innerHTML = `<div class="m-hint">${escapeHtml(
+          "Couldn't reach the server just now. The notifications will appear "
+          + "when you're back online.")}</div>`;
+      }
+      return;
+    }
+    if (isSignedIn()) {
+      try {
+        const rows = await WA.myGangaSuggestions(50);
+        const s = new Set();
+        rows.forEach((r) => {
+          if (r.first_sent && r.first_slot_date != null && r.first_slot != null) {
+            s.add(`${r.first_slot_date}:${r.first_slot}`);
+          }
+        });
+        mineSlots = s;
+      } catch (_) {}
+    }
+    render(items);
   }
 
   // ---- Upanishad Ganga Review — the admins' side (2026-08-20) --------------
@@ -24979,6 +25070,9 @@ const MOBILE_UI = (() => {
       // Reached only from the purple link on #/m/gyan — no notification points
       // here, so it is safe to have been added after those payloads were built.
       if (p === "gyanmine") return gangaMinePage(params);
+      // The orange "View Last 5 Notifications" button on #/m/gyan. Read-only
+      // (in DEVICE_GATE's OPEN set); no notification points here.
+      if (p === "gyanlast5") return gangaLast5Page();
       // The admins' queue. ⚠ Its own route rather than a card on #/moderator:
       // ganga_pending notifications point at it, and a notification must land on
       // the thing it is about, not on a page to scroll. The page refuses itself
