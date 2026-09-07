@@ -7624,6 +7624,51 @@ searchInput.addEventListener("keydown", (e) => {
 searchClear.addEventListener("click", () => { hiHideSugg(); searchInput.value = ""; searchInput.focus(); go("#/search"); });
 document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); searchInput.focus(); } });
 
+// "/" also focuses search — the web-wide idiom, alongside Ctrl+S above.
+// Being an INPUT itself, the search box's own tagName already excludes it
+// from the guard below, so typing a literal "/" into a query still works.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  const ae = document.activeElement;
+  if (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable)) return;
+  e.preventDefault();
+  searchInput.focus();
+});
+
+// "g" then a letter jumps straight to a page, skipping any menu (keyboard-map
+// sheet's "Jump anywhere" block). Two keydowns within 1.5s; anything else in
+// between — or the timeout — cancels the pending "g" rather than combining
+// with a later, unrelated key. Plain go(hash) calls, not tied to either
+// nav's markup, so BOTH layouts get these (unlike the v2-only digit
+// shortcuts above, which open menus that only exist in Layout B).
+const G_JUMPS = {
+  h: "#/", d: "#/?latest=1", t: "#/special", l: "#/letterpad", a: "#/anushthan",
+  s: "#/community", u: "#/anubhuti", k: "#/random", f: "#/favorites",
+  b: "#/browse/date", i: "#/broadcast", y: "#/gyan", p: "#/dhyan", c: "#/contact",
+};
+const G_JUMPS_MOD = { m: "#/moderator", r: "#/gyanreview" };   // admin-only rows
+let _gPending = false, _gTimer = null;
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) { _gPending = false; return; }
+  const ae = document.activeElement;
+  if ((ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))
+    || document.querySelector(".lightbox")) { _gPending = false; return; }
+  if (_gPending) {
+    _gPending = false;
+    clearTimeout(_gTimer);
+    const k = e.key.toLowerCase();
+    const app = document.querySelector(".app");
+    const hash = G_JUMPS[k] || ((app && app.classList.contains("is-mod")) ? G_JUMPS_MOD[k] : undefined);
+    if (hash) { e.preventDefault(); go(hash); }
+    return;
+  }
+  if (e.key === "g") {
+    _gPending = true;
+    clearTimeout(_gTimer);
+    _gTimer = setTimeout(() => { _gPending = false; }, 1500);
+  }
+});
+
 // Left/Right steps the carousel — Home's date-based one (_stageId set) or a
 // search result's list-scoped one (_searchBackFn set) — by clicking whichever
 // arrow button is actually rendered, so it naturally does nothing at either
