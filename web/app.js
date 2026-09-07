@@ -1010,42 +1010,174 @@ function toast(msg, opts) {
   else { t.style.bottom = "24px"; t.style.top = "auto"; t.style.transform = "translateX(-50%)"; t.style.zIndex = "100"; }
   t.textContent = msg; t.style.opacity = "1"; clearTimeout(toastT); toastT = setTimeout(() => (t.style.opacity = "0"), 1800);
 }
-// Full-screen image viewer with click/scroll zoom + drag-to-pan.
-function openLightbox(src) {
-  const ov = el(`<div class="lightbox">
-    <button class="lb-close" title="Close (Esc)" aria-label="Close">×</button>
-    <div class="lb-stage"><img src="${src}" alt="" draggable="false"></div>
-    <div class="lb-hint">Click image or scroll to zoom · drag to pan · Esc to close</div>
+// Caption for a `.panel img.zoomable` — its cell's "Hindi (Original)" label.
+function _lbCap(im) {
+  const cell = im.closest(".panel-cell");
+  const lbl = cell && cell.querySelector(".panel-label");
+  return lbl ? lbl.textContent.trim() : "";
+}
+// Wire every `.panel img.zoomable` inside `scope` to open the shared viewer as
+// ONE strip (Hindi original, English original, then any `extra` pages), each
+// image starting on its own slide.
+function wireLightbox(scope, extra) {
+  const ims = [...scope.querySelectorAll(".panel img.zoomable")];
+  const pages = ims.map((im) => ({ src: im.src, cap: _lbCap(im) }))
+    .concat(Array.isArray(extra) ? extra : []);
+  ims.forEach((im, i) => im.addEventListener("click", () => openLightbox(im.src, { pages, index: i })));
+  return pages;
+}
+
+// Full-screen image viewer: a horizontal page strip you swipe / arrow through,
+// each page independently zoomable.
+//   opts.pages  the set to page through — strings, or {src, cap} for a caption
+//   opts.index  which page to open on
+//   -- / ->  or drag / trackpad-swipe ..... previous / next page
+//   up / down or scroll wheel ............. zoom in / out (KEPT across pages)
+//   click image .......................... toggle 2.4x
+//   drag while zoomed .................... pan; drag past the edge flips the page
+//   Esc / click the margin / X .......... close
+// A bare openLightbox(src) is a one-page strip. Lazy: only the current page
+// +/- LB_R actually download, so a 600-scan Letterhead strip stays instant.
+const LB_R = 2;
+function openLightbox(src, opts) {
+  opts = opts || {};
+  const raw = (Array.isArray(opts.pages) && opts.pages.length) ? opts.pages : [src];
+  const pages = raw.map((p) => (typeof p === "string" ? { src: p, cap: "" } : p));
+  const N = pages.length;
+  const multi = N > 1;
+
+  let cur = Math.max(0, Math.min(N - 1, opts.index || 0));
+  let zoom = 1;                                   // shared across pages
+  const pan = pages.map(() => ({ x: 0, y: 0 }));  // per page
+
+  const ov = el(`<div class="lightbox lb-carousel">
+    <button class="lb-close" title="Close (Esc)" aria-label="Close">&times;</button>
+    ${multi ? `<button class="lb-arrow lb-prev" aria-label="Previous page">&lsaquo;</button>
+    <button class="lb-arrow lb-next" aria-label="Next page">&rsaquo;</button>
+    <div class="lb-count"></div>` : ""}
+    <div class="lb-strip">${pages.map((_, i) => `<div class="lb-slide" data-i="${i}"><img alt="" draggable="false"></div>`).join("")}</div>
+    <div class="lb-hint">${multi ? "&larr; &rarr; pages &middot; " : ""}&uarr; &darr; &middot; +/&minus; &middot; scroll to zoom &middot; drag to pan &middot; Esc to close</div>
   </div>`);
-  const stage = ov.querySelector(".lb-stage");
-  const img = ov.querySelector("img");
-  let zoom = 1, ox = 0, oy = 0, dragging = false, sx = 0, sy = 0;
-  const apply = () => {
-    img.style.transform = `translate(${ox}px, ${oy}px) scale(${zoom})`;
-    stage.classList.toggle("zoomed", zoom > 1);
-  };
-  img.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (zoom > 1) { zoom = 1; ox = oy = 0; } else { zoom = 2.4; }
-    apply();
-  });
+  const strip = ov.querySelector(".lb-strip");
+  const slides = [...ov.querySelectorAll(".lb-slide")];
+  const countEl = ov.querySelector(".lb-count");
+  const imgOf = (i) => slides[i].querySelector("img");
+
+  function loadWindow() {
+    slides.forEach((sl, i) => {
+      const im = imgOf(i);
+      if (Math.abs(i - cur) <= LB_R && !im.getAttribute("src")) im.src = pages[i].src;
+    });
+  }
+  function applyZoom() {
+    const im = imgOf(cur);
+    im.style.transform = `translate(${pan[cur].x}px, ${pan[cur].y}px) scale(${zoom})`;
+    slides[cur].classList.toggle("zoomed", zoom > 1);
+  }
+  function render(animate) {
+    cur = Math.max(0, Math.min(N - 1, cur));
+    loadWindow();
+    strip.classList.toggle("animating", !!animate);
+    strip.style.transform = `translateX(${-cur * 100}%)`;
+    applyZoom();
+    if (countEl) {
+      const c = pages[cur].cap;
+      countEl.textContent = (cur + 1) + " / " + N + (c ? "  ·  " + c : "");
+    }
+  }
+  function go(to, keepZoom) {
+    const next = Math.max(0, Math.min(N - 1, to));
+    if (next !== cur) {
+      cur = next;
+      if (!keepZoom) zoom = 1;
+      pan[cur].x = pan[cur].y = 0;
+    }
+    render(true);
+  }
+  function setZoom(z) {
+    zoom = Math.min(6, Math.max(1, z));
+    if (zoom === 1) { pan[cur].x = pan[cur].y = 0; }
+    applyZoom();
+  }
+
+  let wheelLock = false;
   ov.addEventListener("wheel", (e) => {
     e.preventDefault();
-    zoom = Math.min(6, Math.max(1, zoom + (e.deltaY < 0 ? 0.25 : -0.25)));
-    if (zoom === 1) { ox = oy = 0; }
-    apply();
+    if (zoom === 1 && Math.abs(e.deltaX) > Math.abs(e.deltaY) + 2) {
+      if (!wheelLock) { wheelLock = true; setTimeout(() => (wheelLock = false), 340); go(cur + (e.deltaX > 0 ? 1 : -1)); }
+      return;
+    }
+    setZoom(zoom + (e.deltaY < 0 ? 0.3 : -0.3));
   }, { passive: false });
-  img.addEventListener("mousedown", (e) => { if (zoom <= 1) return; e.preventDefault(); dragging = true; sx = e.clientX - ox; sy = e.clientY - oy; });
-  window.addEventListener("mousemove", onMove);
-  window.addEventListener("mouseup", onUp);
-  function onMove(e) { if (!dragging) return; ox = e.clientX - sx; oy = e.clientY - sy; apply(); }
-  function onUp() { dragging = false; }
-  function close() { ov.remove(); document.removeEventListener("keydown", onKey); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); }
-  function onKey(e) { if (e.key === "Escape") close(); }
-  ov.addEventListener("click", (e) => { if (e.target === ov || e.target === stage) close(); });
+
+  let moved = false;
+  ov.addEventListener("click", (e) => {
+    if (moved) { moved = false; return; }
+    if (e.target === ov || e.target.classList.contains("lb-strip") || e.target.classList.contains("lb-slide")) return close();
+    if (e.target.tagName === "IMG") setZoom(zoom > 1 ? 1 : 2.4);
+  });
+
+  let down = null;
+  strip.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;
+    down = { x: e.clientX, y: e.clientY, px: pan[cur].x, py: pan[cur].y, over: 0 };
+    moved = false;
+    try { strip.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  strip.addEventListener("pointermove", (e) => {
+    if (!down) return;
+    const dx = e.clientX - down.x, dy = e.clientY - down.y;
+    if (Math.abs(dx) + Math.abs(dy) > 6) moved = true;
+    if (zoom > 1) {
+      const im = imgOf(cur);
+      const mx = Math.max(0, (im.clientWidth * zoom - window.innerWidth) / 2);
+      const my = Math.max(0, (im.clientHeight * zoom - window.innerHeight) / 2);
+      const nx = down.px + dx;
+      down.over = nx > mx ? nx - mx : nx < -mx ? nx + mx : 0;
+      pan[cur].x = Math.max(-mx, Math.min(mx, nx));
+      pan[cur].y = Math.max(-my, Math.min(my, down.py + dy));
+      applyZoom();
+    } else {
+      strip.classList.remove("animating");
+      strip.style.transform = `translateX(calc(${-cur * 100}% + ${dx}px))`;
+    }
+  });
+  strip.addEventListener("pointerup", (e) => {
+    if (!down) return;
+    const dx = e.clientX - down.x;
+    try { strip.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (zoom > 1) {
+      if (down.over > 70) go(cur - 1, true);
+      else if (down.over < -70) go(cur + 1, true);
+      else render(false);
+    } else {
+      if (dx < -60) go(cur + 1);
+      else if (dx > 60) go(cur - 1);
+      else render(true);
+    }
+    down = null;
+  });
+  strip.addEventListener("pointercancel", () => { down = null; render(false); });
+
+  function onKey(e) {
+    const ae = document.activeElement;
+    if (e.key === "Escape") close();
+    else if (e.key === "ArrowLeft") go(cur - 1, zoom > 1);
+    else if (e.key === "ArrowRight") go(cur + 1, zoom > 1);
+    else if (e.key === "Enter" && ae && ae.tagName === "BUTTON") { /* let the button act */ }
+    else if (e.key === "ArrowUp" || e.key === "Enter" || e.key === "+" || e.key === "=") { e.preventDefault(); setZoom(zoom + 0.3); }
+    else if (e.key === "ArrowDown" || e.key === "-" || e.key === "_") { e.preventDefault(); setZoom(zoom - 0.3); }
+  }
+  function close() { ov.remove(); document.removeEventListener("keydown", onKey); }
+
   ov.querySelector(".lb-close").addEventListener("click", close);
+  if (multi) {
+    ov.querySelector(".lb-prev").addEventListener("click", (e) => { e.stopPropagation(); go(cur - 1, zoom > 1); });
+    ov.querySelector(".lb-next").addEventListener("click", (e) => { e.stopPropagation(); go(cur + 1, zoom > 1); });
+  }
   document.addEventListener("keydown", onKey);
   document.body.appendChild(ov);
+  render(false);
 }
 
 function attachReadMore(root) {
@@ -1279,15 +1411,20 @@ function buildDetail(e, opts = {}) {
   wrap.appendChild(imgs);
 
   // Rare "second message of the same day" — surfaced as a small box that pops
-  // the extra image(s) in the lightbox, so the main view stays clean.
+  // the extra image(s) in the lightbox, so the main view stays clean. The extra
+  // scans ride the SAME strip as the two originals (appended after them), so
+  // "View extra message" and the originals are one swipeable set.
+  const _extraPages = [];
+  const _extraBtns = [];
   if (Array.isArray(e.extras) && e.extras.length) {
     const EXTRA_ICO = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h9l5 5v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/></svg>`;
     const box = el(`<div class="extra-msg"><span class="xm-ico">${EXTRA_ICO}</span><span class="xm-label">This day has an extra message.</span><span class="xm-links"></span></div>`);
     const links = box.querySelector(".xm-links");
     e.extras.forEach((x) => {
       const lang = x.lang === "hi" ? " (Hindi)" : x.lang === "en" ? " (English)" : "";
+      _extraPages.push({ src: x.url, cap: "Extra message" + lang });
       const btn = el(`<button class="xm-view" type="button">View extra message${lang}</button>`);
-      btn.addEventListener("click", () => openLightbox(x.url));
+      _extraBtns.push(btn);
       links.appendChild(btn);
     });
     wrap.appendChild(box);
@@ -1311,7 +1448,10 @@ function buildDetail(e, opts = {}) {
   if (document.body.classList.contains("wa-v2")) txSection.classList.add("collapsed");
   wrap.appendChild(txSection);
 
-  wrap.querySelectorAll(".panel img.zoomable").forEach((im) => im.addEventListener("click", () => openLightbox(im.src)));
+  const _lbPages = wireLightbox(wrap, _extraPages);
+  const _nOrig = _lbPages.length - _extraPages.length;
+  _extraBtns.forEach((btn, k) => btn.addEventListener("click", () =>
+    openLightbox(_lbPages[_nOrig + k].src, { pages: _lbPages, index: _nOrig + k })));
 
   if (ctx === "page") wrap.appendChild(commentsSection(e.id));
 
@@ -4391,8 +4531,7 @@ function daySlideImages(e) {
     shareCaption(e.topic_hi, e.body_hi, "बाबास्वामी", e.date)));
   d.appendChild(imageCell("English (Original)", e.img_en_url, `${e.id}_Eng.jpg`, e.id,
     shareCaption(e.topic_en, e.body_en, "Baba Swami", e.date)));
-  d.querySelectorAll(".panel img.zoomable").forEach((im) =>
-    im.addEventListener("click", () => openLightbox(im.src)));
+  wireLightbox(d);
   return d;
 }
 
@@ -4558,12 +4697,22 @@ function cardGrid(items) {
   if (!items.length) return el(`<div class="empty">Nothing here yet.</div>`);
   const grid = el(`<div class="grid"></div>`);
   items.forEach((e) => {
-    const card = el(`<div class="card" data-id="${e.id}">
+    const topic = e.topic_en || e.topic_hi || "";
+    const label = `Guru's msg #${e.id}, ${fmtDate(e.date)}${topic ? ", " + topic : ""}`;
+    const card = el(`<div class="card" data-id="${e.id}" role="button" tabindex="0" aria-label="${escapeHtml(label)}">
       ${thumbImg(e)}
       <div class="cbody"><div class="cid">#${e.id}</div><div class="cdate">${fmtDate(e.date)} · ${e.weekday || ""}</div>
-      <div class="ctopic">${escapeHtml(e.topic_en || e.topic_hi || "")}</div></div></div>`);
+      <div class="ctopic">${escapeHtml(topic)}</div></div></div>`);
     card.addEventListener("click", () => go(`#/entry/${e.id}`));
     grid.appendChild(card);
+  });
+  // Keyboard: the card announces itself as a button, so Enter/Space opens it
+  // like a click — same contract as Announcements' .bc-card.
+  grid.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const card = ev.target.closest(".card"); if (!card) return;
+    ev.preventDefault();
+    go(`#/entry/${card.dataset.id}`);
   });
   return grid;
 }
@@ -4640,13 +4789,29 @@ function renderThumbList(items, opts) {
     function renderChunk() {
       items.slice(shown, shown + CHUNK).forEach((r, idx) => {
         const i = shown + idx;
-        const row = el(`<div class="result" data-id="${r.id}">
+        const rtopic = r.topic_en || r.topic_hi || "";
+        const rlabel = `Guru's msg #${r.id}, ${fmtDate(r.date)}${rtopic ? ", " + rtopic : ""}`;
+        const row = el(`<div class="result" data-id="${r.id}" role="button" tabindex="0" aria-label="${escapeHtml(rlabel)}">
           <div class="meta">${thumbImg(r)}<div class="rdate">${fmtDate(r.date)}<br>${r.weekday || ""}</div>${(r.topic_en || r.topic_hi) ? `<div class="rtopic">${escapeHtml(r.topic_en || r.topic_hi)}</div>` : ""}</div>
           <div class="lang-col"><div class="lang-label">Hindi</div>${r.body_hi ? `<div class="wisdom-text hi">${snippet(r, "hi")}</div>` : `<div class="page-sub" style="margin:0">—</div>`}</div>
           <div class="lang-col"><div class="lang-label">English</div>${r.body_en ? `<div class="wisdom-text">${snippet(r, "en")}</div>` : `<div class="page-sub" style="margin:0">—</div>`}</div>
         </div>`);
-        const thumb = row.querySelector(".thumb");
-        if (thumb) thumb.addEventListener("click", () => showDetail(i));
+        // Whole row opens the entry, not just the thumbnail — Tab reaches it,
+        // Enter/Space opens it, and a click anywhere on the row works too.
+        // Guarded against the "Read more" toggle (attachReadMore, below) and
+        // a text-selection drag, the same guard .bc-card uses.
+        row.addEventListener("click", (e) => {
+          if (e.target.closest("button, a, summary, input")) return;
+          const sel = window.getSelection && window.getSelection();
+          if (sel && String(sel).length > 1) return;
+          showDetail(i);
+        });
+        row.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          if (e.target.closest("button, a, summary, input")) return;
+          e.preventDefault();
+          showDetail(i);
+        });
         list.appendChild(row);
         attachReadMore(row);
       });
@@ -8491,18 +8656,25 @@ function wireDesktopChatTarget(container, sectionKey, titleOf) {
     if (!card || !container.contains(card)) return;
     // Don't hijack a click on a real control inside the card.
     if (e.target.closest("button, a, summary, input, .pc-dot")) return;
-    container.querySelectorAll(".is-chat-target").forEach((c) => c.classList.remove("is-chat-target"));
-    card.classList.add("is-chat-target");
-    _chatCtx = {
-      wid: sectionKey + ":" + card.dataset.id,
-      title: titleOf(card) || CHAT_NS_LABEL[sectionKey],
-      dateLabel: "",
-      back: "#/" + sectionKey,
-    };
-    _commFocusOff = false;      // picking a card always shows that message
-    repaintOpenCommunityPanel();
-    applyCommFocus();
+    selectDesktopChatCard(container, sectionKey, titleOf, card);
   });
+}
+// Mark `card` as the one the Community panel discusses. This is ALSO the single
+// visible selection on these Wide Page list pages, so the mouse (click, above)
+// and the keyboard (the ↓/↑ handlers in renderSpecial / renderLetterpadInto)
+// share one bold-border highlight — never two.
+function selectDesktopChatCard(container, sectionKey, titleOf, card) {
+  container.querySelectorAll(".is-chat-target").forEach((c) => c.classList.remove("is-chat-target"));
+  card.classList.add("is-chat-target");
+  _chatCtx = {
+    wid: sectionKey + ":" + card.dataset.id,
+    title: titleOf(card) || CHAT_NS_LABEL[sectionKey],
+    dateLabel: "",
+    back: "#/" + sectionKey,
+  };
+  _commFocusOff = false;      // picking a card always shows that message
+  repaintOpenCommunityPanel();
+  applyCommFocus();
 }
 // Repaint an ALREADY-OPEN community panel when the selection changes, so the
 // panel and the highlighted card can never disagree. Same pattern the
@@ -8523,22 +8695,124 @@ function closeSpecialStream() { if (_specialStream) { try { _specialStream.close
 const SPECIAL_EMPTY_MSG =
   "No special telegram messages yet. New messages from Baba Swami will appear here.";
 
+// Layout B reading controls (LAYOUT_B_PLAN.md is browser-only; R3 — never the
+// phone). `wa:sp:lang` = hi | en | both (default hi: a member reads one
+// language at a time, unlike the daily message); `wa:sp:fz` = the list body
+// px. The classic layout and the phone ignore all of it and keep the
+// side-by-side "dual" card.
+function _spV2() { return !window.WA_NATIVE_ACTIVE && document.body.classList.contains("wa-v2"); }
+function _spLang() { try { return localStorage.getItem("wa:sp:lang") || "hi"; } catch { return "hi"; } }
+function _spFz() { let n = 17; try { n = parseInt(localStorage.getItem("wa:sp:fz"), 10) || 17; } catch {} return Math.max(14, Math.min(30, n)); }
+
 async function renderSpecial() {
   const nav = _nav;
-  let painter = null;
-  const paint = (rows) => {
+  const v2 = _spV2();
+  const mode = () => v2 ? (_spLang() === "both" ? "dual" : _spLang()) : "dual";
+  let painter = null, rows = [];
+  const applyFz = () => { const p = $view.querySelector(".sp-list"); if (p) p.style.setProperty("--sp-fz", _spFz() + "px"); };
+  const setFz = (n) => {
+    n = Math.max(14, Math.min(30, n));
+    try { localStorage.setItem("wa:sp:fz", String(n)); } catch {}
+    applyFz();
+  };
+  const titleOf = (card) => { const t = card.querySelector(".sp-title"); return t ? t.textContent.trim() : ""; };
+  const toolbar = () => {
+    if (!v2) return "";
+    const L = _spLang();
+    return `<div class="sp-toolbar">
+      <div class="sp-seg" role="group" aria-label="Reading language">
+        <button data-l="hi" class="${L === "hi" ? "on" : ""}">हिंदी</button>
+        <button data-l="en" class="${L === "en" ? "on" : ""}">English</button>
+        <button data-l="both" class="${L === "both" ? "on" : ""}">Both</button>
+      </div>
+      <div class="sp-size" role="group" aria-label="Text size">
+        <button data-s="-" aria-label="Smaller text">Z&minus;</button>
+        <button data-s="0" aria-label="Reset text size">Z</button>
+        <button data-s="+" aria-label="Larger text">Z+</button>
+      </div>
+    </div>
+    <div class="sp-keyhint">&darr; &uarr; select &middot; Enter / double-click open &middot; +/&minus; text size</div>`;
+  };
+  const paint = (data) => {
     if (!current(nav)) return;
+    if (data) rows = data;
     $view.innerHTML = `<div class="sp-page"><h2 class="sp-head">✨ Special Telegram Messages</h2>
+      ${toolbar()}
       <div class="sp-list"></div></div>`;
     const list = $view.querySelector(".sp-list");
+    if (v2) {
+      applyFz();
+      // Tab entry point (keyboard-map sheet, build order item 1): the list
+      // itself is one Tab stop. Landing here with nothing selected picks the
+      // first card, then ↓/↑/Enter/Esc below take over exactly as they do
+      // after a mouse click — same two branches as pick() there.
+      list.tabIndex = 0;
+      list.addEventListener("focus", () => {
+        const cards = [...list.querySelectorAll(".sp-card")];
+        if (!cards.length || cards.some((c) => c.classList.contains("is-chat-target"))) return;
+        if (cards[0].dataset.id) selectDesktopChatCard(list, "special", titleOf, cards[0]);
+        else cards[0].classList.add("is-chat-target");
+      });
+      $view.querySelector(".sp-toolbar").addEventListener("click", (e) => {
+        const lb = e.target.closest("[data-l]"), sb = e.target.closest("[data-s]");
+        if (lb) { try { localStorage.setItem("wa:sp:lang", lb.dataset.l); } catch {} paint(); }
+        else if (sb) setFz(sb.dataset.s === "+" ? _spFz() + 2 : sb.dataset.s === "-" ? _spFz() - 2 : 17);
+      });
+      // Single click selects a single-language card (dual cards carry data-id,
+      // so wireDesktopChatTarget selects those); double-click opens the reader.
+      list.addEventListener("click", (e) => {
+        if (e.target.closest("button, a, summary, input, .pc-dot")) return;
+        const card = e.target.closest(".sp-card");
+        if (!card || !list.contains(card) || card.dataset.id) return;
+        list.querySelectorAll(".is-chat-target").forEach((c) => c.classList.remove("is-chat-target"));
+        card.classList.add("is-chat-target");
+      });
+      list.addEventListener("dblclick", (e) => {
+        if (e.target.closest("button, a, summary, input, .pc-dot")) return;
+        const card = e.target.closest(".sp-card");
+        if (!card || !list.contains(card)) return;
+        const i = [...list.querySelectorAll(".sp-card")].indexOf(card);
+        if (i >= 0 && rows[i]) { try { getSelection().removeAllRanges(); } catch {} openSpecialReader(rows, i); }
+      });
+    }
     wireDesktopChatTarget(list, "special", (card) => {
       const t = card.querySelector(".sp-title");
       return t ? t.textContent.trim() : "";
     });
     if (!rows.length) { list.innerHTML = `<div class="empty">${SPECIAL_EMPTY_MSG}</div>`; return; }
-    painter = paintSpecialList(list, rows, "dual", painter ? painter.shown() : 0);
+    painter = paintSpecialList(list, rows, mode(), painter ? painter.shown() : 0);
   };
   paint(SPECIAL.cached());          // cache first — instant, works offline
+  if (v2) {
+    // Wide Page keyboard model: ↓/↑ move the selection (one bold border, shared
+    // with the "being discussed" marker), Enter opens the Focus Reader, Esc
+    // clears it, +/− resize the list text. Self-removes once the route is left
+    // (nav bumped) and stands down while the reader overlay owns the keys.
+    const onListKey = (e) => {
+      if (!current(nav)) { document.removeEventListener("keydown", onListKey); return; }
+      if (document.querySelector(".sp-reader")) return;
+      const ae = document.activeElement;
+      if (ae && (["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(ae.tagName) || ae.isContentEditable)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const listEl = $view.querySelector(".sp-list");
+      const cards = listEl ? [...listEl.querySelectorAll(".sp-card")] : [];
+      if (!cards.length) return;
+      const at = cards.findIndex((c) => c.classList.contains("is-chat-target"));
+      const pick = (idx) => {
+        const c = cards[idx]; if (!c) return;
+        if (c.dataset.id) selectDesktopChatCard(listEl, "special", titleOf, c);
+        else { cards.forEach((x) => x.classList.remove("is-chat-target")); c.classList.add("is-chat-target"); }
+        c.scrollIntoView({ block: "nearest" });
+      };
+      if (e.key === "ArrowDown") { e.preventDefault(); pick(at < 0 ? 0 : Math.min(at + 1, cards.length - 1)); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); pick(at < 0 ? cards.length - 1 : Math.max(at - 1, 0)); }
+      else if (e.key === "Enter") { if (at >= 0 && rows[at]) openSpecialReader(rows, at); }
+      else if (e.key === "Escape") { cards.forEach((c) => c.classList.remove("is-chat-target")); }
+      else if (e.key === "+" || e.key === "=") { e.preventDefault(); setFz(_spFz() + 2); }
+      else if (e.key === "-" || e.key === "_") { e.preventDefault(); setFz(_spFz() - 2); }
+    };
+    document.addEventListener("keydown", onListKey);
+  }
   try {
     paint(await SPECIAL.sync());
   } catch (err) {
@@ -8557,6 +8831,89 @@ async function renderSpecial() {
         .catch(() => {}),
     });
   }
+}
+
+// Layout B (browser only): a full-screen distraction-free reader for ONE
+// Special Telegram message — big type, a single language, its own Z−/Z/Z+
+// rocker, and ‹ / › across the whole list. Opened by double-clicking a card (or
+// Enter on the keyboard selection) in renderSpecial's wa-v2 path. Keys: → / ←
+// next / prev message; ↑ / Enter / + zoom in, ↓ / − zoom out; Esc closes. Its
+// own language key (`wa:sp:rdlang`) so flipping it here does not silently
+// rewrite the list's "Both" choice.
+function openSpecialReader(rows, index) {
+  let i = index;
+  const rdFz = () => { let n = 22; try { n = parseInt(localStorage.getItem("wa:sp:rdfz"), 10) || 22; } catch {} return Math.max(16, Math.min(44, n)); };
+  let lang = (() => {
+    try { return localStorage.getItem("wa:sp:rdlang") || (localStorage.getItem("wa:sp:lang") || "hi"); }
+    catch { return "hi"; }
+  })();
+  if (lang === "both") lang = "hi";
+
+  const ov = el(`<div class="sp-reader">
+    <div class="sp-reader-bar">
+      <div class="sp-reader-pos"></div>
+      <div class="sp-reader-lang" role="group" aria-label="Language" hidden>
+        <button data-l="hi">हिंदी</button><button data-l="en">English</button>
+      </div>
+      <div class="sp-reader-size" role="group" aria-label="Text size">
+        <button data-s="-" aria-label="Smaller text">Z&minus;</button>
+        <button data-s="0" aria-label="Reset text size">Z</button>
+        <button data-s="+" aria-label="Larger text">Z+</button>
+      </div>
+      <button class="sp-reader-x" aria-label="Close (Esc)">&times;</button>
+    </div>
+    <div class="sp-reader-scroll"><div class="sp-reader-doc"></div></div>
+    <button class="sp-reader-nav sp-reader-prev" aria-label="Previous message">&lsaquo;</button>
+    <button class="sp-reader-nav sp-reader-next" aria-label="Next message">&rsaquo;</button>
+  </div>`);
+  const doc = ov.querySelector(".sp-reader-doc");
+  const scroll = ov.querySelector(".sp-reader-scroll");
+  const langSeg = ov.querySelector(".sp-reader-lang");
+  const applyFz = () => doc.style.setProperty("--sp-rd-fz", rdFz() + "px");
+  const setFz = (n) => {
+    n = Math.max(16, Math.min(44, n));
+    try { localStorage.setItem("wa:sp:rdfz", String(n)); } catch {}
+    applyFz();
+  };
+  function render() {
+    const r = rows[i];
+    if (!r) return;
+    langSeg.hidden = !(r.body_hi && r.body_en);
+    let use = lang;
+    if (use === "en" && !r.body_en) use = "hi";
+    if (use === "hi" && !r.body_hi) use = "en";
+    [...langSeg.children].forEach((b) => b.classList.toggle("on", b.dataset.l === use));
+    doc.innerHTML = specialCardHtml(r, use === "en" ? "en" : "hi");
+    ov.querySelector(".sp-reader-pos").textContent = (i + 1) + " / " + rows.length;
+    ov.querySelector(".sp-reader-prev").disabled = i <= 0;
+    ov.querySelector(".sp-reader-next").disabled = i >= rows.length - 1;
+    scroll.scrollTop = 0;
+    applyFz();
+  }
+  function goTo(n) { if (n >= 0 && n < rows.length) { i = n; render(); } }
+  function close() { ov.remove(); document.removeEventListener("keydown", onKey); }
+  function onKey(e) {
+    if (e.key === "Escape") return close();
+    if (e.key === "ArrowRight") return goTo(i + 1);
+    if (e.key === "ArrowLeft") return goTo(i - 1);
+    const ae = document.activeElement;
+    if (e.key === "Enter" && ae && ae.tagName === "BUTTON") return;   // let the button act
+    if (e.key === "ArrowUp" || e.key === "Enter" || e.key === "+" || e.key === "=") { e.preventDefault(); return setFz(rdFz() + 2); }
+    if (e.key === "ArrowDown" || e.key === "-" || e.key === "_") { e.preventDefault(); return setFz(rdFz() - 2); }
+  }
+  ov.addEventListener("click", (e) => {
+    if (e.target === ov) return close();
+    if (e.target.closest(".sp-reader-x")) return close();
+    if (e.target.closest(".sp-reader-prev")) return goTo(i - 1);
+    if (e.target.closest(".sp-reader-next")) return goTo(i + 1);
+    const l = e.target.closest("[data-l]");
+    if (l) { lang = l.dataset.l; try { localStorage.setItem("wa:sp:rdlang", lang); } catch {} return render(); }
+    const s = e.target.closest("[data-s]");
+    if (s) return setFz(s.dataset.s === "+" ? rdFz() + 2 : s.dataset.s === "-" ? rdFz() - 2 : 22);
+  });
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(ov);
+  render();
 }
 
 // ==========================================================================
@@ -9394,6 +9751,83 @@ async function renderLetterpadInto(container, getLang, opts = {}) {
     card.replaceWith(fresh);                       // (not outerHTML — we need the node back to wire it)
     wireCarousel(fresh, { pages: +fresh.dataset.pages || 1 });
   });
+  // Layout B (browser only): a click on any page scan opens the full-screen
+  // viewer, its strip running CONTINUOUSLY across every letter in the list
+  // (page 8 of one flows into page 1 of the next), so a single-page letter
+  // still has a "next". The handwriting is why the section exists, and the
+  // card carousel shrinks it to fit. Pages are read from the DOM, so they
+  // follow each card's own हिंदी / English toggle.
+  if (!window.WA_NATIVE_ACTIVE && document.body.classList.contains("wa-v2")) {
+    const lpTitleOf = (card) => { const t = card.querySelector(".lp-title"); return t ? t.textContent.trim() : ""; };
+    // A discoverable key hint above the list (browser Wide Page only).
+    if (!(container.previousElementSibling && container.previousElementSibling.classList.contains("lp-keyhint"))) {
+      container.insertAdjacentHTML("beforebegin",
+        '<div class="lp-keyhint">&darr; &uarr; select &middot; Enter / double-click open &middot; viewer: &larr; &rarr; pages, &uarr; &darr; or +/&minus; zoom</div>');
+    }
+    // Tab entry point (keyboard-map sheet, build order item 1): the list
+    // itself is one Tab stop — `container` here is the stable `.lp-list` node
+    // (Letterpad's own, or Anushthan's borrowed one), never rebuilt by
+    // paint() above, so a single listener is enough. Landing here with
+    // nothing selected picks the first card, then ↓/↑/Enter/Esc below take
+    // over exactly as they do after a mouse click — same two branches as
+    // pick() there.
+    container.tabIndex = 0;
+    container.addEventListener("focus", () => {
+      const cards = [...container.querySelectorAll(".lp-card")];
+      if (!cards.length || cards.some((c) => c.classList.contains("is-chat-target"))) return;
+      if (cards[0].dataset.id) selectDesktopChatCard(container, "letterpad", lpTitleOf, cards[0]);
+      else cards[0].classList.add("is-chat-target");
+    });
+    // Open the continuous viewer. `from` is either the page <img> the reader
+    // asked for, or a .lp-card (open it at its first page).
+    const openViewer = (from) => {
+      const isImg = from && from.tagName === "IMG";
+      const all = [];
+      let at = 0;
+      container.querySelectorAll(".lp-card").forEach((card) => {
+        const title = (card.querySelector(".lp-title") || {}).textContent || "";
+        const date = (card.querySelector(".lp-date") || {}).textContent || "";
+        const cap = [title.trim(), date.trim()].filter(Boolean).join("  ·  ");
+        if (!isImg && from === card) at = all.length;
+        card.querySelectorAll("img.lp-pageimg").forEach((pi) => {
+          if (isImg && pi === from) at = all.length;
+          all.push({ src: pi.src, cap });
+        });
+      });
+      if (all.length) openLightbox(all[at].src, { pages: all, index: at });
+    };
+    // Single click selects the card (one bold border) — handled by
+    // wireDesktopChatTarget, which every caller wires. Double-click or Enter
+    // opens the viewer.
+    container.addEventListener("dblclick", (e) => {
+      if (e.target.closest("button, a, summary, input, .pc-dot")) return;
+      const im = e.target.closest("img.lp-pageimg");
+      const card = e.target.closest(".lp-card"); if (!card) return;
+      try { getSelection().removeAllRanges(); } catch {}
+      openViewer(im || card);
+    });
+    const onListKey = (e) => {
+      if (!container.isConnected) { document.removeEventListener("keydown", onListKey); return; }
+      if (document.querySelector(".lightbox")) return;
+      const ae = document.activeElement;
+      if (ae && (["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(ae.tagName) || ae.isContentEditable)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const cards = [...container.querySelectorAll(".lp-card")];
+      if (!cards.length) return;
+      const at = cards.findIndex((c) => c.classList.contains("is-chat-target"));
+      const pick = (idx) => {
+        const c = cards[idx]; if (!c) return;
+        if (c.dataset.id) selectDesktopChatCard(container, "letterpad", lpTitleOf, c);
+        else { cards.forEach((x) => x.classList.remove("is-chat-target")); c.classList.add("is-chat-target"); }
+        c.scrollIntoView({ block: "nearest" });
+      };
+      if (e.key === "ArrowDown") { e.preventDefault(); pick(at < 0 ? 0 : Math.min(at + 1, cards.length - 1)); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); pick(at < 0 ? cards.length - 1 : Math.max(at - 1, 0)); }
+      else if (e.key === "Enter") { if (cards[at]) openViewer(cards[at]); }
+      else if (e.key === "Escape") { cards.forEach((c) => c.classList.remove("is-chat-target")); }
+    };
+    document.addEventListener("keydown", onListKey);
+  }
   return { repaint: paint };
 }
 

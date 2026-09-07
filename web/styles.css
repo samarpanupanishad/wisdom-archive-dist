@@ -32,6 +32,13 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+/* Global keyboard focus ring. Only :focus-visible fires it (Tab, not a mouse
+   click), and it only applies where nothing more specific already answers —
+   a component with its own `:focus { outline:none; box-shadow: var(--ring) }`
+   rule (searchbox, textareas, .bc-card, …) outranks this by specificity and
+   is untouched. This is the fallback for everything that had NO focus style
+   at all — cards, results, plain buttons — so Tab is never invisible. */
+:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; border-radius: 4px; }
 body { font-family: var(--sans); background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.5; }
 a { color: inherit; text-decoration: none; }
 button { font-family: inherit; cursor: pointer; }
@@ -352,7 +359,7 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ---------------- Search results ---------------- */
 .results { display: flex; flex-direction: column; gap: 14px; }
-.result { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 22px; display: grid; grid-template-columns: 140px 1fr 1fr; gap: 22px; align-items: start; }
+.result { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 22px; display: grid; grid-template-columns: 140px 1fr 1fr; gap: 22px; align-items: start; cursor: pointer; }
 .result .meta + .lang-col { padding-left: 28px; }   /* extra breathing room after the thumbnail specifically (Hindi column, since it directly follows .meta) */
 .result .meta .thumb { width: 100%; height: 100px; object-fit: contain; border-radius: 10px; background: #f4f3ef; border: 1px solid var(--border-soft); cursor: pointer; display: block; transition: box-shadow .12s, transform .12s; }
 .result .meta .thumb:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); }
@@ -450,23 +457,28 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
 .transcript-section .section-head { margin-bottom: 14px; }
 .transcript-section .section-head h2 { font-family: var(--serif); font-size: 19px; font-weight: 600; }
 
-/* ---------------- Lightbox (full-screen image zoom) ---------------- */
-.lightbox { position: fixed; inset: 0; z-index: 10000; background: rgba(20, 16, 28, .94);
-  display: flex; align-items: center; justify-content: center; padding: 0;
-  backdrop-filter: blur(3px); animation: lb-in .18s ease; }
+/* ---------------- Lightbox (full-screen image viewer) ----------------
+   A horizontal page strip (.lb-strip translated by -cur*100%); each .lb-slide
+   fills the viewport and holds one zoomable image. openLightbox() in app.js
+   owns the geometry -- swipe / arrows page, up/down + wheel zoom, drag pans. */
+.lightbox { position: fixed; inset: 0; z-index: 10000; background: #14101c;
+  overflow: hidden; animation: lb-in .18s ease; }
 @keyframes lb-in { from { opacity: 0; } to { opacity: 1; } }
-.lb-stage { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: zoom-in; }
-.lb-stage.zoomed { cursor: grab; }
-/* Fill the whole page — the image opens at full viewport size (no frame/margins),
-   then click or scroll zooms further and drag pans. */
-.lb-stage img { max-width: 100vw; max-height: 100vh; width: auto; height: auto; object-fit: contain;
-  user-select: none; transition: transform .12s ease-out; transform-origin: center center; will-change: transform; }
+.lb-strip { position: absolute; inset: 0; display: flex; will-change: transform; touch-action: pan-y; }
+.lb-strip.animating { transition: transform .22s ease-out; }
+.lb-slide { flex: 0 0 100%; height: 100vh; display: flex; align-items: center; justify-content: center;
+  overflow: hidden; cursor: zoom-in; }
+.lb-slide.zoomed { cursor: grab; touch-action: none; }
+.lb-slide img { max-width: 100vw; max-height: 100vh; width: auto; height: auto; object-fit: contain;
+  user-select: none; -webkit-user-drag: none; transition: transform .14s ease-out;
+  transform-origin: center center; will-change: transform; }
+.lb-slide.zoomed img { transition: none; }
 .lb-close { position: fixed; top: 18px; right: 22px; width: 42px; height: 42px; border-radius: 50%;
   border: none; background: rgba(255,255,255,.14); color: #fff; font-size: 26px; line-height: 1;
-  cursor: pointer; z-index: 2; transition: background .12s; }
+  cursor: pointer; z-index: 3; transition: background .12s; }
 .lb-close:hover { background: rgba(255,255,255,.28); }
 .lb-hint { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-  color: rgba(255,255,255,.7); font-size: 12.5px; letter-spacing: .02em; pointer-events: none; }
+  color: rgba(255,255,255,.7); font-size: 12.5px; letter-spacing: .02em; pointer-events: none; z-index: 3; }
 
 /* ---------------- My Decode (rich-text reflections) ---------------- */
 .section-head h2 .dec-ico { display: inline-flex; vertical-align: middle; margin-right: 9px; width: 30px; height: 30px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); align-items: center; justify-content: center; }
@@ -6963,4 +6975,135 @@ body.wa-v2 .ct-row-prev {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 body.wa-v2 .ct-row-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+
+/* --- Layout B: Special Telegram + Letterhead reading (browser only) ------
+   R2: every NEW selector is scoped under body.wa-v2 -- the .sp-reader overlay
+   is appended to <body> but still matches as a descendant, and the phone can
+   never carry wa-v2 (applyLayout guards on !WA_NATIVE_ACTIVE). The .lb-arrow /
+   .lb-count rules sit alongside the existing unscoped .lb-close / .lb-hint and
+   only render when openLightbox() is given a multi-page set. */
+
+/* the Special list: a language toggle + a text-size rocker, painted above the
+   cards; the list becomes ONE centred column sized by --sp-fz. */
+body.wa-v2 .sp-page { max-width: none; }
+body.wa-v2 .sp-toolbar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  padding: 8px 0 14px; margin-bottom: 4px; background: var(--bg);
+}
+body.wa-v2 .sp-seg, body.wa-v2 .sp-size {
+  display: inline-flex; border: 1px solid var(--border);
+  border-radius: 999px; overflow: hidden;
+}
+body.wa-v2 .sp-seg button, body.wa-v2 .sp-size button {
+  border: none; background: var(--surface); color: var(--muted);
+  font: 600 13px var(--sans); padding: 7px 15px; cursor: pointer;
+}
+body.wa-v2 .sp-seg button + button,
+body.wa-v2 .sp-size button + button { border-left: 1px solid var(--border); }
+body.wa-v2 .sp-seg button.on { background: var(--accent); color: #fff; }
+body.wa-v2 .sp-size button:hover { background: var(--accent-soft); color: var(--accent); }
+
+body.wa-v2 .sp-list { --sp-fz: 17px; }
+body.wa-v2 .sp-list .sp-card {
+  max-width: 860px; margin-left: auto; margin-right: auto; cursor: pointer;
+}
+body.wa-v2 .sp-list .sp-card.sp-dual { max-width: 1180px; }
+body.wa-v2 .sp-list .sp-card:hover { border-color: var(--accent-2); }
+body.wa-v2 .sp-list .sp-body,
+body.wa-v2 .sp-list .sp-sign { font-size: var(--sp-fz); line-height: 1.8; }
+body.wa-v2 .sp-list .sp-title { font-size: calc(var(--sp-fz) + 2px); }
+
+/* the Special Focus Reader: one message, full screen, big type */
+body.wa-v2 .sp-reader {
+  position: fixed; inset: 0; z-index: 9500; background: var(--bg);
+  display: flex; flex-direction: column; animation: lb-in .16s ease;
+}
+body.wa-v2 .sp-reader-bar {
+  flex: none; display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface);
+}
+body.wa-v2 .sp-reader-pos { font: 600 12.5px var(--sans); color: var(--muted); }
+body.wa-v2 .sp-reader-lang, body.wa-v2 .sp-reader-size {
+  display: inline-flex; border: 1px solid var(--border);
+  border-radius: 999px; overflow: hidden;
+}
+body.wa-v2 .sp-reader-lang button, body.wa-v2 .sp-reader-size button {
+  border: none; background: var(--surface); color: var(--muted);
+  font: 600 13px var(--sans); padding: 6px 13px; cursor: pointer;
+}
+body.wa-v2 .sp-reader-lang button + button,
+body.wa-v2 .sp-reader-size button + button { border-left: 1px solid var(--border); }
+body.wa-v2 .sp-reader-lang button.on { background: var(--accent); color: #fff; }
+/* `display` above outranks the UA sheet's `[hidden] { display: none }` (no
+   global !important reset in this stylesheet), so a hi-only message would keep
+   showing the toggle -- same trap as .ds-q-clear / .m-menu a[hidden]. */
+body.wa-v2 .sp-reader-lang[hidden] { display: none; }
+body.wa-v2 .sp-reader-size { margin-left: auto; }
+body.wa-v2 .sp-reader-x {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; border: none;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 22px; line-height: 1; cursor: pointer;
+}
+body.wa-v2 .sp-reader-scroll { flex: 1; overflow-y: auto; padding: 40px 24px 90px; }
+body.wa-v2 .sp-reader-doc { --sp-rd-fz: 22px; max-width: 760px; margin: 0 auto; }
+body.wa-v2 .sp-reader-doc .sp-card {
+  border: none; box-shadow: none; background: none; padding: 0; margin: 0;
+}
+body.wa-v2 .sp-reader-doc .sp-title { font-size: calc(var(--sp-rd-fz) + 4px); margin-bottom: 18px; }
+body.wa-v2 .sp-reader-doc .sp-body,
+body.wa-v2 .sp-reader-doc .sp-sign { font-size: var(--sp-rd-fz); line-height: 1.85; }
+body.wa-v2 .sp-reader-doc .sp-hitag { position: static; display: inline-block; margin-bottom: 12px; }
+body.wa-v2 .sp-reader-nav {
+  position: fixed; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 64px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); color: var(--accent); font-size: 24px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+body.wa-v2 .sp-reader-prev { left: 18px; }
+body.wa-v2 .sp-reader-next { right: 18px; }
+body.wa-v2 .sp-reader-nav:disabled { opacity: .3; cursor: default; }
+@media (max-width: 900px) { body.wa-v2 .sp-reader-nav { display: none; } }
+
+/* Wide Page list keyboard model: a click or the down/up arrows select a card
+   (ONE bold border, reusing the "being discussed" marker so a card never shows
+   two highlights); Enter or a double-click opens it. */
+body.wa-v2 .sp-keyhint, body.wa-v2 .lp-keyhint {
+  font: 500 12px var(--sans); color: var(--muted);
+  margin: 0 auto 14px; max-width: 860px;
+}
+body.wa-v2 .lp-keyhint { max-width: 760px; }
+body.wa-v2 .lp-list .lp-card { cursor: pointer; }
+body.wa-v2 .lp-list .lp-card:hover { border-color: var(--accent-2); }
+body.wa-v2 .sp-list .sp-card.is-chat-target,
+body.wa-v2 .lp-list .lp-card.is-chat-target {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--accent), var(--shadow);
+}
+/* Tab lands ON the list itself (app.js: the list's own `focus` handler), and
+   the card it selects already carries the ring above — a second outline
+   around the whole list would just double it. Same house rule as
+   .bc-card:focus-visible. */
+body.wa-v2 .sp-list:focus-visible, body.wa-v2 .lp-list:focus-visible { outline: none; }
+
+/* Letterhead scans open the zoom/page-nav lightbox on double-click */
+body.wa-v2 .lp-pageimg { cursor: zoom-in; }
+
+/* lightbox page navigation + caption (multi-page strips only) */
+.lb-arrow {
+  position: fixed; top: 50%; transform: translateY(-50%);
+  width: 46px; height: 66px; border: none; border-radius: 12px;
+  background: rgba(255,255,255,.14); color: #fff; font-size: 30px; line-height: 1;
+  cursor: pointer; z-index: 3; transition: background .12s;
+}
+.lb-arrow:hover { background: rgba(255,255,255,.30); }
+.lb-prev { left: 20px; }
+.lb-next { right: 20px; }
+.lb-count {
+  position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+  max-width: 62vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: rgba(255,255,255,.9); font: 600 13px var(--sans); z-index: 3;
+}
+@media (max-width: 640px) { .lb-arrow { display: none; } }
 
