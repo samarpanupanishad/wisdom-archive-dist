@@ -968,8 +968,77 @@ function wireV2Nav(nav) {
       document.querySelectorAll("#v2nav .v2-group.open").forEach(shut);
     }, true);
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") document.querySelectorAll("#v2nav .v2-group.open").forEach(shut);
+      if (e.key !== "Escape") return;
+      const open = [...document.querySelectorAll("#v2nav .v2-group.open")];
+      open.forEach(shut);
+      // Hand focus back to the button that opened it — a closed menu's link
+      // is display:none, and losing it drops focus to <body> with nowhere
+      // to Tab from. Only ever one open at a time, but this reads correctly
+      // either way. (keyboard-map sheet: "Esc -> focus back on the menu name")
+      const btn = open[0] && open[0].querySelector(".v2-grp-btn");
+      if (btn) btn.focus();
     }, true);
+
+    // Digit shortcuts 1-6 jump to the bar's six slots, in bar order; once a
+    // menu is open, ↓/↑ move inside it and ←/→ hop to the next/previous one.
+    // Bundled together deliberately (keyboard-map sheet, build order item 2)
+    // — a digit that opens a menu you then can't navigate is half a feature.
+    // Desktop Wide Page only: buildV2Nav() is never called under
+    // window.WA_NATIVE_ACTIVE, but a Classic-layout desktop reaches this same
+    // wired #v2nav too (CSS alone hides .v2bar there), so the check is live.
+    const v2Digits = [
+      { type: "item", route: "home" },      // 1
+      { type: "group", key: "gurumsg" },    // 2
+      { type: "group", key: "satsang" },    // 3
+      { type: "item", route: "random" },    // 4
+      { type: "group", key: "sutradhar" },  // 5 — offsetParent is null for a non-admin, see below
+      { type: "group", key: "more" },       // 6
+    ];
+    const openGroup = (group) => {
+      shutAll(group);
+      group.classList.add("open");
+      const btn = group.querySelector(".v2-grp-btn");
+      if (btn) btn.setAttribute("aria-expanded", "true");
+      const first = group.querySelector(".v2-menu a");
+      if (first) first.focus();
+    };
+    document.addEventListener("keydown", (e) => {
+      if (!document.body.classList.contains("wa-v2")) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      const ae = document.activeElement;
+      if (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable)) return;
+      if (document.querySelector(".lightbox")) return;
+      const n = Number(e.key);
+      if (n >= 1 && n <= 6 && String(n) === e.key) {
+        const spec = v2Digits[n - 1];
+        if (spec.type === "item") {
+          const a = nav.querySelector(`a.v2-item[data-route="${spec.route}"]`);
+          if (a) { e.preventDefault(); a.click(); }
+          return;
+        }
+        const group = nav.querySelector(`.v2-group[data-group="${spec.key}"]`);
+        // offsetParent is null for a hidden .mod-only group (non-admin) and
+        // for a group whose children were all pending and rendered nothing.
+        if (!group || group.offsetParent === null) return;
+        e.preventDefault();
+        openGroup(group);
+        return;
+      }
+      // Everything below only acts while focus is already inside an open menu.
+      const menu = ae && ae.closest && ae.closest(".v2-menu");
+      if (!menu) return;
+      const links = [...menu.querySelectorAll("a")];
+      const at = links.indexOf(ae);
+      if (e.key === "ArrowDown") { e.preventDefault(); links[(at + 1) % links.length].focus(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); links[(at - 1 + links.length) % links.length].focus(); }
+      else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        const visible = groups.filter((g) => g.offsetParent !== null);
+        const gi = visible.indexOf(menu.closest(".v2-group"));
+        if (gi < 0) return;
+        openGroup(visible[(gi + (e.key === "ArrowRight" ? 1 : -1) + visible.length) % visible.length]);
+      }
+    });
   }
 }
 function setActiveNav(route) {
