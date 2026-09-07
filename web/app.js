@@ -891,9 +891,20 @@ const V2NAV = [
     { key: "community", label: "Samuhik Satsang", hash: "#/community", badge: "data-satsang-badge" },
     { key: "anubhuti", label: "Anubhuti Sharing", hash: "#/anubhuti", badge: "data-anubhuti-badge" },
   ] },
-  { key: "dhyan", label: "Dhyan Diary", hash: "#/dhyan" },
+  // Operator (2026-09-07): Lucky Msg takes the old Dhyan Diary slot, Sutradhar
+  // takes the old Lucky Msg slot, and Dhyan Diary moves INTO More (above
+  // Favorites). More stays last. Dhyan Diary carries no unread state, so the
+  // `data-v2-more-group-badge` sum (broadcast alone) is unchanged.
   { key: "random", label: "Lucky Msg", hash: "#/random" },
+  { group: "sutradhar", label: "Sutradhar", modOnly: true, groupBadge: "data-sutradhar-group-badge", children: [
+    { key: "moderator", label: "Moderator", hash: "#/moderator" },
+    { key: "gyanreview", label: "Ganga Review", hash: "#/gyanreview" },   // §8.3 — desktop page now exists
+    { key: "admintalks", label: "Admin Talks", hash: "#/admintalks", badge: "data-admintalk-badge" },
+    { key: "admin", label: "Add Guru's Msg", hash: "#/admin" },
+    { key: "stats", label: "Statistics", hash: "#/stats" },
+  ] },
   { group: "more", label: "More", groupBadge: "data-v2-more-group-badge", children: [
+    { key: "dhyan", label: "Dhyan Diary", hash: "#/dhyan" },
     { key: "favorites", label: "Favorites", hash: "#/favorites" },
     { key: "broadcast", label: "Announcements", hash: "#/broadcast", badge: "data-broadcast-badge" },
     { key: "gyan", label: "Upanishad Ganga", hash: "#/gyan" },   // §8.2 — desktop page now exists
@@ -902,13 +913,6 @@ const V2NAV = [
     { key: "settings", label: "Settings", hash: "#/settings" },
     { key: "about", label: "Our Goal", hash: "#/about" },
     { key: "help", label: "Help & Support", hash: "#/help" },
-  ] },
-  { group: "sutradhar", label: "Sutradhar", modOnly: true, groupBadge: "data-sutradhar-group-badge", children: [
-    { key: "moderator", label: "Moderator", hash: "#/moderator" },
-    { key: "gyanreview", label: "Ganga Review", hash: "#/gyanreview" },   // §8.3 — desktop page now exists
-    { key: "admintalks", label: "Admin Talks", hash: "#/admintalks", badge: "data-admintalk-badge" },
-    { key: "admin", label: "Add Guru's Msg", hash: "#/admin" },
-    { key: "stats", label: "Statistics", hash: "#/stats" },
   ] },
 ];
 function buildV2Nav() {
@@ -954,13 +958,18 @@ function wireV2Nav(nav) {
   });
   if (!wireV2Nav._doc) {
     wireV2Nav._doc = true;
+    // ⚠ CAPTURE phase. Many click handlers in this file call
+    // e.stopPropagation() (message cards, buttons, the search box), so a
+    // bubble-phase listener here never fires for a click on that content and
+    // the dropdown stays open until the group button is clicked again. Capture
+    // runs before those handlers, so an outside click always closes.
     document.addEventListener("click", (e) => {
       if (e.target.closest("#v2nav")) return;
       document.querySelectorAll("#v2nav .v2-group.open").forEach(shut);
-    });
+    }, true);
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") document.querySelectorAll("#v2nav .v2-group.open").forEach(shut);
-    });
+    }, true);
   }
 }
 function setActiveNav(route) {
@@ -5761,8 +5770,11 @@ function renderInfo(kind) {
     // not hot-swap the shell). Wired like #sync-now-btn just above.
     const _lc = document.getElementById("layout-classic-btn");
     const _lv = document.getElementById("layout-v2-btn");
-    if (_lc) _lc.addEventListener("click", () => { try { localStorage.setItem("wa:layout", "classic"); } catch {} location.reload(); });
-    if (_lv) _lv.addEventListener("click", () => { try { localStorage.setItem("wa:layout", "v2"); } catch {} location.reload(); });
+    // Operator 2026-09-07: land on Home after the switch, not back on Settings.
+    // The hash is set before reload() so the fresh load routes to Home.
+    const _setLayout = (v) => { try { localStorage.setItem("wa:layout", v); } catch {} location.hash = "#/"; location.reload(); };
+    if (_lc) _lc.addEventListener("click", () => _setLayout("classic"));
+    if (_lv) _lv.addEventListener("click", () => _setLayout("v2"));
     // Mobile app only: daily-reminder settings + mobile-appropriate wording
     // (wa-native.js owns all of it; no-op on desktop).
     if (window.WA_NATIVE && WA_NATIVE.enhanceSettings) WA_NATIVE.enhanceSettings();
@@ -6553,64 +6565,68 @@ function applyLayout() {
     const sb = document.querySelector(".searchbox");
     const av = document.getElementById("avatar-wrap");
     const hi = document.getElementById("hi-seg");   // §5.2 — search language, so it lives with the search box, not in the strip
+    const fs = document.getElementById("fs-btn");    // operator 2026-09-07 — a global action, so it sits in the header, not a floating control
     if (right && sb) right.appendChild(sb);
     if (right && hi) right.appendChild(hi);
+    if (right && fs) right.appendChild(fs);
     if (right && av) right.appendChild(av);
-    buildV2Strip();   // LAYOUT_B_PLAN.md §5 — the context strip under the header
+    buildV2Dock();
   }
 }
 
-// LAYOUT_B_PLAN.md §5 — the context strip: one bar under the header showing the
-// daily message's id/date (left) and Favorite / Satsang / Fullscreen (right).
-// Built ONCE; the controls are the SAME single nodes as classic, relocated by
-// appendChild the same way §3.2 does the search box (index.html untouched).
-// syncV2Strip() then follows the shown message; §5.3 hides the whole thing on
-// any route that is not a daily-message view.
-function buildV2Strip() {
+// Operator 2026-09-07: the LAYOUT_B_PLAN.md §5 context strip is GONE. It was
+// pared down step by step — favourite dropped (the image hearts cover it), the
+// ID display dropped, the "Hindi/English (Original)" labels dropped — until
+// only two controls were left, and the operator asked for those to float in
+// the screen corners rather than fill a full-width bar, so the message images
+// ride higher. The two controls:
+//   • "Join Satsang for this msg" — orange pill, BOTTOM-RIGHT, opens THIS
+//     message's discussion panel (the relocated #community-btn + a text label).
+//   • the dd/mm/yyyy date jump (#cal-nav-wrap) — small, purple outline,
+//     BOTTOM-LEFT; the message's own date shows as its placeholder.
+// Both are the SAME single nodes as classic, relocated by appendChild the way
+// §3.2 moves the search box (index.html untouched). syncV2Dock() follows the
+// shown message and hides both on any non-message view; in browser fullscreen
+// both hide (body.wa-fs) so only the header remains.
+function buildV2Dock() {
   if (window.WA_NATIVE_ACTIVE) return;
-  const bar = document.getElementById("v2bar");
-  if (!bar || document.getElementById("v2strip")) return;
-  const strip = el(`<div class="v2strip" id="v2strip" hidden>` +
-    `<div class="v2strip-left" id="v2strip-left"></div>` +
-    `<div class="v2strip-right" id="v2strip-right">` +
-      `<button class="btn v2-fav" id="v2-fav" type="button" data-fav data-id="" title="Add to Favorites">${HEART_ICON}<span>Add to Favorites</span></button>` +
-    `</div></div>`);
-  bar.after(strip);
-  const left = strip.querySelector("#v2strip-left");
-  const idw = document.getElementById("id-nav-wrap");
-  const calw = document.getElementById("cal-nav-wrap");
-  if (left && idw) left.appendChild(idw);
-  if (left && calw) left.appendChild(calw);
-  const right = strip.querySelector("#v2strip-right");
+  if (document.getElementById("v2dock")) return;
   const comm = document.getElementById("community-btn");
-  const fs = document.getElementById("fs-btn");
-  if (right && comm) right.appendChild(comm);   // "Satsang" in the mockup
-  if (right && fs) right.appendChild(fs);       // "Fullscreen"
-  // The favourite button cannot be relocated like the others: .detail-bar is
-  // rebuilt by buildDetail() on every render, so there is no stable node. The
-  // strip renders its OWN button; it carries data-fav + data-id so the shared
-  // applyFavState() keeps it in sync with the image hearts, and syncV2Strip()
-  // repoints data-id + the active class every time the shown message changes.
-  const favBtn = strip.querySelector("#v2-fav");
-  favBtn.addEventListener("click", () => { const id = favBtn.dataset.id; if (id) toggleFavFor(id); });
+  const calw = document.getElementById("cal-nav-wrap");
+  if (comm && !comm.querySelector(".v2-commlabel")) {
+    comm.appendChild(el(`<span class="v2-commlabel">Join Satsang for this msg</span>`));
+  }
+  const dock = el(`<div class="v2dock" id="v2dock" hidden></div>`);           // bottom-right — the Satsang pill
+  if (comm) dock.appendChild(comm);
+  document.body.appendChild(dock);
+  const dateDock = el(`<div class="v2datedock" id="v2datedock" hidden></div>`); // bottom-left — the date jump
+  if (calw) dateDock.appendChild(calw);
+  document.body.appendChild(dateDock);
 }
 
-// Show the strip only for a daily-message view (id is a bare number), and point
-// its favourite button at that message. Called from updateIdNav(), which every
-// view funnels through — updateIdNav(null) at the top of route() hides it again.
-function syncV2Strip(id) {
-  const strip = document.getElementById("v2strip");
-  if (!strip) return;   // classic / phone / not built
+// Show both floating controls only for a daily-message view (id is a bare
+// number) and set the date box's placeholder to that message's date. Called
+// from updateIdNav(), which every view funnels through — updateIdNav(null)
+// hides them again.
+function syncV2Dock(id, date) {
+  const dock = document.getElementById("v2dock");
+  if (!dock) return;   // classic / phone / not built
   const show = !!id && /^\d+$/.test(String(id));
-  strip.hidden = !show;
+  dock.hidden = !show;
+  const dd = document.getElementById("v2datedock");
+  if (dd) dd.hidden = !show;
   if (!show) return;
-  const fav = document.getElementById("v2-fav");
-  if (!fav) return;
-  fav.dataset.id = String(id);
-  const on = store.isFav(String(id));
-  fav.classList.toggle("active", on);
-  fav.title = on ? "In Favorites" : "Add to Favorites";
-  const s = fav.querySelector("span"); if (s) s.textContent = on ? "In Favorites" : "Add to Favorites";
+  const inp = document.getElementById("cal-nav-input");
+  if (inp) inp.placeholder = date ? fmtDate(date) : "dd/mm/yyyy";
+}
+
+// Operator 2026-09-07: in browser fullscreen the Wide Page hides its floating
+// dock so only the top nav is left — a clean full-screen read, the header still
+// there to move between messages. Desktop only (R3); the phone never fullscreens.
+if (!window.WA_NATIVE_ACTIVE) {
+  document.addEventListener("fullscreenchange", () => {
+    document.body.classList.toggle("wa-fs", !!document.fullscreenElement);
+  });
 }
 
 document.getElementById("collapse-btn").addEventListener("click", () => { localStorage.setItem("wa:collapsed", "1"); applyCollapsed(); });
@@ -6878,17 +6894,29 @@ function initCalNav() {
   let counts = null;
   let errTimer = null;
 
+  // The Wide Page floats the date box in a screen CORNER, so the calendar (and
+  // the "not found" note) has to open away from the nearest edges: upward when
+  // the box sits low, and anchored by its LEFT edge when the box sits left.
+  // In the classic topbar the box is top-right, so both fall back to today's
+  // drop-down / right-anchored behaviour.
+  function placeAbove(r) { return r.top > window.innerHeight * 0.55; }
+  function anchorH(node, r) {
+    if (r.left < window.innerWidth * 0.5) { node.style.right = "auto"; node.style.left = r.left + "px"; }
+    else { node.style.left = "auto"; node.style.right = (window.innerWidth - r.right) + "px"; }
+  }
   function positionPop() {
     const r = wrap.getBoundingClientRect();
-    pop.style.top = (r.bottom + 8) + "px";
-    pop.style.right = (window.innerWidth - r.right) + "px";
+    anchorH(pop, r);
+    if (placeAbove(r)) { pop.style.top = "auto"; pop.style.bottom = (window.innerHeight - r.top + 8) + "px"; }
+    else { pop.style.bottom = "auto"; pop.style.top = (r.bottom + 8) + "px"; }
   }
 
   function hideErr() { errBox.hidden = true; clearTimeout(errTimer); }
   function showErr() {
     const r = wrap.getBoundingClientRect();
-    errBox.style.top = (r.bottom + 8) + "px";
-    errBox.style.right = (window.innerWidth - r.right) + "px";
+    anchorH(errBox, r);
+    if (placeAbove(r)) { errBox.style.top = "auto"; errBox.style.bottom = (window.innerHeight - r.top + 8) + "px"; }
+    else { errBox.style.bottom = "auto"; errBox.style.top = (r.bottom + 8) + "px"; }
     errBox.hidden = false;
     clearTimeout(errTimer);
     errTimer = setTimeout(hideErr, 3000);
@@ -6967,9 +6995,9 @@ function updateIdNav(id, date) {
     numEl.textContent = id ? String(id) : "";
     dateEl.textContent = id && date ? "· " + fmtDate(date) : "";
   }
-  // Layout B context strip follows the same signal (LAYOUT_B_PLAN.md §5.3):
-  // shown for a daily message, hidden by the updateIdNav(null) at route() start.
-  if (typeof syncV2Strip === "function") syncV2Strip(id);
+  // Layout B floating dock follows the same signal: shown for a daily message,
+  // hidden by the updateIdNav(null) every non-message route funnels through.
+  if (typeof syncV2Dock === "function") syncV2Dock(id, date);
   // Every place the viewed wisdom changes (Home's carousel, search/favorites
   // detail, the standalone entry page) funnels through here — so an already-
   // open Community panel's chat follows along to whichever wisdom is now
@@ -9630,6 +9658,22 @@ async function renderGangaDesktop() {
     });
   };
   paintCompose();
+
+  // ⚠ Same startup race as the phone's gyanPage: WA.deviceSignIn() is fired
+  // un-awaited at boot and DEVICE_GATE.prime() usually arms the gate before it
+  // lands, so a moderator opening this page in that gap gets the "Register this
+  // device" box despite an enrolled device, cleared only by a re-render. Join
+  // the single-flight handshake and repaint once if the outcome moved — the
+  // same settle renderDeviceGate() does for full-page routes. (2026-09-07)
+  if (isModerator() && !WA.deviceIsSignedIn()) {
+    const wasBlocked = DEVICE_GATE.blocksAction();
+    (async () => {
+      try { await DEVICE_GATE.prime(); } catch (_) {}
+      try { await WA.deviceSignIn(); } catch (_) {}
+      if (!current(nav)) return;
+      if (DEVICE_GATE.blocksAction() !== wasBlocked) paintCompose();
+    })();
+  }
 
   // The authoritative limit + today's allowance, in one call, after the box is
   // already usable. Repainting the box is safe ONLY here — once, within a second
@@ -22995,6 +23039,26 @@ const MOBILE_UI = (() => {
       });
     };
     paintCompose();
+
+    // ⚠ The device-auth handshake (WA.deviceSignIn) is fired UN-AWAITED at
+    // startup and is the slow one — network + Android Keystore. DEVICE_GATE.
+    // prime() beside it usually wins the race and arms the gate first, so a
+    // moderator who opens this screen in that gap sees blocksAction() read
+    // `armed === true && !deviceIsSignedIn()` and gets the "Register this
+    // device" box even though their device IS enrolled — and only a back-and-
+    // return, which re-runs paintCompose() after the handshake landed, clears
+    // it. Settle it here the same way renderDeviceGate() does for full-page
+    // routes: join the single-flight handshake (nearly free) and repaint once
+    // if the outcome actually moved. (2026-09-07)
+    if (isModerator() && !WA.deviceIsSignedIn()) {
+      const wasBlocked = DEVICE_GATE.blocksAction();
+      (async () => {
+        try { await DEVICE_GATE.prime(); } catch (_) {}
+        try { await WA.deviceSignIn(); } catch (_) {}
+        if (!node.isConnected) return;
+        if (DEVICE_GATE.blocksAction() !== wasBlocked) paintCompose();
+      })();
+    }
 
     // The authoritative limit AND today's allowance, in one call, after the box
     // is already usable. Repainting is safe here and only here: it happens once,
