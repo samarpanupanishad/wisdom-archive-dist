@@ -18209,7 +18209,10 @@ const MOBILE_UI = (() => {
   // ordinary scrolling page must NOT (it would crop that page for nothing).
   // #m-msg / #am-reply joined when Msg to Admin gained its pinned pane
   // (operator, 2026-08-22) — before that they were deliberately absent.
-  const KB_PRESHRINK = ".wc-ta, #m-ganga-ta, #m-msg, #am-reply";
+  // ⚠ #m-ganga-ta LEFT this list on 2026-09-07 when Upanishad Ganga's thought
+  // list was removed and its screen went back to an ordinary scrolling page —
+  // it is no longer a pinned composer, so pre-shrinking would crop for nothing.
+  const KB_PRESHRINK = ".wc-ta, #m-msg, #am-reply";
   let _preShrinkCheck = 0;
   document.addEventListener("focusin", (e) => {
     const t = e.target;
@@ -22805,23 +22808,17 @@ const MOBILE_UI = (() => {
 
   async function gyanPage(params) {
     const node = el(`<div class="m-gyan"></div>`);
-    // ⚠ TWO PANES, NOT A SCROLLING PAGE (operator, 2026-08-21). The नम्र विनंती
-    // and the box are PINNED and always on screen; the thoughts scroll.
-    // `m-page-ganga` is what makes .m-page a fixed-height flex column — see the
-    // block in styles.css, which mirrors .m-community's treatment of --m-vvh so
-    // the box rides on top of the keyboard instead of behind it.
-    //
-    // ⚠ THE PINNED PANE IS AT THE TOP (operator, 2026-08-22 — it was at the
-    // bottom for one day, in 9.46). The screen is now shaped like Msg to Admin:
-    // write first, read under it. Two consequences that are easy to miss:
-    //   · the DOM order below IS the visual order, so swapping these two lines
-    //     back is the whole of undoing it — but .m-ganga-head's border and the
-    //     .m-kb rules in styles.css assume top, and would need swapping too;
-    //   · nothing collapses while the keyboard is up any more. The box sits
-    //     ABOVE the fold now, so it cannot be covered, and the 9.46 rules that
-    //     shrank the नम्र विनंती to claw back room were removed rather than
-    //     kept — they would only shift the textarea under the user's finger.
-    pageFrame("Upanishad Ganga", node, "m-page-ganga");
+    // ⚠ AN ORDINARY SCROLLING PAGE since 2026-09-07 (operator). It was two
+    // pinned panes — नम्र विनंती + compose box on top, the last three thoughts
+    // scrolling under them — until the "Latest Notification" list was removed
+    // from this screen: the orange "View Last 5 Notifications" button and
+    // #/m/gyanlast5 now own reading the hourly thoughts on mobile. With nothing
+    // left to scroll under the box, the --m-vvh flex-column scaffolding
+    // (`m-page-ganga`), the internal-scroll head cap and #m-ganga-ta's
+    // KB_PRESHRINK entry all went with it — the page is short enough now that
+    // the browser's own scroll-into-view on focus is the right behaviour.
+    // Don't reinstate any of that without the list coming back too.
+    pageFrame("Upanishad Ganga", node);
     // ⚠ Diya icon before the title, this page only (operator, 2026-08-26).
     // Safe to set directly: setChrome() (called by EVERY pageFrame(), on every
     // route) does `$("m-title").textContent = title`, which wipes this markup
@@ -22830,175 +22827,49 @@ const MOBILE_UI = (() => {
 
     // ⚠ COMPOSE BOX ABOVE THE INSTRUCTIONS, since 2026-08-26 (operator). Was
     // the reverse — instructions, then box — from 2026-08-22 until this. The
-    // DOM order below IS the visual order; `.m-page-ganga .m-ganga-instr` /
-    // `.m-ganga-box` margins in styles.css assume THIS order.
+    // DOM order below IS the visual order; the `.m-ganga-instr` top margin in
+    // styles.css assumes THIS order.
     node.innerHTML =
-      // The pinned pane. Both children were once siblings of the list and
-      // scrolled away with it; they are wrapped so ONE flex child stays out of
-      // the scroller.
+      // `.m-ganga-head` wraps the box + नम्र विनंती. It was the pinned pane of
+      // a two-pane screen; now it is just the first block of an ordinary page,
+      // kept as a wrapper so the styles.css rules still have a hook.
       `<div class="m-ganga-head">` +
         `<div id="m-ganga-compose"></div>` +
         `<div class="m-ganga-instr" id="m-ganga-instr"></div>` +
       `</div>` +
-      // ⚠ The link to their own quotes goes HERE — below the नम्र विनंती and
-      // above "Latest Notification" (operator, 2026-09-04) — as its OWN flex
-      // row between the head and the list, NOT inside .m-ganga-head. It used to
-      // be the head's last child, but the head is capped at max-height:72% and
-      // scrolls internally, so on a big-font device the compose box + the
-      // seven-line नम्र विनंती filled that ceiling and pushed the link out of
-      // view — "pinned" only in that it did not move WITH the list (operator,
-      // 2026-09-06: "it should not scroll for bigger font screen"). As its own
-      // `flex:none` row it is genuinely always on screen: the head scrolls its
-      // own content, this sits fixed on the boundary, the list takes the rest.
-      // Still its own div, painted twice (paintMineLink then loadMine), so the
-      // network-driven RESEND count never shares a parent with the timer-
-      // repainted list or a half-typed compose box.
+      // The link to the member's own quotes — below the नम्र विनंती, above the
+      // "View Last 5 Notifications" button (operator, 2026-09-04 / 2026-09-06).
+      // Its own div, painted ONCE by paintMineLink() (the "N returned" badge
+      // that once repainted it here is gone — 2026-09-07).
       `<div id="m-ganga-mine"></div>` +
-      // "View Last 5 Notifications" — its own pinned row below the quotes link,
-      // above the "Latest Notification" list (operator, 2026-09-07). Same chip
-      // as .m-ganga-mine but orange-filled (.m-ganga-last5btn). Static markup,
-      // shown to EVERYONE: reading the thoughts is open, so a visitor gets it
-      // too (they just have no quotes link above it). Opens #/m/gyanlast5.
+      // "View Last 5 Notifications" — its own row below the quotes link
+      // (operator, 2026-09-07). Same chip as .m-ganga-mine but orange-filled
+      // (.m-ganga-last5btn). Static markup, shown to EVERYONE: reading the
+      // thoughts is open, so a visitor gets it too (they just have no quotes
+      // link above it). Opens #/m/gyanlast5 — since 2026-09-07 the only place
+      // the hourly thoughts are read on mobile.
       `<div id="m-ganga-last5">` +
         `<a class="m-ganga-mine m-ganga-last5btn" href="#/m/gyanlast5">` +
           `<span class="m-ganga-mine-t">${escapeHtml("View Last 5 Notifications")}</span>` +
           `<span class="m-ganga-mine-x" aria-hidden="true">›</span>` +
         `</a>` +
-      `</div>` +
-      `<div id="m-gyan-list" class="m-gyan-list"></div>`;
-    const listEl = node.querySelector("#m-gyan-list");
+      `</div>`;
     const instrEl = node.querySelector("#m-ganga-instr");
     const composeEl = node.querySelector("#m-ganga-compose");
     const mineEl = node.querySelector("#m-ganga-mine");
 
-    // Which of the shown thoughts (if any) came from THIS member's own
-    // "date:slot" keys. Filled by loadMine() below; see the two places it is
-    // used — the window override in GYAN.recent and the "Your Suggestion" line
-    // in renderList. ⚠ The two are independent: the label was briefly taken off
-    // the card on 2026-08-21 and the override still had to stay, because
-    // without it a member's own approved line is invisible to them whenever the
-    // hour it went out falls outside their chosen window.
-    let mineSlots = new Set();
+    // ⚠ The "Latest Notification" list of the last three thoughts USED TO LIVE
+    // HERE (renderList, an every-minute repaint timer, mineSlots + loadMine to
+    // mark the member's own line and widen the window for it, and a background
+    // WA.recentThoughts() fetch). All removed 2026-09-07 (operator): the orange
+    // "View Last 5 Notifications" button opens #/m/gyanlast5, which reads the
+    // same thoughts (cut to 5) with its own fetch and its own "Your Suggestion"
+    // marking — it does NOT depend on this screen warming wa:gyan:cache. Don't
+    // restore any of it here without the list itself coming back. The desktop
+    // Upanishad Ganga (renderGangaDesktop) still shows its list — it has no
+    // last-5 button.
 
-    // ---- 1. the thoughts --------------------------------------------------
-    // A thought with no Hindi falls back to whatever it has. There is no English
-    // pool any more, but rows written before 2026-08-20 may still carry text_en
-    // and the guru's word is the guru's word.
-    const wordsOf = (t) => (t.hi || t.en) || "";
-
-    // ⚠ Repaints only when what is on screen would actually differ. The timer
-    // below runs every minute for as long as the screen is open, and rewriting
-    // innerHTML on each tick would drop the reader's text selection mid-thought.
-    let lastSig = null;
-    const renderList = (items, note) => {
-      const shown = GYAN.recent(items, mineSlots);
-      // ⚠ `t.name` is deliberately NOT in the signature any more: the card no
-      // longer draws it, so a name arriving on an admin's device is not a
-      // reason to rewrite the list under their finger. mineSlots.size stays —
-      // it changes WHICH thoughts qualify (the window override in GYAN.recent),
-      // not merely how they look.
-      const sig = shown.map((t) => `${t.date}:${t.slot}`).join("|") + "|" + (note || "") +
-                  "|" + mineSlots.size;
-      if (sig === lastSig) return;
-      lastSig = sig;
-
-      if (!shown.length) {
-        // Nothing yet — a fresh install, or a window whose hours have not come
-        // round since it was chosen. Say when the next one is due rather than
-        // showing an empty box.
-        const n = GYAN.next();
-        const at = gyanSlotLabel(n.hour);
-        const line = n.coming
-          ? `The thought for ${at} is on its way.`
-          : n.tomorrow
-            ? `The next thought arrives tomorrow at ${at}.`
-            : `The next thought arrives at ${at}.`;
-        listEl.innerHTML = `<div class="m-hint">${escapeHtml(note || line)}</div>` +
-          (GYAN.on() ? "" : `<div class="m-hint" style="margin-top:8px">` +
-            escapeHtml("Notifications for these are switched off in Settings.") + `</div>`);
-        return;
-      }
-
-      listEl.innerHTML =
-        // "Latest Notification" (2026-08-26, operator) — a heading over the
-        // list, not per-card; only the FIRST card also gets `.m-ganga-latest-txt`
-        // (pink text). The count shown is still GYAN_KEEP-many — this did not
-        // change the "keep the last three" rule, only how the newest reads.
-        `<div class="m-ganga-latest-h">Latest Notification</div>` +
-        (note ? `<div class="m-hint" style="margin-bottom:10px">${escapeHtml(note)}</div>` : "") +
-        // ⚠ .m-gyan-hit goes on the NEWEST only. It used to mark the one thought
-        // a notification tap arrived for, back when the screen showed one; put it
-        // on every one and each card wears an accent ring, which marks nothing.
-        // ⚠ THE WORDS, THE HOUR, AND "Your Suggestion" — IN THAT ORDER, AND
-        // NOTHING ELSE (operator, 2026-08-21). The card was cut to words+hour
-        // earlier the same day and the last line was then asked back; what did
-        // NOT come back is the suggester's name, so don't read the two removals
-        // as one and restore both from the history:
-        //   · `सुझाव: <name>` is GONE for good. It was drawn only for a
-        //     moderator or the sutradhar, and that was decided by Postgres, not
-        //     here — wa_recent_thoughts() returns an empty string to everybody
-        //     else. `t.name` therefore still arrives on an admin's device and is
-        //     simply not rendered; the name is still readable where an admin
-        //     actually needs it, on #/m/gyanreview.
-        //   · `Your Suggestion` STAYS, as the final line. It is the member's own
-        //     row and their own device only — mineSlots comes from
-        //     my_ganga_suggestions, so no other phone can even compute it. With
-        //     "Your thoughts" long gone this is the only acknowledgement on the
-        //     screen that the words everybody is reading this hour are theirs.
-        shown.map((t, i) =>
-          `<div class="m-msgitem${i === 0 ? " m-gyan-hit" : ""}">` +
-            `<div class="m-msgtext${i === 0 ? " m-ganga-latest-txt" : ""}" style="font-family:var(--serif);font-size:17px;line-height:1.6">` +
-              escapeHtml(wordsOf(t)) +
-            `</div>` +
-            `<div class="m-msgts">${escapeHtml(gyanWhen(t))}</div>` +
-            (mineSlots.has(`${t.date}:${t.slot}`)
-              ? `<div class="m-ganga-yours">Your Suggestion</div>` : "") +
-          `</div>`).join("");
-    };
-
-    // Painted from cache first, but ONLY if there is one: an empty cache would
-    // otherwise flash "the next thought arrives at 9 AM" for as long as the fetch
-    // takes, and then be contradicted by thoughts that were there all along.
-    let items = gyanCached();
-    // `note` outlives one paint on purpose: the timer repaints every minute, and
-    // a note that lived only inside the failing call would be wiped sixty seconds
-    // later — telling someone still offline that their thought arrives at nine.
-    let note = "";
-    const paint = () => renderList(items, note);
-    if (items.length) paint();
-
-    let lastFetch = 0;
-    const refresh = async () => {
-      lastFetch = Date.now();
-      try {
-        // SLOTS to look back over, not the rows that are shown — GYAN.recent()
-        // filters to this device's hours first. 48 is two days for a phone that
-        // wants them all, and about a fortnight for one that wants one an hour a
-        // day. See WA.recentThoughts.
-        items = await WA.recentThoughts(48);
-        try { localStorage.setItem(GYAN_CACHE, JSON.stringify(items)); } catch (_) {}
-        note = "";
-      } catch (e) {
-        // Offline is only worth saying when there is nothing at all to show —
-        // otherwise the thoughts are on screen and the message would be noise.
-        note = GYAN.recent(items, mineSlots).length
-          ? ""
-          : "Couldn't reach the server just now. The thoughts will appear when you're back online.";
-      }
-      paint();
-    };
-    // ⚠ NOT awaited (2026-08-26, operator). pageFrame() above already put this
-    // page's DOM on screen, so awaiting the network fetch here just left the
-    // नम्र विनंती + compose box + Send button sitting blank for as long as
-    // WA.recentThoughts() took — the cached thoughts would show, then 2-3s
-    // later the rest of the screen would pop in. Nothing below this line reads
-    // `items`/`note`/`mineSlots`'s post-fetch values, so there is nothing to
-    // wait for: the instructions and box paint immediately, refresh() updates
-    // the list in place (exactly as the timer's own un-awaited call already
-    // does) whenever it resolves.
-    refresh();
-
-    // ---- 2. the instructions ----------------------------------------------
+    // ---- the instructions ------------------------------------------------
     // Painted once, outside every repaint path, like the box below it.
     // ⚠ ESCAPED PER SEGMENT, never per line. A line is a list of {t,b,i,u} (a
     // bare string counts as one plain segment), so the bold/underline the
@@ -23030,9 +22901,9 @@ const MOBILE_UI = (() => {
         ? `<div class="m-ganga-note">${escapeHtml(GANGA_INSTRUCTIONS.note)}</div>`
         : "");
 
-    // ---- 3. the member's box ----------------------------------------------
-    // Painted once and never repainted while the screen is open — see the trap at
-    // the top of this section. Everything that changes afterwards (the counter,
+    // ---- the member's box -----------------------------------------------
+    // Painted once and never repainted while the screen is open. Everything
+    // that changes afterwards (the counter,
     // the button's disabled state, the confirmation) is a targeted write.
     let limit = gangaLimitCached();
     const paintCompose = () => {
@@ -23047,10 +22918,10 @@ const MOBILE_UI = (() => {
         wireModSignIn(box, () => gyanPage(params));
         return;
       }
-      // An admin on a device the Sutradhar has not approved may READ the five
-      // thoughts but not add to the pool — the same rule Postgres enforces on
-      // the insert (add_device_one_slot.sql). Reading is the whole point of the
-      // screen, so only the box goes.
+      // An admin on a device the Sutradhar has not approved may READ the
+      // thoughts (via "View Last 5 Notifications") but not add to the pool — the
+      // same rule Postgres enforces on the insert (add_device_one_slot.sql), so
+      // only the box goes.
       if (DEVICE_GATE.blocksAction()) {
         composeEl.innerHTML =
           `<div class="m-ganga-box">` +
@@ -23112,7 +22983,6 @@ const MOBILE_UI = (() => {
           ta.value = "";
           sync();
           toast("Sent to the admins 🙏");
-          loadMine();
           // One fewer left today. Silent on failure — the line is sent either
           // way, and a stale counter is better than an error over a success.
           WA.myGangaQuota().then(paintQuota).catch(() => {});
@@ -23176,44 +23046,19 @@ const MOBILE_UI = (() => {
       })();
     }
 
-    // ---- 4. which of the thoughts are theirs ------------------------------
-    // ⚠ THERE IS NO "YOUR THOUGHTS" SECTION ANY MORE (operator, 2026-08-21). It
-    // listed every line this member had sent with its status — waiting, accepted,
-    // returned and why — under the compose box. The operator asked for the screen
-    // to be clean, and it went. Don't reinstate it from the git history without
-    // asking; what a member is told about their line now travels entirely by
-    // notification (approved, declined-with-reason, and "shared with everyone"),
-    // and the accepted one is marked on the list above.
-    //
-    // The call itself does TWO things, and each would justify it alone:
-    //   1. `first_slot_date`/`first_slot` is the hour this member's line first
-    //      went out to everybody, and that is the row "Your Suggestion" goes on.
-    //   2. GYAN.recent shows that thought WHATEVER the device's chosen hours
-    //      say. Being told "your thought was shared" and then finding it nowhere
-    //      is the bug that exception exists to close, and it bites only the
-    //      members whose window happened to miss their own hour — so it is
-    //      invisible in testing. ⚠ Keep this even if the label ever goes again.
-    //
-    // Silent on every failure, including "not signed in": it decorates and
-    // widens the list, it is not the list.
-    // ---- 4a. the way in to their own quotes -------------------------------
-    // ⚠ Label "Your Approved / Pending Quotes" (operator, 2026-09-06 — supersedes
-    // the "Click to see your U. Ganga quotes sent to admin" wording, and with it
-    // the "send"->"sent" edit and the two-size span split, all now moot). Drawn
-    // as a CENTRED ROUNDED CHIP shaped like the Library mantra button
-    // (.mm-mantra / .m-ganga-mine in styles.css) — the operator's own reference
-    // for "clearly looks like a button". No underline. Whole chip is the tap
-    // target. (The #m-ganga-mine ROW placement + .m-kb hide from 2026-09-06 are
-    // unchanged — this is a restyle of the chip inside it, not a move.)
+    // ---- the way in to their own quotes ---------------------------------
+    // ⚠ Label "Your Approved / Pending Quotes" (operator, 2026-09-06). Drawn as
+    // a CENTRED ROUNDED CHIP shaped like the Library mantra button (.mm-mantra /
+    // .m-ganga-mine in styles.css) — the operator's own reference for "clearly
+    // looks like a button". No underline; the whole chip is the tap target.
     //
     // ⚠ Signed-in only. A visitor has no quotes by definition, and the pane
-    // above them is already a sign-in form; a second call to action beside it
-    // would send them to a page that could only say "nothing here".
+    // above them is already a sign-in form.
     //
-    // ⚠ The "N returned" badge was REMOVED (operator, 2026-09-07). A returned
-    // quote is discovered by opening the page now, like everything else behind
-    // this link — nothing is counted on the button. So it is painted ONCE here;
-    // loadMine no longer repaints it (it still runs, only for mineSlots).
+    // ⚠ Painted ONCE. The "N returned" badge was removed (operator, 2026-09-07)
+    // and with it loadMine() — my_ganga_suggestions was read here only to mark
+    // the member's own line in the thought list and widen its window, and that
+    // list is gone. A returned quote is found by opening #/m/gyanmine.
     const paintMineLink = () => {
       if (!isSignedIn()) { mineEl.innerHTML = ""; return; }
       mineEl.innerHTML =
@@ -23224,41 +23069,6 @@ const MOBILE_UI = (() => {
         `</a>`;
     };
     paintMineLink();
-
-    const loadMine = async () => {
-      if (!isSignedIn()) return;
-      let rows;
-      try { rows = await WA.myGangaSuggestions(50); }
-      catch (_) { return; }
-      const next = new Set();
-      rows.forEach((r) => {
-        if (r.first_sent && r.first_slot_date != null && r.first_slot != null) {
-          next.add(`${r.first_slot_date}:${r.first_slot}`);
-        }
-      });
-      // Same-value repaints are what the signature check exists to stop, and this
-      // runs on every open — so only disturb the list when the answer moved.
-      if (next.size === mineSlots.size && [...next].every((k) => mineSlots.has(k))) return;
-      mineSlots = next;
-      paint();
-    };
-    loadMine();
-
-    // ---- the timer --------------------------------------------------------
-    // Repaint while the screen is open: a thought arrives without the page being
-    // reopened, and "yesterday" becomes true at midnight.
-    //
-    // ⚠ Stops itself when the node leaves the document. This page has no teardown
-    // hook, so the guard IS the teardown: without it every visit would leave a
-    // timer painting into a detached element for the rest of the session.
-    //
-    // ⚠ It repaints the LIST only. Touching composeEl here would throw away
-    // whatever is half-typed in the box.
-    const tick = setInterval(() => {
-      if (!node.isConnected) { clearInterval(tick); return; }
-      paint();
-      if (GYAN.next().coming && Date.now() - lastFetch > 60000) refresh();
-    }, 60000);
   }
 
   // ---- Your U. Ganga Quotes (#/m/gyanmine) — the member's own record -------
@@ -24299,15 +24109,16 @@ const MOBILE_UI = (() => {
   // ⚠ Every screen puts the WRITING BOX ABOVE the list and repaints only the
   // list. That is the operator's shape ("write first, read under it") and it is
   // also the trap: a repaint over the textarea destroys a half-typed line, which
-  // is the bug Upanishad Ganga's four separate panes exist to avoid. Here the
-  // box simply is not inside anything that gets repainted.
+  // is the bug Upanishad Ganga's separately-painted panes existed to avoid. Here
+  // the box simply is not inside anything that gets repainted.
   //
   // ⚠ TWO PANES, NOT A SCROLLING PAGE (operator, 2026-08-22). It shipped as an
   // ordinary scrolling page and the whole thing moved together; the controls now
   // stay put and only the conversation scrolls. Every screen is therefore
   // `.am-head` (pinned) + `.am-scroll`, inside `.m-page-admsg` — the same
-  // skeleton as `.m-page-ganga`, built beside it rather than reusing that class,
-  // which carries Ganga's own child rules.
+  // --m-vvh skeleton as `.m-community`, its own class. (Upanishad Ganga's
+  // `.m-page-ganga` used the same pattern until its thought list was removed on
+  // 2026-09-07 and it went back to an ordinary page.)
   //
   // ⚠ The column is sized against `--m-vvh`, never `100vh`: 100vh does NOT
   // shrink when the keyboard opens, so sizing to it puts Send behind the
@@ -25272,17 +25083,15 @@ const MOBILE_UI = (() => {
           : !gtok
             ? "This device isn't registered for notifications yet. Reopen the app once and this will start working."
             : gsw.checked
-              // ⚠ This wording has now been wrong twice and has moved a third
-              // time. It first promised every thought was kept forever; from
-              // 2026-08-19 it promised each was let go after eighteen minutes;
-              // from 2026-08-20 it promised the last five, and since 2026-08-22
-              // the truth is the last THREE. Say the number and say nothing
-              // about how long one lives, because it no longer has a lifetime.
-              // ⚠ Both strings below count GYAN_KEEP out loud, so they are the
-              // two places that must change with it — there is no interpolation
-              // here on purpose: "the last 3" reads worse than "the last three".
-              ? `A thought arrives each hour between ${span}. The last three stay in Upanishad Ganga, where you can also send a thought of your own to the admins.`
-              : "No hourly notifications. You can still open Upanishad Ganga any time to read the last three.";
+              // ⚠ This wording has now been wrong several times. It promised
+              // thoughts kept forever, then let go after eighteen minutes, then
+              // "the last five", then "the last three". Since 2026-09-07 the
+              // Upanishad Ganga screen shows NO list at all — the "View Last 5
+              // Notifications" button on it opens the last five (a literal 5 in
+              // gangaLast5Page, not GYAN_KEEP). Point at the button, not a count
+              // this screen no longer displays.
+              ? `A thought arrives each hour between ${span}. Open Upanishad Ganga and tap "View Last 5 Notifications" to read the recent ones — or send a thought of your own to the admins.`
+              : `No hourly notifications. You can still open Upanishad Ganga any time and tap "View Last 5 Notifications" to read the recent ones.`;
       };
       paintGyanHint();
 

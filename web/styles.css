@@ -2879,12 +2879,14 @@ body.m-mode .content:has(.m-page-scroll) { min-height: 0; }
    ⚠ TWO PANES since 2026-08-22 (operator): `.am-head` is pinned and `.am-scroll`
    scrolls under it. It shipped as an ordinary scrolling page — the note that used
    to be here said so, and said it needed none of the --m-vvh machinery — and the
-   whole screen moved together. Same skeleton as .m-page-ganga, written beside it
-   rather than reusing that class, which carries Ganga's own child rules. */
+   whole screen moved together. Same --m-vvh skeleton as `.m-community` (the
+   chat room), its own class rather than a shared one. (Upanishad Ganga's
+   `.m-page-ganga` used the same pattern until 2026-09-07, when its thought list
+   was removed and it went back to an ordinary page.) */
 
 /* THE FIXED-HEIGHT COLUMN. ⚠ --m-vvh, never 100vh: 100vh does not shrink when
    the keyboard opens, so sizing to it puts Send behind the keyboard. Same
-   reasoning, same numbers as .m-page-ganga. */
+   reasoning, same numbers as `.m-community`. */
 body.m-mode .m-page-admsg {
   display: flex; flex-direction: column; min-height: 0;
   height: calc(var(--m-vvh, 100vh) - 78px - env(safe-area-inset-top));
@@ -3044,93 +3046,25 @@ body.m-mode.m-kb .m-page-admsg { transform: translateY(var(--m-vvtop, 0px)); }
 .am-bubble .bc-att-img { max-height: 170px; }
 .am-bubble .bc-att-doc { background: var(--bg); }
 
-/* Upanishad Ganga (#/m/gyan) — room for the instructions, then the member's own
-   box, then the last three thoughts under them. It reuses the .m-msgitem card
-   wholesale; .m-gyan-hit rings the NEWEST (see the note in app.js — it used to
-   ring the one a notification tap arrived for, back when the screen showed
-   exactly one). */
+/* Upanishad Ganga (#/m/gyan) — the member's compose box under the नम्र विनंती,
+   then the "Your Approved / Pending Quotes" and "View Last 5 Notifications"
+   chips. ⚠ AN ORDINARY SCROLLING PAGE since 2026-09-07 (operator): the "Latest
+   Notification" list of the last three thoughts was removed here when the
+   orange button + #/m/gyanlast5 took over reading them, and with nothing left
+   to scroll under the box the two-pane --m-vvh scaffolding (`m-page-ganga`, no
+   longer passed by gyanPage), the internal-scroll head cap and #m-ganga-ta's
+   KB_PRESHRINK entry all went with it. `.m-gyan-hit` / `.m-ganga-latest-txt` /
+   `.m-ganga-yours` survive for #/m/gyanlast5's cards only. */
 .m-gyan { min-height: 40vh; }
 .m-gyan-hit { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft, #e3f2fd); }
 
-/* ---- the two panes (operator, 2026-08-21; flipped 2026-08-22) ------------
-   The नम्र विनंती and the box stay put at the TOP; the thoughts scroll under
-   them. ⚠ They were at the BOTTOM for one day (9.46) and the operator asked for
-   the Msg to Admin shape instead — write first, read under it. If you are
-   reading a 9.46-era diff, the pane order, the border edge and the .m-kb rules
-   all moved together; don't take one back on its own.
-
-   Built deliberately the same way .m-community is, and for the same reason —
-   see the long note there. The short version:
-
-   · --m-vvh is the height actually VISIBLE, published by the keyboard watcher in
-     app.js. 100vh does NOT shrink when the keyboard opens, so sizing to it would
-     put the Send button behind the keyboard and make the WebView scroll the page
-     up to find it, dragging .m-top off the top of the screen.
-   · 78px = .content's own padding (58px top + 20px bottom, styles.css ~1487).
-   · The @supports block believes the SMALLER of --m-vvh and 100dvh, because with
-     interactive-widget=resizes-content (set by MOBILE_UI at startup) the browser
-     measures the visible area exactly, gesture-nav bar and all, while the JS
-     arithmetic came out slightly too tall on the operator's phone. min() so this
-     can only ever be more correct — a WebView that ignores interactive-widget
-     leaves dvh full-height and --m-vvh still wins.
-
-   ⚠ The 50% floor the bottom pane used to carry is GONE with the flip. It
-   existed because a pane pinned at the BOTTOM looked stranded at 36% of the
-   screen; a pane at the top simply takes the height its content needs and the
-   thoughts have the rest, which is what Msg to Admin does. */
-body.m-mode .m-page-ganga {
-  display: flex; flex-direction: column; min-height: 0;
-  height: calc(var(--m-vvh, 100vh) - 78px - env(safe-area-inset-top));
-}
-@supports (height: 100dvh) {
-  body.m-mode .m-page-ganga {
-    height: calc(min(100dvh, var(--m-vvh, 100dvh)) - 78px - env(safe-area-inset-top));
-  }
-}
-/* Drop .content's min-height:100vh, or a short list leaves a screen of empty
-   document below the pinned box for the user to pan around in. */
-body.m-mode .content:has(.m-page-ganga) { min-height: 0; }
-body.m-mode:has(.m-page-ganga) { overflow: hidden; overscroll-behavior: none; }
-html:has(body.m-mode .m-page-ganga) { overflow: hidden; overscroll-behavior: none; }
-/* FOLLOW THE PAN, exactly as .m-community does: if a device still pans the
-   visual viewport despite the pre-shrink, the whole screen goes with it rather
-   than the box sliding under the fold. Only while .m-kb — with no keyboard the
-   offset is always 0 and an always-on transform would make this a containing
-   block for nothing. */
-body.m-mode.m-kb .m-page-ganga { transform: translateY(var(--m-vvtop, 0px)); }
-
-/* .m-gyan is the page's only child and has to pass the height through. Its
-   40vh min-height above would fight the flex sizing, so it goes here. */
-.m-page-ganga .m-gyan {
-  flex: 1; min-height: 0; display: flex; flex-direction: column;
-}
-/* THE PINNED PANE, at the TOP. Content-height: नम्र विनंती + box + Send take
-   what they need and the thoughts get the rest.
-     · flex:none — never squeezed by the list below it. That is the whole of
-       "pinned"; there is no position:sticky here and there must not be, because
-       the pane is a flex child of a fixed-height column, not a scroller.
-     · max-height 72% — the one guard left. Ordinarily nothing comes near it,
-       but the SIGNED-OUT variant of this pane is a whole sign-in form, and
-       without a ceiling that would push the thoughts off the screen entirely.
-       Past it the pane scrolls internally.
-   ⚠ No min-height. The 50% floor that was here until 2026-08-22 belonged to a
-   pane pinned at the BOTTOM (stranded at 36% of the screen without it); at the
-   top a floor would only hold empty space above the thoughts. */
-.m-ganga-head {
-  flex: none; max-height: 72%;
-  overflow-y: auto; overscroll-behavior: contain;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-}
-/* THE "your quotes" LINK and the "View Last 5 Notifications" button — each its
-   own pinned row between the head and the list, NOT a child of .m-ganga-head
-   (which scrolls internally at max-height:72%, so on a big-font device they'd
-   be pushed out of view). flex:none keeps them on screen whatever the head and
-   list do. #m-ganga-mine is empty when signed out -> 0px, no rule fires;
-   #m-ganga-last5 always has its button (shown to everyone). While the keyboard
-   is up the member is composing, not looking for these, and the head takes the
-   whole column (.m-kb rule below) — hide them so they cannot be clipped. */
-.m-page-ganga #m-ganga-mine, .m-page-ganga #m-ganga-last5 { flex: none; }
+/* The box + नम्र विनंती wrapper. Once the pinned top pane; now just the first
+   block of the page. Its bottom padding is the only thing left of the pane. */
+.m-ganga-head { padding-bottom: 12px; }
+/* The "your quotes" link and the "View Last 5 Notifications" button, each its
+   own centred row below the नम्र विनंती. #m-ganga-mine is empty when signed
+   out -> 0px, no rule fires; #m-ganga-last5 always shows (everyone). Hidden
+   while the keyboard is up — the member is composing, not tapping these. */
 #m-ganga-mine:not(:empty) { margin: 10px 0 2px; text-align: center; }
 #m-ganga-last5 { margin: 6px 0 2px; text-align: center; }
 body.m-mode.m-kb #m-ganga-mine,
@@ -3145,46 +3079,19 @@ body.m-mode.m-kb #m-ganga-last5 { display: none; }
 }
 .m-ganga-mine.m-ganga-last5btn:active { background: #c25a25; }
 .m-ganga-mine.m-ganga-last5btn .m-ganga-mine-x { opacity: .85; }
-/* THE SCROLLING PANE, under it. */
-.m-gyan-list {
-  flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-  padding-top: 12px;
-}
-/* ⚠ The compose box is FIRST now, not this — so the नम्र विनंती needs a clear
-   gap ABOVE it or it reads as jammed onto the Send button (operator, 2026-09-07:
-   "namra vinati box ... look improper", "bring little down"). 20px, a touch more
-   than its own default 18px top. */
-.m-page-ganga .m-ganga-instr { margin-top: 20px; }
-/* The divider below the pane is the separation now, so the box's own bottom
-   margin would only double it. */
-.m-page-ganga .m-ganga-box { margin-bottom: 0; }
-/* ⚠ NOTHING COLLAPSES WHILE THE KEYBOARD IS UP, and that is deliberate. The
-   9.46 layout shrank the नम्र विनंती on .m-kb, because with the box pinned at
-   the BOTTOM the Send button could end up under the keyboard on a cramped
-   viewport. With the box at the TOP it is above the fold by construction, so
-   that rule was removed rather than carried over: reinstating it would move the
-   textarea upward under the user's finger mid-sentence, for no gain.
+/* ⚠ The compose box is FIRST, above the नम्र विनंती — the instruction needs a
+   clear gap above it or it reads as jammed onto the Send button (operator,
+   2026-09-07: "namra vinati box ... look improper", "bring little down"). Its
+   own base top margin (`.m-ganga-instr`, below) is that gap now. */
 
-   The ONE thing that does change is the ceiling, and it is not a collapse —
-   it stops the pane being SQUEEZED, which moves nothing at all. Measured
-   (375x812, 2026-08-22): the pane needs 258px, so once the visible viewport
-   drops to ~360px (a tall IME on a short screen) 72% of it is only 203px and
-   the Send button was clipped INSIDE the pane, needing an internal scroll to
-   reach. At 420px it sat exactly on the boundary. The list has nothing to lose
-   here — the person is typing, not reading — so the pane keeps its full
-   content height and the list yields whatever is left. */
-body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
+/* The operator's नम्र विनंती to the sadhaks, below the box they write in. The
+   min-height reserves four lines. ⚠ Since 2026-08-22 the text runs to about
+   seven lines on a 375px phone, so this floor no longer binds anything — it is
+   kept because it costs nothing and still stops the compose box jumping up the
+   screen if the words are ever shortened again.
 
-/* The operator's नम्र विनंती to the sadhaks, above the box they write in and
-   the thoughts below it. The min-height reserves four lines. ⚠ Since 2026-08-22
-   the text runs to about seven lines on a 375px phone, so this floor no longer
-   binds anything — it is kept because it costs nothing and still stops the
-   compose box jumping up the screen if the words are ever shortened again.
-
-   ⚠ The accent rule is what separates GUIDANCE from the guru's words above it —
-   the thoughts are cards, this is not, so the two can never be misread for each
-   other. :empty drops the rule so an emptied GANGA_INSTRUCTIONS leaves a blank
+   ⚠ The accent rule sets GUIDANCE apart with its own left border and purple
+   ink. :empty drops the rule so an emptied GANGA_INSTRUCTIONS leaves a blank
    space rather than a bare floating line. */
 /* ⚠ THE INK IS PURPLE, AND IT IS THE SAME PURPLE AS OUR GOAL — deliberately the
    literal #523f86 from .prose.wa-goal and NOT var(--text) (operator,
@@ -3198,13 +3105,18 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
    own var(--accent) below, which wins. The two colours are the point: the
    heading is the address, this is the guidance. */
 .m-ganga-instr {
-  min-height: calc(4 * 1.55em); margin: 18px 2px 16px;
+  /* 20px top: a clear gap under the compose box above it (operator, 2026-09-07:
+     "namra vinati box ... look improper", "bring little down"). Was a
+     `.m-page-ganga .m-ganga-instr` override until that class went. */
+  min-height: calc(4 * 1.55em); margin: 20px 2px 16px;
   padding-left: 12px; border-left: 3px solid var(--accent-soft);
   font: 400 14.5px/1.55 var(--sans); color: #523f86; white-space: pre-wrap;
 }
 .m-ganga-instr:empty { border-left: 0; padding-left: 0; }
-/* Underlined since 2026-08-26 (operator) — same treatment as .m-ganga-latest-h
-   below, so the two headings on this screen read as one family. */
+/* Underlined since 2026-08-26 (operator) — it matched the "Latest Notification"
+   heading that used to sit below it, so the two read as one family; that
+   heading is gone (2026-09-07) but the underline stays as the नम्र विनंती
+   title's own treatment. */
 .m-ganga-instr-h {
   font: 700 15px var(--sans); color: var(--accent); margin-bottom: 5px;
   text-decoration: underline; text-underline-offset: 3px;
@@ -3255,24 +3167,19 @@ body.m-mode.m-kb .m-ganga-head { max-height: 100%; }
   max-width: 150px; white-space: normal; text-align: center;
 }
 /* "Your Suggestion" — the FINAL line of a card whose words this member sent in
-   (operator, 2026-08-21). Their own row, and their own device only: mineSlots is
-   built from my_ganga_suggestions, so no other phone can compute it.
-   With the "Your thoughts" list long gone this is the only acknowledgement left
-   on the page. Set apart from the hour above it: accent, and small.
+   (operator, 2026-08-21). Their own device only: built from my_ganga_suggestions,
+   so no other phone can compute it. ⚠ Since 2026-09-07 it appears ONLY on
+   #/m/gyanlast5 — the #/m/gyan thought list that also carried it is gone.
+   Set apart from the hour above it: accent, and small.
    ⚠ (.m-ganga-credit — `सुझाव: <name>`, admin-only — is gone and is NOT coming
    back with this; the two were removed together and only this one was asked for
-   again. See the note in app.js's renderList before restoring anything.) */
+   again.) */
 .m-ganga-yours {
   margin-top: 6px; font: 700 12px var(--sans); color: var(--accent);
 }
-/* "Latest Notification" (2026-08-26, operator) — a heading over the scrolling
-   list, not per-card. GYAN_KEEP is UNCHANGED (still the last three) — only the
-   newest card's own text also gets .m-ganga-latest-txt below. */
-.m-ganga-latest-h {
-  font: 700 14.5px var(--sans); color: var(--accent);
-  text-decoration: underline; text-underline-offset: 3px;
-  margin: 4px 2px 10px;
-}
+/* The newest card's own text on #/m/gyanlast5, pink. (.m-ganga-latest-h, the
+   "Latest Notification" heading, went with the #/m/gyan thought list on
+   2026-09-07 — gangaLast5Page has no heading.) */
 .m-ganga-latest-txt { color: #c23b6b; }
 
 /* Upanishad Ganga Review (#/m/gyanreview) — the admins' queue. */
