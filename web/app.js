@@ -689,10 +689,9 @@ const DEVICE_GATE = (() => {
     // For a control on an OPEN page that is itself closed — the Upanishad
     // Ganga compose box being the only one today.
     //
-    // ⚠ Strict `armed === true`, unlike blocks(). A route can afford to show
-    // "Checking…" for a moment; a widget cannot, and hiding a working box on
-    // an unread flag is worse than showing one whose send is refused with a
-    // sentence that says exactly what to do (the ganga_suggestions trigger).
+    // ⚠ Strict `armed === true`, unlike blocks(). Callers that need to hide the
+    // startup race first await prime() + deviceSignIn(); once those settle,
+    // this answers whether a registration prompt is genuinely required.
     blocksAction() {
       return armed === true && isModerator() && !WA.deviceIsSignedIn();
     },
@@ -10227,6 +10226,7 @@ async function renderGangaDesktop() {
   // ---- the member's compose box (painted once — rule 3) -----------------
   let limit = 100;
   try { const n = parseInt(localStorage.getItem("wa:ganga:limit"), 10); if (n >= 1) limit = n; } catch (_) {}
+  let deviceCheckPending = isModerator() && !WA.deviceIsSignedIn();
 
   const paintQuota = (q) => {
     const slot = composeEl.querySelector("#gg-quota");
@@ -10261,6 +10261,16 @@ async function renderGangaDesktop() {
       const box = composeEl.querySelector(".gg-box");
       box.insertAdjacentHTML("beforeend", modSignInHtml());
       wireModSignIn(box, () => renderGangaDesktop());
+      return;
+    }
+    // Device authentication uses the network and Android Keystore, so it can
+    // settle a moment after the page paints. During that moderator-only gap,
+    // show a neutral state instead of falsely claiming the device is not
+    // registered. Members never enter this branch.
+    if (deviceCheckPending) {
+      composeEl.innerHTML =
+        `<div class="gg-box"><div class="gg-hint">` +
+        escapeHtml("Checking this device…") + `</div></div>`;
       return;
     }
     // An admin on a device the Sutradhar has not approved may READ the thoughts
@@ -10317,19 +10327,15 @@ async function renderGangaDesktop() {
   };
   paintCompose();
 
-  // ⚠ Same startup race as the phone's gyanPage: WA.deviceSignIn() is fired
-  // un-awaited at boot and DEVICE_GATE.prime() usually arms the gate before it
-  // lands, so a moderator opening this page in that gap gets the "Register this
-  // device" box despite an enrolled device, cleared only by a re-render. Join
-  // the single-flight handshake and repaint once if the outcome moved — the
-  // same settle renderDeviceGate() does for full-page routes. (2026-09-07)
-  if (isModerator() && !WA.deviceIsSignedIn()) {
-    const wasBlocked = DEVICE_GATE.blocksAction();
+  // Join the startup's single-flight device handshake. paintCompose() keeps
+  // the registration verdict hidden until both checks have settled.
+  if (deviceCheckPending) {
     (async () => {
       try { await DEVICE_GATE.prime(); } catch (_) {}
       try { await WA.deviceSignIn(); } catch (_) {}
       if (!current(nav)) return;
-      if (DEVICE_GATE.blocksAction() !== wasBlocked) paintCompose();
+      deviceCheckPending = false;
+      paintCompose();
     })();
   }
 
@@ -19541,6 +19547,13 @@ const MOBILE_UI = (() => {
   function openFromPush(data) {
     data = data || {};
     let route = data.route || "#/m/special";
+    // Hourly Upanishad Ganga pushes belong in the dedicated archive, not on
+    // the compose/instructions screen. Identify them by the two slot fields
+    // send-push attaches to a thought, so other Ganga notifications keep their
+    // own destinations. This also fixes notifications already in the tray.
+    if (data.slot_date != null && data.slot != null && /^#\/m\/gyan(?:\?|$)/.test(route)) {
+      route = "#/m/gyanlast5";
+    }
     // Older payloads (everything sent before 2026-08-13) addressed a Special
     // Message to the section INDEX and left the reader to the user - the tap
     // dumped them in a 1,100-row list with no hint which row was the new one.
@@ -23608,6 +23621,7 @@ const MOBILE_UI = (() => {
     // that changes afterwards (the counter,
     // the button's disabled state, the confirmation) is a targeted write.
     let limit = gangaLimitCached();
+    let deviceCheckPending = isModerator() && !WA.deviceIsSignedIn();
     const paintCompose = () => {
       if (!isSignedIn()) {
         composeEl.innerHTML =
@@ -23618,6 +23632,15 @@ const MOBILE_UI = (() => {
         const box = composeEl.querySelector(".m-ganga-box");
         box.insertAdjacentHTML("beforeend", modSignInHtml());
         wireModSignIn(box, () => gyanPage(params));
+        return;
+      }
+      // Avoid a false registration warning while the moderator-only device
+      // handshake is still using the network/Android Keystore. Ordinary
+      // members never enter this state and retain the immediate compose box.
+      if (deviceCheckPending) {
+        composeEl.innerHTML =
+          `<div class="m-ganga-box"><div class="m-hint">` +
+          escapeHtml("Checking this device…") + `</div></div>`;
         return;
       }
       // An admin on a device the Sutradhar has not approved may READ the
@@ -23698,23 +23721,15 @@ const MOBILE_UI = (() => {
     };
     paintCompose();
 
-    // ⚠ The device-auth handshake (WA.deviceSignIn) is fired UN-AWAITED at
-    // startup and is the slow one — network + Android Keystore. DEVICE_GATE.
-    // prime() beside it usually wins the race and arms the gate first, so a
-    // moderator who opens this screen in that gap sees blocksAction() read
-    // `armed === true && !deviceIsSignedIn()` and gets the "Register this
-    // device" box even though their device IS enrolled — and only a back-and-
-    // return, which re-runs paintCompose() after the handshake landed, clears
-    // it. Settle it here the same way renderDeviceGate() does for full-page
-    // routes: join the single-flight handshake (nearly free) and repaint once
-    // if the outcome actually moved. (2026-09-07)
-    if (isModerator() && !WA.deviceIsSignedIn()) {
-      const wasBlocked = DEVICE_GATE.blocksAction();
+    // Join the startup's single-flight device handshake. paintCompose() keeps
+    // the registration verdict hidden until both checks have settled.
+    if (deviceCheckPending) {
       (async () => {
         try { await DEVICE_GATE.prime(); } catch (_) {}
         try { await WA.deviceSignIn(); } catch (_) {}
         if (!node.isConnected) return;
-        if (DEVICE_GATE.blocksAction() !== wasBlocked) paintCompose();
+        deviceCheckPending = false;
+        paintCompose();
       })();
     }
 
