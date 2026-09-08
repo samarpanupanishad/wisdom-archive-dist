@@ -439,6 +439,15 @@ async function _deviceCapabilities() {
   }
 }
 
+// Device rows belong to an ACCOUNT, but every local decision belongs to this
+// PLATFORM. An admin may have one Android device and one Windows device; a
+// phone must never try to confirm, replace, or revoke the desktop row (and vice
+// versa). Keep this filtering in one place so the sign-in and reset paths
+// cannot drift apart again.
+function _devicesForPlatform(rows, platform) {
+  return (rows || []).filter((d) => d.platform === platform);
+}
+
 // Create the keypair if absent; return its public half. Idempotent on both
 // platforms — neither backend ever replaces a key the Sutradhar already approved.
 //
@@ -510,17 +519,17 @@ async function _deviceSignIn() {
   try { caps = await _deviceCapabilities(); } catch (_) { return false; }
   if (!caps.supported || !caps.hasKey) return false;
 
-  // Which of this account's active devices is THIS one? We don't ask — we try
-  // each in turn and let the signature settle it. list_my_devices() doesn't
+  // Which active device on THIS PLATFORM is this one? We don't ask — we try
+  // the platform's row and let the signature settle it. list_my_devices() doesn't
   // return public keys (deliberately: no reason to hand them out), and a
   // device id cached in localStorage would be a guess that outlives the key
   // it names. Trying is cheap and self-verifying: signing a challenge issued
   // for another device produces a signature that fails against that device's
   // stored key, which is exactly the right answer. wa_device_cap() bounds the
-  // loop at 3.
+  // loop at one active row per platform.
   let mine;
   try { mine = await _rpc("list_my_devices"); } catch (_) { return false; }
-  const rows = (mine && mine.devices) || [];
+  const rows = _devicesForPlatform((mine && mine.devices) || [], caps.platform);
   const active = rows.filter((d) => d.status === "active");
   if (!active.length) return false;
 
@@ -2747,7 +2756,14 @@ const WA = {
   // the switch fresh instead of inheriting the departing user's answer.
   deviceSignOut() { _deviceHeader = null; _deviceSignInFlight = null; _bindingOn = null; },
 
-  myDevices() { return _rpc("list_my_devices"); },
+  // With a platform, return only that platform's rows while preserving the
+  // response metadata (slot limit and recovery-code count). Without one, keep
+  // the original all-device contract used by the Sutradhar overview.
+  async myDevices(platform) {
+    const d = await _rpc("list_my_devices");
+    if (!platform) return d;
+    return { ...d, devices: _devicesForPlatform(d && d.devices, platform) };
+  },
   revokeDevice(id) { return _rpc("revoke_device", { p_id: id }); },
 
   // Throw this machine's key away so the next enrolment generates a fresh one.
@@ -2755,7 +2771,8 @@ const WA = {
   // requireAuth:false (so it still demands an unlock inside 60s), or one Android
   // invalidated when the screen lock changed.
   //
-  // ⚠ Revokes the server-side row FIRST, then destroys the local key. If revoke
+  // ⚠ Revokes this PLATFORM's server-side row FIRST, then destroys the local
+  // key. The account's other platform must remain active. If revoke
   // succeeds and the delete then fails, the device is merely revoked —
   // recoverable. The reverse order can strand a row nothing can ever sign for.
   //
@@ -2767,9 +2784,13 @@ const WA = {
   // approval retires the old one in the same transaction. The loop is kept
   // because for the sutradhar it still does exactly what it says.
   async resetDeviceKey() {
+    const caps = await _deviceCapabilities();
+    if (!caps.supported || !caps.platform) {
+      throw new Error(caps.reason || _noSignerMessage());
+    }
     let mine = { devices: [] };
     try { mine = await _rpc("list_my_devices"); } catch (_) {}
-    for (const d of (mine.devices || [])) {
+    for (const d of _devicesForPlatform(mine.devices, caps.platform)) {
       if (d.status === "active" || d.status === "pending") {
         try { await _rpc("revoke_device", { p_id: d.id }); } catch (_) {}
       }

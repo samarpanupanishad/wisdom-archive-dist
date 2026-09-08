@@ -453,7 +453,12 @@ async function paintDeviceBox(box) {
   }
 
   let mine = { devices: [] };
-  try { mine = await WA.myDevices(); } catch (e) {
+  try {
+    // One account may own one mobile AND one desktop. Only rows for this
+    // platform describe this device's registration state; using every row made
+    // an active phone hide the desktop registration form (and vice versa).
+    mine = await WA.myDevices(caps.platform);
+  } catch (e) {
     set(`<div class="dv-h">Device registration</div>
          <div class="dv-err">${escapeHtml(e.message)}</div>`);
     return;
@@ -594,13 +599,29 @@ async function paintDeviceBox(box) {
     if (!name) { err.textContent = "Please give this device a name."; return; }
     btn.disabled = true; btn.textContent = "Registering…";
     try {
+      // A device revoked by the old cross-platform reset bug still holds the
+      // now-dead local key. The server must not silently accept that key again,
+      // so after the first refusal we offer an explicit re-key action. Reset is
+      // platform-scoped in WA: the phone cannot remove the desktop, or vice
+      // versa.
+      if (btn.dataset.replaceRevoked === "1") {
+        delete btn.dataset.replaceRevoked;
+        await WA.resetDeviceKey();
+      }
       // WA.enrollDevice() notifies the Sutradhar itself, the same way
       // postMessage() and createAnubhutiTopic() own their own pushes.
       await WA.enrollDevice(name);
       paintDeviceBox(box);
     } catch (e) {
-      err.textContent = e.message;
-      btn.disabled = false; btn.textContent = "Register";
+      if (/device was revoked/i.test((e && e.message) || "")) {
+        err.textContent = "This device's previous registration was removed. Generate a new "
+          + "registration code to register it again.";
+        btn.dataset.replaceRevoked = "1";
+        btn.disabled = false; btn.textContent = "Generate new registration code";
+      } else {
+        err.textContent = e.message;
+        btn.disabled = false; btn.textContent = "Register";
+      }
     }
   });
 }
