@@ -902,14 +902,14 @@ function buildNav() {
 const V2NAV = [
   { key: "home", label: "Home", hash: "#/" },
   { group: "gurumsg", label: "Guru's Msg", groupBadge: "data-gurumsg-group-badge", children: [
-    { key: "daily", label: "Daily", hash: "#/?latest=1" },   // == the dropped #latest-btn; Home stays #/
-    { key: "special", label: "Special Telegram", hash: "#/special", badge: "data-special-badge" },
-    { key: "letterpad", label: "Letter Head", hash: "#/letterpad", badge: "data-letterpad-badge" },
-    { key: "anushthan", label: "Anusthan", hash: "#/anushthan" },   // §8.1 — desktop page now exists
+    { key: "daily", label: "Daily", hash: "#/?latest=1", acc: "d" },   // == the dropped #latest-btn; Home stays #/
+    { key: "special", label: "Special Telegram", hash: "#/special", badge: "data-special-badge", acc: "s" },
+    { key: "letterpad", label: "Letter Head", hash: "#/letterpad", badge: "data-letterpad-badge", acc: "l" },
+    { key: "anushthan", label: "Anusthan", hash: "#/anushthan", acc: "a" },   // §8.1 — desktop page now exists
   ] },
   { group: "satsang", label: "Satsang", groupBadge: "data-satsang-group-badge", children: [
-    { key: "community", label: "Samuhik Satsang", hash: "#/community", badge: "data-satsang-badge" },
-    { key: "anubhuti", label: "Anubhuti Sharing", hash: "#/anubhuti", badge: "data-anubhuti-badge" },
+    { key: "community", label: "Samuhik Satsang", hash: "#/community", badge: "data-satsang-badge", acc: "s" },
+    { key: "anubhuti", label: "Anubhuti Sharing", hash: "#/anubhuti", badge: "data-anubhuti-badge", acc: "a" },
   ] },
   // Operator (2026-09-07): Lucky Msg takes the old Dhyan Diary slot, Sutradhar
   // takes the old Lucky Msg slot, and Dhyan Diary moves INTO More (above
@@ -917,54 +917,78 @@ const V2NAV = [
   // `data-v2-more-group-badge` sum (broadcast alone) is unchanged.
   { key: "random", label: "Lucky Msg", hash: "#/random" },
   { group: "sutradhar", label: "Sutradhar", modOnly: true, groupBadge: "data-sutradhar-group-badge", children: [
-    { key: "moderator", label: "Moderator", hash: "#/moderator" },
-    { key: "gyanreview", label: "Ganga Review", hash: "#/gyanreview" },   // §8.3 — desktop page now exists
-    { key: "admintalks", label: "Admin Talks", hash: "#/admintalks", badge: "data-admintalk-badge" },
-    { key: "admin", label: "Add Guru's Msg", hash: "#/admin" },
-    { key: "stats", label: "Statistics", hash: "#/stats" },
+    { key: "moderator", label: "Moderator", hash: "#/moderator", acc: "m" },
+    { key: "gyanreview", label: "Ganga Review", hash: "#/gyanreview", acc: "g" },   // §8.3 — desktop page now exists
+    // ⚠ "Admin Talks" and "Add Guru's Msg" both start with A, and g is Ganga
+    // Review — so Talks takes its SECOND word. This is the one row whose
+    // letter is not the first, and the only reason accLabel() marks the
+    // letter wherever it falls in the label rather than assuming position 0.
+    { key: "admintalks", label: "Admin Talks", hash: "#/admintalks", badge: "data-admintalk-badge", acc: "t" },
+    { key: "admin", label: "Add Guru's Msg", hash: "#/admin", acc: "a" },
+    { key: "stats", label: "Statistics", hash: "#/stats", acc: "s" },
   ] },
   { group: "more", label: "More", groupBadge: "data-v2-more-group-badge", children: [
-    { key: "dhyan", label: "Dhyan Diary", hash: "#/dhyan" },
-    { key: "favorites", label: "Favorites", hash: "#/favorites" },
-    { key: "broadcast", label: "Announcements", hash: "#/broadcast", badge: "data-broadcast-badge" },
-    { key: "gyan", label: "Upanishad Ganga", hash: "#/gyan" },   // §8.2 — desktop page now exists
-    { key: "browse-date", label: "Browse by Date", hash: "#/browse/date" },
-    { key: "contact", label: "Msg to Admin", hash: "#/contact", badge: "data-adminmsg-badge" },   // §8.4 — one row, every role
-    { key: "settings", label: "Settings", hash: "#/settings" },
-    { key: "about", label: "Our Goal", hash: "#/about" },
-    { key: "help", label: "Help & Support", hash: "#/help" },
+    { key: "dhyan", label: "Dhyan Diary", hash: "#/dhyan", acc: "d" },
+    { key: "favorites", label: "Favorites", hash: "#/favorites", acc: "f" },
+    { key: "broadcast", label: "Announcements", hash: "#/broadcast", badge: "data-broadcast-badge", acc: "a" },
+    { key: "gyan", label: "Upanishad Ganga", hash: "#/gyan", acc: "u" },   // §8.2 — desktop page now exists
+    { key: "browse-date", label: "Browse by Date", hash: "#/browse/date", acc: "b" },
+    { key: "contact", label: "Msg to Admin", hash: "#/contact", badge: "data-adminmsg-badge", acc: "m" },   // §8.4 — one row, every role
+    { key: "settings", label: "Settings", hash: "#/settings", acc: "s" },
+    { key: "about", label: "Our Goal", hash: "#/about", acc: "o" },
+    { key: "help", label: "Help & Support", hash: "#/help", acc: "h" },
   ] },
 ];
-// Reverse lookup for the "g" then a letter jumps (G_JUMPS/G_JUMPS_MOD, near
-// the digit-shortcut keydown handler below) — route key -> the letter that
-// reaches it, so buildV2Nav() can print a "g x" hint beside a menu row.
-// Two places by hand, same as NAV vs V2NAV above; keep them in step.
-const V2_GCHORD = {
-  home: "h", daily: "d", special: "t", letterpad: "l", anushthan: "a",
-  community: "s", anubhuti: "u", random: "k", favorites: "f",
-  "browse-date": "b", broadcast: "i", gyan: "y", dhyan: "p", contact: "c",
-  moderator: "m", gyanreview: "r",
-};
+// ⚠ ONE owner for the arrow keys, highest layer first. Several always-on
+// document listeners want them, and each used to carry its OWN hand-written
+// list of what outranks it. The lists drifted, and the bug was exactly what
+// you would predict: on the Wide Page, pressing 2 to open Guru's Msg and then
+// ↓ moved the menu AND the Special Telegram list underneath it, because the
+// list's guard knew about the Focus Reader but not about an open menu.
+// Guarding from the other side cannot work -- these listeners are registered
+// at parse time and the nav's only at render time, so a page handler runs
+// FIRST and neither preventDefault() nor stopPropagation() over there is ever
+// reached. The ranking has to be something every handler asks. Page-level
+// handlers take `kbOwner() !== "page"` as "not mine"; a layer that owns the
+// keys only stands down for the layers above it.
+function kbOwner() {
+  const ae = document.activeElement;
+  if (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable)) return "field";
+  if (document.querySelector(".lightbox, .sp-reader, .kb-help-ov")) return "overlay";
+  if (document.querySelector("#v2nav .v2-group.open")) return "menu";
+  return "page";
+}
 function buildV2Nav() {
   const nav = document.getElementById("v2nav");
   if (!nav) return;
   nav.innerHTML = "";
   const badgeSpan = (attr) => attr ? `<span class="v2-badge" ${attr} hidden></span>` : "";
-  // The shortcut hint chip itself — "1".."6" on a top-level slot, "g x" on a
-  // menu row. Purely a discoverability aid (keyboard-map sheet); nothing
-  // reads this markup to decide what a key does — the digit/g-chord
-  // handlers below look the target up their own way.
+  // The shortcut hint chip — "1".."6" on a top-level slot. The digit handler
+  // looks its target up from V2NAV, not from this markup.
   const hintSpan = (text) => `<span class="v2-hint">${text}</span>`;
+  // A menu row says its own key instead: the access letter, marked red INSIDE
+  // the label (the D of Daily), the way a desktop menu underlines one. First
+  // occurrence, case-insensitively, and anywhere in the string — "Admin Talks"
+  // takes its T. A letter that is not in the label leaves the row plain rather
+  // than swallowing it, so a typo in `acc` can never cost you a menu row.
+  const accLabel = (label, acc) => {
+    const i = acc ? label.toLowerCase().indexOf(acc.toLowerCase()) : -1;
+    if (i < 0) return escapeHtml(label);
+    return escapeHtml(label.slice(0, i))
+      + `<span class="v2-acc">${escapeHtml(label.slice(i, i + 1))}</span>`
+      + escapeHtml(label.slice(i + 1));
+  };
   V2NAV.forEach((it, idx) => {
     if (!it.group) {
       nav.appendChild(el(`<a class="v2-item" href="${it.hash}" data-route="${it.key}">${it.label}${hintSpan(idx + 1)}</a>`));
       return;
     }
     const rows = it.children.filter((c) => !c.pending)
-      .map((c) => {
-        const letter = V2_GCHORD[c.key];
-        return `<a href="${c.hash}" data-route="${c.key}">${c.label}${letter ? hintSpan("g " + letter) : ""}${badgeSpan(c.badge)}</a>`;
-      }).join("");
+      // ⚠ The label is wrapped in ONE span. `.v2-menu a` is a flex row with a
+      // gap, so the bare text beside the letter span would become a SECOND
+      // flex item and the gap would open up inside the word — "D aily".
+      .map((c) => `<a href="${c.hash}" data-route="${c.key}"${c.acc ? ` data-acc="${c.acc}"` : ""}>` +
+        `<span class="v2-lbl">${accLabel(c.label, c.acc)}</span>${badgeSpan(c.badge)}</a>`).join("");
     if (!rows) return;   // a group whose items are all Ship-2 renders nothing
     nav.appendChild(el(
       `<div class="v2-group${it.modOnly ? " mod-only" : ""}" data-group="${it.group}">` +
@@ -1008,6 +1032,19 @@ function wireV2Nav(nav) {
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
       const open = [...document.querySelectorAll("#v2nav .v2-group.open")];
+      if (!open.length) return;   // none of ours to shut — leave the key alone
+      // ⚠ CONSUME it: an Escape that shuts a menu must do NOTHING else.
+      // Several always-on bubble-phase Escape listeners sit on document, and
+      // one of them (_searchBackFn) closes a search result's detail view back
+      // to its list — so one keypress shut the menu AND threw you out of the
+      // message you were reading. Unlike the ←/→ fix, a guard over THERE
+      // cannot work: this listener is on CAPTURE and runs first, so by the
+      // time the bubble ones look, the menu is already shut and they find
+      // nothing open. Stopping here is the only point that can tell them.
+      // Only ever reached when a menu really was open, so every other Escape
+      // (lightbox, readers, dialogs, the shortcut sheet) is untouched; with a
+      // menu open they simply need a second press, as stacked layers should.
+      e.stopPropagation();
       open.forEach(shut);
       // Hand focus back to the button that opened it — a closed menu's link
       // is display:none, and losing it drops focus to <body> with nowhere
@@ -1039,8 +1076,10 @@ function wireV2Nav(nav) {
       if (!document.body.classList.contains("wa-v2")) return;
       if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
       const ae = document.activeElement;
-      if (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable)) return;
-      if (document.querySelector(".lightbox")) return;
+      // The bar is itself a layer (kbOwner): it stands down for a text field
+      // and for an overlay, and outranks every page handler below it.
+      const owner = kbOwner();
+      if (owner === "field" || owner === "overlay") return;
       const n = Number(e.key);
       if (n >= 1 && n <= 6 && String(n) === e.key) {
         const spec = V2NAV[n - 1];
@@ -1062,6 +1101,16 @@ function wireV2Nav(nav) {
       const menu = ae && ae.closest && ae.closest(".v2-menu");
       if (!menu) return;
       const links = [...menu.querySelectorAll("a")];
+      // A single letter picks a row of the OPEN menu — the red one in its
+      // label. Scoped to the menu, which is the whole point: `s` is Special
+      // Telegram under Guru's Msg and Samuhik Satsang under Satsang, and no
+      // letter has to stay unique across the whole app. Read from the rendered
+      // `data-acc` so what you press is exactly what you can see; a row that
+      // did not render (pending, or filtered out) simply has no letter.
+      if (e.key.length === 1 && /[a-z]/i.test(e.key)) {
+        const hit = links.find((a) => (a.dataset.acc || "").toLowerCase() === e.key.toLowerCase());
+        if (hit) { e.preventDefault(); hit.click(); return; }   // click() also shuts the menu
+      }
       const at = links.indexOf(ae);
       if (e.key === "ArrowDown") { e.preventDefault(); links[(at + 1) % links.length].focus(); }
       else if (e.key === "ArrowUp") { e.preventDefault(); links[(at - 1 + links.length) % links.length].focus(); }
@@ -1135,7 +1184,9 @@ function wireLightbox(scope, extra) {
 //   opts.pages  the set to page through — strings, or {src, cap} for a caption
 //   opts.index  which page to open on
 //   -- / ->  or drag / trackpad-swipe ..... previous / next page
-//   up / down or scroll wheel ............. zoom in / out (KEPT across pages)
+//   + / -    or scroll wheel .............. zoom in / out (KEPT across pages)
+//   up / down (Home/End for the ends) ..... pan a zoomed page; Shift+<- -> pans
+//                                          sideways (plain <- -> stays paging)
 //   click image .......................... toggle 2.4x
 //   drag while zoomed .................... pan; drag past the edge flips the page
 //   Esc / click the margin / X .......... close
@@ -1148,6 +1199,9 @@ function openLightbox(src, opts) {
   const pages = raw.map((p) => (typeof p === "string" ? { src: p, cap: "" } : p));
   const N = pages.length;
   const multi = N > 1;
+  // On-screen zoom buttons. Browser only: the phone shell has no cursor to
+  // reach them, pinch is its gesture, and `app.js` rides the mobile OTA.
+  const ctl = !window.WA_NATIVE_ACTIVE;
 
   let cur = Math.max(0, Math.min(N - 1, opts.index || 0));
   let zoom = 1;                                   // shared across pages
@@ -1155,15 +1209,23 @@ function openLightbox(src, opts) {
 
   const ov = el(`<div class="lightbox lb-carousel">
     <button class="lb-close" title="Close (Esc)" aria-label="Close">&times;</button>
+    ${ctl ? `<div class="lb-zoom" role="group" aria-label="Zoom">
+      <button class="lb-zout" title="Zoom out (&minus; key)" aria-label="Zoom out">&minus;</button>
+      <span class="lb-zpct">100%</span>
+      <button class="lb-zin" title="Zoom in (+ key)" aria-label="Zoom in">+</button>
+    </div>` : ""}
     ${multi ? `<button class="lb-arrow lb-prev" aria-label="Previous page">&lsaquo;</button>
     <button class="lb-arrow lb-next" aria-label="Next page">&rsaquo;</button>
     <div class="lb-count"></div>` : ""}
     <div class="lb-strip">${pages.map((_, i) => `<div class="lb-slide" data-i="${i}"><img alt="" draggable="false"></div>`).join("")}</div>
-    <div class="lb-hint">${multi ? "&larr; &rarr; pages &middot; " : ""}&uarr; &darr; &middot; +/&minus; &middot; scroll to zoom &middot; drag to pan &middot; Esc to close</div>
+    <div class="lb-hint">${multi ? "&larr; &rarr; pages &middot; " : ""}+/&minus; &middot; scroll to zoom &middot; &uarr; &darr; &middot; drag to pan &middot; Esc to close</div>
   </div>`);
   const strip = ov.querySelector(".lb-strip");
   const slides = [...ov.querySelectorAll(".lb-slide")];
   const countEl = ov.querySelector(".lb-count");
+  const zPct = ov.querySelector(".lb-zpct");
+  const zIn = ov.querySelector(".lb-zin");
+  const zOut = ov.querySelector(".lb-zout");
   const imgOf = (i) => slides[i].querySelector("img");
 
   function loadWindow() {
@@ -1176,6 +1238,11 @@ function openLightbox(src, opts) {
     const im = imgOf(cur);
     im.style.transform = `translate(${pan[cur].x}px, ${pan[cur].y}px) scale(${zoom})`;
     slides[cur].classList.toggle("zoomed", zoom > 1);
+    if (zPct) {
+      zPct.textContent = Math.round(zoom * 100) + "%";
+      zOut.disabled = zoom <= 1.0001;
+      zIn.disabled = zoom >= 5.9999;
+    }
   }
   function render(animate) {
     cur = Math.max(0, Math.min(N - 1, cur));
@@ -1200,6 +1267,23 @@ function openLightbox(src, opts) {
   function setZoom(z) {
     zoom = Math.min(6, Math.max(1, z));
     if (zoom === 1) { pan[cur].x = pan[cur].y = 0; }
+    applyZoom();
+  }
+  // Walk a zoomed page with the keyboard: up / down are PAN, not zoom (zoom is
+  // +/- and the wheel), because a zoomed letterpad scan is taller than the
+  // screen and the mouse was the only way down it. Clamped exactly like a drag,
+  // so at zoom 1 — image fitted, max pan 0 — every one of these is a no-op.
+  // 10% of the screen -- about one line of the Guru's handwriting at reading
+  // zoom, so a press tracks the text instead of skipping over it. Holding the
+  // key repeats, which is how you cross a whole page.
+  const LB_STEP = () => Math.max(40, Math.round(window.innerHeight * 0.10));
+  function panBy(dx, dy) {
+    if (zoom <= 1) return;
+    const im = imgOf(cur);
+    const mx = Math.max(0, (im.clientWidth * zoom - window.innerWidth) / 2);
+    const my = Math.max(0, (im.clientHeight * zoom - window.innerHeight) / 2);
+    pan[cur].x = Math.max(-mx, Math.min(mx, pan[cur].x + dx));
+    pan[cur].y = Math.max(-my, Math.min(my, pan[cur].y + dy));
     applyZoom();
   }
 
@@ -1265,15 +1349,27 @@ function openLightbox(src, opts) {
   function onKey(e) {
     const ae = document.activeElement;
     if (e.key === "Escape") close();
-    else if (e.key === "ArrowLeft") go(cur - 1, zoom > 1);
-    else if (e.key === "ArrowRight") go(cur + 1, zoom > 1);
+    else if (e.key === "ArrowLeft") { if (e.shiftKey && zoom > 1) { e.preventDefault(); panBy(LB_STEP(), 0); } else go(cur - 1, zoom > 1); }
+    else if (e.key === "ArrowRight") { if (e.shiftKey && zoom > 1) { e.preventDefault(); panBy(-LB_STEP(), 0); } else go(cur + 1, zoom > 1); }
     else if (e.key === "Enter" && ae && ae.tagName === "BUTTON") { /* let the button act */ }
-    else if (e.key === "ArrowUp" || e.key === "Enter" || e.key === "+" || e.key === "=") { e.preventDefault(); setZoom(zoom + 0.3); }
-    else if (e.key === "ArrowDown" || e.key === "-" || e.key === "_") { e.preventDefault(); setZoom(zoom - 0.3); }
+    else if (e.key === "Enter" || e.key === "+" || e.key === "=") { e.preventDefault(); setZoom(zoom + 0.3); }
+    else if (e.key === "-" || e.key === "_") { e.preventDefault(); setZoom(zoom - 0.3); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); panBy(0, LB_STEP()); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); panBy(0, -LB_STEP()); }
+    else if (e.key === "Home") { e.preventDefault(); panBy(0, 1e7); }
+    else if (e.key === "End") { e.preventDefault(); panBy(0, -1e7); }
   }
   function close() { ov.remove(); document.removeEventListener("keydown", onKey); }
 
   ov.querySelector(".lb-close").addEventListener("click", close);
+  if (ctl) {
+    // blur() so a later Space / Enter does not re-fire the button we just left.
+    const zbtn = (sel, d) => ov.querySelector(sel).addEventListener("click", (e) => {
+      e.stopPropagation(); e.currentTarget.blur(); setZoom(zoom + d);
+    });
+    zbtn(".lb-zin", 0.3);
+    zbtn(".lb-zout", -0.3);
+  }
   if (multi) {
     ov.querySelector(".lb-prev").addEventListener("click", (e) => { e.stopPropagation(); go(cur - 1, zoom > 1); });
     ov.querySelector(".lb-next").addEventListener("click", (e) => { e.stopPropagation(); go(cur + 1, zoom > 1); });
@@ -7370,7 +7466,7 @@ const HindiType = (() => {
     s = String(s).toLowerCase().replace(/[^a-z]/g, "");
     s = s.replace(/chh/g, "ch");
     s = s.replace(/aa/g, "a").replace(/ee/g, "i").replace(/ii/g, "i").replace(/oo/g, "u").replace(/uu/g, "u");
-    s = s.replace(/sh/g, "s").replace(/w/g, "v").replace(/ph/g, "f").replace(/q/g, "k").replace(/z/g, "j");
+    s = s.replace(/sh/g, "s").replace(/dh/g, "d").replace(/w/g, "v").replace(/ph/g, "f").replace(/q/g, "k").replace(/z/g, "j");
     s = s.replace(/m(?=[kgcjtdnpbsyrlv])/g, "n");   // typed 'm' before a consonant ≈ anusvara 'n'
     s = s.replace(/(.)\1+/g, "$1");
     return s;
@@ -7673,39 +7769,14 @@ document.addEventListener("keydown", (e) => {
   searchInput.focus();
 });
 
-// "g" then a letter jumps straight to a page, skipping any menu (keyboard-map
-// sheet's "Jump anywhere" block). Two keydowns within 1.5s; anything else in
-// between — or the timeout — cancels the pending "g" rather than combining
-// with a later, unrelated key. Plain go(hash) calls, not tied to either
-// nav's markup, so BOTH layouts get these (unlike the v2-only digit
-// shortcuts above, which open menus that only exist in Layout B).
-const G_JUMPS = {
-  h: "#/", d: "#/?latest=1", t: "#/special", l: "#/letterpad", a: "#/anushthan",
-  s: "#/community", u: "#/anubhuti", k: "#/random", f: "#/favorites",
-  b: "#/browse/date", i: "#/broadcast", y: "#/gyan", p: "#/dhyan", c: "#/contact",
-};
-const G_JUMPS_MOD = { m: "#/moderator", r: "#/gyanreview" };   // admin-only rows
-let _gPending = false, _gTimer = null;
-document.addEventListener("keydown", (e) => {
-  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) { _gPending = false; return; }
-  const ae = document.activeElement;
-  if ((ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable))
-    || document.querySelector(".lightbox")) { _gPending = false; return; }
-  if (_gPending) {
-    _gPending = false;
-    clearTimeout(_gTimer);
-    const k = e.key.toLowerCase();
-    const app = document.querySelector(".app");
-    const hash = G_JUMPS[k] || ((app && app.classList.contains("is-mod")) ? G_JUMPS_MOD[k] : undefined);
-    if (hash) { e.preventDefault(); go(hash); }
-    return;
-  }
-  if (e.key === "g") {
-    _gPending = true;
-    clearTimeout(_gTimer);
-    _gTimer = setTimeout(() => { _gPending = false; }, 1500);
-  }
-});
+// The two-key "g then a letter" jump was REMOVED (operator, 2026-10-01) in
+// favour of the access letters above: a digit opens a menu, then one letter
+// picks a row, and that letter is visible in red rather than memorised. Don't
+// restore it from git history — it is gone on purpose, and its letters no
+// longer agree with the menus (it had t for Special Telegram, u for Anubhuti).
+// ⚠ It was the only keyboard navigation the CLASSIC layout had; the digits and
+// the access letters are both wa-v2 only. Classic now has none, which the
+// operator accepted when choosing this.
 
 // "?" opens the shortcut sheet — the discoverability answer for everything
 // above that has no on-screen hint of its own (the g-chords reach 16 pages;
@@ -7715,15 +7786,9 @@ document.addEventListener("keydown", (e) => {
 function openShortcutSheet() {
   if (document.querySelector(".kb-help-ov")) return;
   const v2 = document.body.classList.contains("wa-v2");
-  const app = document.querySelector(".app");
-  const mod = !!(app && app.classList.contains("is-mod"));
   const kbd = (k) => `<kbd>${k}</kbd>`;
   const row = (keys, desc) => `<div class="kb-row"><span class="kb-keys">${keys}</span><span class="kb-desc">${desc}</span></div>`;
   const sections = [
-    { title: "Jump anywhere", rows: [
-      row(kbd("g") + " then&hellip;", "h Home &middot; d Daily &middot; t Special Telegram &middot; l Letterhead &middot; a Anushthan &middot; s Samuhik Satsang &middot; u Anubhuti &middot; k Lucky Msg &middot; f Favorites &middot; b Browse by Date &middot; i Important Updates &middot; y Upanishad Ganga &middot; p Dhyan Diary &middot; c Msg to Admin"
-        + (mod ? " &middot; m Moderator &middot; r Ganga Review" : "")),
-    ] },
     { title: "Search", rows: [
       row(kbd("/") + " or " + kbd("Ctrl") + "+" + kbd("S"), "Focus the search box"),
     ] },
@@ -7737,11 +7802,14 @@ function openShortcutSheet() {
       row(kbd("&darr;") + " " + kbd("&uarr;"), "Move the selection"),
       row(kbd("Enter"), "Open the Focus Reader"),
       row(kbd("+") + " " + kbd("&minus;"), "Text size"),
+      row(kbd("&uarr;") + " " + kbd("&darr;"), "Scroll the open message"),
+      row(kbd("h") + " " + kbd("e") + " " + kbd("b"), "Hindi &middot; English &middot; Both &mdash; b on the Special list only"),
       row(kbd("Esc"), "Clear the selection"),
     ] },
     { title: "Image viewer", rows: [
       row(kbd("&larr;") + " " + kbd("&rarr;"), "Page"),
-      row(kbd("&uarr;") + " " + kbd("&darr;"), "Zoom"),
+      row(kbd("+") + " " + kbd("&minus;"), "Zoom"),
+      row(kbd("&uarr;") + " " + kbd("&darr;"), "Scroll a zoomed page"),
       row(kbd("Esc"), "Close"),
     ] },
     { title: "Everywhere", rows: [
@@ -7750,10 +7818,13 @@ function openShortcutSheet() {
       row(kbd("Tab") + " / " + kbd("Shift") + "+" + kbd("Tab"), "Next / previous control"),
     ] },
   ];
-  if (v2) sections.splice(1, 0, { title: "Top bar &mdash; Wide Page", rows: [
+  // First section now: with the g-chord gone this IS how you get anywhere.
+  if (v2) sections.unshift({ title: "Go anywhere &mdash; Wide Page", rows: [
     row(kbd("1") + "&ndash;" + kbd("6"), "Home &middot; Guru's Msg &middot; Satsang &middot; Lucky Msg &middot; Sutradhar &middot; More"),
+    row(kbd("d") + " " + kbd("s") + " " + kbd("l") + "&hellip;", "Then the <b>red letter</b> of the row you want &mdash; 2 d is Daily, 3 s is Samuhik Satsang"),
     row(kbd("&darr;") + " " + kbd("&uarr;"), "Move inside an open menu"),
     row(kbd("&larr;") + " " + kbd("&rarr;"), "Hop to the next / previous menu"),
+    row(kbd("Enter"), "Open the highlighted row"),
   ] });
   const ov = el(`<div class="kb-help-ov" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
     <div class="kb-help">
@@ -7781,14 +7852,17 @@ document.addEventListener("keydown", (e) => {
 // Left/Right steps the carousel — Home's date-based one (_stageId set) or a
 // search result's list-scoped one (_searchBackFn set) — by clicking whichever
 // arrow button is actually rendered, so it naturally does nothing at either
-// end (no button there = nothing to click). Skipped while typing anywhere, or
-// while the lightbox (which has its own zoom/pan) is open.
+// end (no button there = nothing to click). Skipped while typing anywhere,
+// while the lightbox (which has its own zoom/pan) is open, and while a Wide
+// Page menu is open.
 document.addEventListener("keydown", (e) => {
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
   if ((!_stageId && !_searchBackFn) || e.ctrlKey || e.metaKey || e.altKey) return;
-  const ae = document.activeElement;
-  if (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable)) return;
-  if (document.querySelector(".lightbox")) return;
+  // ⚠ Typing, an overlay, or an open Wide Page dropdown each OWN the arrows.
+  // In the menu ←/→ hop between groups (wireV2Nav), and without this ONE
+  // keypress did both: the menu moved AND the day changed underneath it. See
+  // kbOwner() for why the guard has to live on this side.
+  if (kbOwner() !== "page") return;
   const btn = document.querySelector(e.key === "ArrowLeft" ? ".carousel-prev" : ".carousel-next");
   if (btn) { e.preventDefault(); btn.click(); }
 });
@@ -8939,6 +9013,20 @@ async function renderSpecial() {
     applyFz();
   };
   const titleOf = (card) => { const t = card.querySelector(".sp-title"); return t ? t.textContent.trim() : ""; };
+  // Select card #idx of whatever the list currently holds, and hand it back.
+  // ONE copy of the two branches — a dual card carries data-id and goes
+  // through the "being discussed" marker, a single-language card does not —
+  // used by the ↓/↑ keys and by the language switch below, which repaints the
+  // whole list under you and would otherwise drop your place.
+  const selectAt = (idx) => {
+    const listEl = $view.querySelector(".sp-list");
+    const cards = listEl ? [...listEl.querySelectorAll(".sp-card")] : [];
+    const c = cards[idx];
+    if (!c) return null;
+    if (c.dataset.id) selectDesktopChatCard(listEl, "special", titleOf, c);
+    else { cards.forEach((x) => x.classList.remove("is-chat-target")); c.classList.add("is-chat-target"); }
+    return c;
+  };
   const toolbar = () => {
     if (!v2) return "";
     const L = _spLang();
@@ -8954,7 +9042,7 @@ async function renderSpecial() {
         <button data-s="+" aria-label="Larger text">Z+</button>
       </div>
     </div>
-    <div class="sp-keyhint">&darr; &uarr; select &middot; Enter / double-click open &middot; +/&minus; text size</div>`;
+    <div class="sp-keyhint">&darr; &uarr; select &middot; Enter / double-click open &middot; h/e/b language &middot; +/&minus; text size</div>`;
   };
   const paint = (data) => {
     if (!current(nav)) return;
@@ -8978,7 +9066,7 @@ async function renderSpecial() {
       });
       $view.querySelector(".sp-toolbar").addEventListener("click", (e) => {
         const lb = e.target.closest("[data-l]"), sb = e.target.closest("[data-s]");
-        if (lb) { try { localStorage.setItem("wa:sp:lang", lb.dataset.l); } catch {} paint(); }
+        if (lb) setSpLang(lb.dataset.l);
         else if (sb) setFz(sb.dataset.s === "+" ? _spFz() + 2 : sb.dataset.s === "-" ? _spFz() - 2 : 17);
       });
       // Single click selects a single-language card (dual cards carry data-id,
@@ -9005,6 +9093,19 @@ async function renderSpecial() {
     if (!rows.length) { list.innerHTML = `<div class="empty">${SPECIAL_EMPTY_MSG}</div>`; return; }
     painter = paintSpecialList(list, rows, mode(), painter ? painter.shown() : 0);
   };
+  // हिंदी / English / Both — the toolbar buttons AND the h / e / b keys. The
+  // list is repainted wholesale, so remember which card was selected and put
+  // the selection back on the same one; losing your place in ~900 messages is
+  // the one thing that would make the keyboard worse than the mouse here.
+  const setSpLang = (l) => {
+    const listEl = $view.querySelector(".sp-list");
+    const at = listEl
+      ? [...listEl.querySelectorAll(".sp-card")].findIndex((c) => c.classList.contains("is-chat-target"))
+      : -1;
+    try { localStorage.setItem("wa:sp:lang", l); } catch {}
+    paint();
+    if (at >= 0) { const c = selectAt(at); if (c) c.scrollIntoView({ block: "nearest" }); }
+  };
   paint(SPECIAL.cached());          // cache first — instant, works offline
   if (v2) {
     // Wide Page keyboard model: ↓/↑ move the selection (one bold border, shared
@@ -9013,26 +9114,32 @@ async function renderSpecial() {
     // (nav bumped) and stands down while the reader overlay owns the keys.
     const onListKey = (e) => {
       if (!current(nav)) { document.removeEventListener("keydown", onListKey); return; }
-      if (document.querySelector(".sp-reader")) return;
+      if (kbOwner() !== "page") return;
+      // A focused button keeps only the keys a button actually consumes —
+      // Enter and Space. Everything else is the list's: Escape parks focus on
+      // the Wide Page group button (so a shut menu still has somewhere to Tab
+      // from) and clicking a toolbar button leaves focus there, and blocking
+      // the rest left the list dead until you clicked it again.
       const ae = document.activeElement;
-      if (ae && (["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(ae.tagName) || ae.isContentEditable)) return;
+      if (ae && ae.tagName === "BUTTON" && (e.key === "Enter" || e.key === " ")) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const listEl = $view.querySelector(".sp-list");
       const cards = listEl ? [...listEl.querySelectorAll(".sp-card")] : [];
       if (!cards.length) return;
       const at = cards.findIndex((c) => c.classList.contains("is-chat-target"));
-      const pick = (idx) => {
-        const c = cards[idx]; if (!c) return;
-        if (c.dataset.id) selectDesktopChatCard(listEl, "special", titleOf, c);
-        else { cards.forEach((x) => x.classList.remove("is-chat-target")); c.classList.add("is-chat-target"); }
-        c.scrollIntoView({ block: "nearest" });
-      };
+      const pick = (idx) => { const c = selectAt(idx); if (c) c.scrollIntoView({ block: "nearest" }); };
       if (e.key === "ArrowDown") { e.preventDefault(); pick(at < 0 ? 0 : Math.min(at + 1, cards.length - 1)); }
       else if (e.key === "ArrowUp") { e.preventDefault(); pick(at < 0 ? cards.length - 1 : Math.max(at - 1, 0)); }
       else if (e.key === "Enter") { if (at >= 0 && rows[at]) openSpecialReader(rows, at); }
       else if (e.key === "Escape") { cards.forEach((c) => c.classList.remove("is-chat-target")); }
       else if (e.key === "+" || e.key === "=") { e.preventDefault(); setFz(_spFz() + 2); }
       else if (e.key === "-" || e.key === "_") { e.preventDefault(); setFz(_spFz() - 2); }
+      // Three buttons on the toolbar, three keys — h / e / b. Two would leave
+      // "Both" reachable by mouse only, which is what we are getting away from.
+      else if (e.key === "h" || e.key === "e" || e.key === "b") {
+        e.preventDefault();
+        setSpLang(e.key === "h" ? "hi" : e.key === "e" ? "en" : "both");
+      }
     };
     document.addEventListener("keydown", onListKey);
   }
@@ -9121,8 +9228,25 @@ function openSpecialReader(rows, index) {
     if (e.key === "ArrowLeft") return goTo(i - 1);
     const ae = document.activeElement;
     if (e.key === "Enter" && ae && ae.tagName === "BUTTON") return;   // let the button act
-    if (e.key === "ArrowUp" || e.key === "Enter" || e.key === "+" || e.key === "=") { e.preventDefault(); return setFz(rdFz() + 2); }
-    if (e.key === "ArrowDown" || e.key === "-" || e.key === "_") { e.preventDefault(); return setFz(rdFz() - 2); }
+    // h / e — the same two buttons in the bar above. A message with only one
+    // language HIDES that segment, and the key matches: it does nothing, and
+    // says nothing, exactly as a button that is not there would.
+    if (e.key === "h" || e.key === "e") {
+      if (langSeg.hidden) return;
+      e.preventDefault();
+      lang = e.key === "h" ? "hi" : "en";
+      try { localStorage.setItem("wa:sp:rdlang", lang); } catch {}
+      return render();
+    }
+    if (e.key === "Enter" || e.key === "+" || e.key === "=") { e.preventDefault(); return setFz(rdFz() + 2); }
+    if (e.key === "-" || e.key === "_") { e.preventDefault(); return setFz(rdFz() - 2); }
+    // Up / down scroll the message (text size is +/-). `.sp-reader-scroll` is a
+    // plain div that never takes focus, so the browser will not do this for us.
+    const st = Math.max(40, Math.round(scroll.clientHeight * 0.10));
+    if (e.key === "ArrowUp") { e.preventDefault(); scroll.scrollTop -= st; return; }
+    if (e.key === "ArrowDown") { e.preventDefault(); scroll.scrollTop += st; return; }
+    if (e.key === "Home") { e.preventDefault(); scroll.scrollTop = 0; return; }
+    if (e.key === "End") { e.preventDefault(); scroll.scrollTop = scroll.scrollHeight; return; }
   }
   ov.addEventListener("click", (e) => {
     if (e.target === ov) return close();
@@ -9966,13 +10090,28 @@ async function renderLetterpadInto(container, getLang, opts = {}) {
   };
   paint();
   // Per-card language toggle (only present when a message has both languages).
-  container.addEventListener("click", (e) => {
-    const btn = e.target.closest(".lp-langtog button"); if (!btn) return;
-    const card = btn.closest(".lp-card");
-    const m = msgs.find((x) => x.id === card.dataset.id); if (!m) return;
-    const fresh = el(letterpadCardHtml(m, btn.dataset.l));
+  // ⚠ Unlike Special Telegram's, this is NOT a stored preference — it swaps
+  // ONE letter, so a key needs a target and uses the selected card.
+  // The card node is REPLACED, which used to take the bold selection border
+  // with it; that matters most to the keyboard, where the border is your place
+  // in ~390 letters. Both the button and the key come through here.
+  const relang = (card, l) => {
+    if (!card || !card.querySelector(".lp-langtog")) return null;   // single-language letter
+    const m = msgs.find((x) => x.id === card.dataset.id); if (!m) return null;
+    const wasSel = card.classList.contains("is-chat-target");
+    const fresh = el(letterpadCardHtml(m, l));
     card.replaceWith(fresh);                       // (not outerHTML — we need the node back to wire it)
     wireCarousel(fresh, { pages: +fresh.dataset.pages || 1 });
+    if (wasSel) {
+      if (fresh.dataset.id) selectDesktopChatCard(container, "letterpad",
+        (c) => { const t = c.querySelector(".lp-title"); return t ? t.textContent.trim() : ""; }, fresh);
+      else fresh.classList.add("is-chat-target");
+    }
+    return fresh;
+  };
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest(".lp-langtog button"); if (!btn) return;
+    relang(btn.closest(".lp-card"), btn.dataset.l);
   });
   // Layout B (browser only): a click on any page scan opens the full-screen
   // viewer, its strip running CONTINUOUSLY across every letter in the list
@@ -9985,7 +10124,7 @@ async function renderLetterpadInto(container, getLang, opts = {}) {
     // A discoverable key hint above the list (browser Wide Page only).
     if (!(container.previousElementSibling && container.previousElementSibling.classList.contains("lp-keyhint"))) {
       container.insertAdjacentHTML("beforebegin",
-        '<div class="lp-keyhint">&darr; &uarr; select &middot; Enter / double-click open &middot; viewer: &larr; &rarr; pages, &uarr; &darr; or +/&minus; zoom</div>');
+        '<div class="lp-keyhint">&darr; &uarr; select &middot; Enter / double-click open &middot; h/e language &middot; viewer: &larr; &rarr; pages, +/&minus; zoom, &uarr; &darr; scroll</div>');
     }
     // Tab entry point (keyboard-map sheet, build order item 1): the list
     // itself is one Tab stop — `container` here is the stable `.lp-list` node
@@ -10031,9 +10170,14 @@ async function renderLetterpadInto(container, getLang, opts = {}) {
     });
     const onListKey = (e) => {
       if (!container.isConnected) { document.removeEventListener("keydown", onListKey); return; }
-      if (document.querySelector(".lightbox")) return;
+      if (kbOwner() !== "page") return;
+      // A focused button keeps only the keys a button actually consumes —
+      // Enter and Space. Everything else is the list's: Escape parks focus on
+      // the Wide Page group button (so a shut menu still has somewhere to Tab
+      // from) and clicking a toolbar button leaves focus there, and blocking
+      // the rest left the list dead until you clicked it again.
       const ae = document.activeElement;
-      if (ae && (["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(ae.tagName) || ae.isContentEditable)) return;
+      if (ae && ae.tagName === "BUTTON" && (e.key === "Enter" || e.key === " ")) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const cards = [...container.querySelectorAll(".lp-card")];
       if (!cards.length) return;
@@ -10047,6 +10191,15 @@ async function renderLetterpadInto(container, getLang, opts = {}) {
       if (e.key === "ArrowDown") { e.preventDefault(); pick(at < 0 ? 0 : Math.min(at + 1, cards.length - 1)); }
       else if (e.key === "ArrowUp") { e.preventDefault(); pick(at < 0 ? cards.length - 1 : Math.max(at - 1, 0)); }
       else if (e.key === "Enter") { if (cards[at]) openViewer(cards[at]); }
+      // h / e switch the SELECTED letter's language — the same two buttons on
+      // the card. A letter that exists in one language only has no toggle, and
+      // the key does nothing, silently.
+      else if (e.key === "h" || e.key === "e") {
+        if (at < 0) return;
+        e.preventDefault();
+        const fresh = relang(cards[at], e.key === "h" ? "hi" : "en");
+        if (fresh) fresh.scrollIntoView({ block: "nearest" });
+      }
       else if (e.key === "Escape") { cards.forEach((c) => c.classList.remove("is-chat-target")); }
     };
     document.addEventListener("keydown", onListKey);

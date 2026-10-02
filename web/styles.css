@@ -477,6 +477,17 @@ mark { background: var(--highlight); color: inherit; border-radius: 3px; padding
   border: none; background: rgba(255,255,255,.14); color: #fff; font-size: 26px; line-height: 1;
   cursor: pointer; z-index: 3; transition: background .12s; }
 .lb-close:hover { background: rgba(255,255,255,.28); }
+/* Zoom pill, top-left -- the visible counterpart of the +/- keys, and the one
+   place the current magnification is stated. Mirrors .lb-close across the top
+   and stays clear of the .lb-arrow page buttons at the vertical middle. */
+.lb-zoom { position: fixed; top: 18px; left: 22px; z-index: 3; display: flex; align-items: center;
+  gap: 2px; padding: 4px; border-radius: 22px; background: rgba(255,255,255,.14); }
+.lb-zoom button { width: 34px; height: 34px; border: none; border-radius: 50%; background: none;
+  color: #fff; font-size: 20px; line-height: 1; cursor: pointer; transition: background .12s; }
+.lb-zoom button:hover:not(:disabled) { background: rgba(255,255,255,.28); }
+.lb-zoom button:disabled { opacity: .35; cursor: default; }
+.lb-zpct { min-width: 46px; text-align: center; color: rgba(255,255,255,.9);
+  font: 600 12.5px var(--sans); user-select: none; }
 .lb-hint { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
   color: rgba(255,255,255,.7); font-size: 12.5px; letter-spacing: .02em; pointer-events: none; z-index: 3; }
 
@@ -6607,7 +6618,25 @@ body.wa-v2 .v2bar {
   padding: 7px 22px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  /* Sticky, so the menus stay reachable mid-scroll -- arrowing down a long
+     Special Telegram or Letterhead list used to carry the whole bar off the
+     top. The classic .topbar has always been sticky; this one was the only
+     header in the app that was not. z-index 50 clears page content and the
+     bar's own dropdown (.v2-menu, 40, which is INSIDE this new stacking
+     context), and stays under every overlay -- .wc-sheet-back 200, the
+     shortcut sheet 1400, the image viewer 10000 -- and under the fixed
+     popovers that must sit over the bar (.avatar-pop 95, .cal-nav-pop 120).
+     The background is opaque on purpose: content scrolls UNDER this. */
+  position: sticky; top: 0; z-index: 50;
 }
+/* ⚠ Pair with the sticky bar: the list arrows move the selection with
+   scrollIntoView({block:"nearest"}), which happily parks the chosen card at
+   scroll-top -- i.e. UNDERNEATH the bar, hidden, which is exactly the moment
+   this feature exists for. scroll-margin keeps the card clear of it. Keep
+   --v2bar-h in step with the padding + row height above. */
+body.wa-v2 { --v2bar-h: 55px; }
+body.wa-v2 .sp-card,
+body.wa-v2 .lp-card { scroll-margin-top: calc(var(--v2bar-h) + 10px); }
 body.wa-v2 .v2bar .v2-brand { flex: 0 0 auto; gap: 8px; padding: 0; }
 /* Operator (2026-09-07): small bold ORANGE wordmark, sitting inline in the same
    row as Home / Guru's Msg. The leaf logo is left as-is (new one to come). */
@@ -6668,10 +6697,9 @@ body.wa-v2 .v2-badge {
 }
 body.wa-v2 .v2-menu a .v2-badge { margin-left: auto; }
 
-/* Shortcut hint chips — "1".."6" on the bar, "g x" inside an open menu.
-   Deliberately NOT the red .v2-badge language (that means unread); a faint
-   outlined chip reads as "key", not "count". Discoverability answer for the
-   keyboard-map sheet — see V2_GCHORD in app.js. */
+/* Shortcut hint chips — "1".."6" on the bar. Deliberately NOT the red
+   .v2-badge language (that means unread); a faint outlined chip reads as
+   "key", not "count". Discoverability answer for the keyboard-map sheet. */
 body.wa-v2 .v2-hint {
   font: 700 10px var(--sans); color: var(--muted);
   border: 1px solid var(--border); border-radius: 5px;
@@ -6687,6 +6715,18 @@ body.wa-v2 .v2-menu a:hover .v2-hint { border-color: var(--accent-2); }
    row (no hint) is untouched: its auto-margin rule above still applies. */
 body.wa-v2 .v2-menu a .v2-hint { margin-left: auto; }
 body.wa-v2 .v2-menu a .v2-hint + .v2-badge { margin-left: 0; }
+
+/* The access letter, marked in the row's own label (accLabel in app.js): press
+   this letter while the menu is open and the row opens. Red and bold so it
+   reads as "the key", picked out of the word the way a desktop menu underlines
+   one. Underlined too, so it does not rest on colour alone. */
+body.wa-v2 .v2-menu a .v2-lbl { min-width: 0; }
+body.wa-v2 .v2-menu a .v2-acc {
+  color: #c62828; font-weight: 800;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+body.wa-v2 .v2-menu a:hover .v2-acc,
+body.wa-v2 .v2-menu a:focus .v2-acc { color: #b71c1c; }
 
 /* --- "?" shortcut sheet — NOT scoped to wa-v2; opens in either layout ----- */
 .kb-help-ov {
@@ -7167,3 +7207,22 @@ body.wa-v2 .lp-pageimg { cursor: zoom-in; }
 }
 @media (max-width: 640px) { .lb-arrow { display: none; } }
 
+
+
+/* ---------------- Lightbox chrome, legible over a WHITE scan ----------------
+   The furniture was white-on-translucent-white, which DISAPPEARS the moment you
+   zoom into a letterpad page -- a white scan fills the screen and the controls
+   go with it. Dark, blurred chrome reads over both the viewer's near-black
+   backdrop and a white scan. Must stay LAST in this file: `.lb-arrow` is
+   declared in the wa-v2 block above and would otherwise win on source order. */
+.lb-close, .lb-arrow, .lb-zoom {
+  box-sizing: border-box; background: rgba(18,14,26,.58);
+  border: 1px solid rgba(255,255,255,.22); backdrop-filter: blur(7px);
+  box-shadow: 0 2px 10px rgba(0,0,0,.28);
+}
+.lb-close:hover, .lb-arrow:hover { background: rgba(18,14,26,.86); }
+.lb-zoom button:hover:not(:disabled) { background: rgba(255,255,255,.22); }
+.lb-count, .lb-hint {
+  padding: 5px 13px; border-radius: 999px; background: rgba(18,14,26,.58);
+  border: 1px solid rgba(255,255,255,.18); backdrop-filter: blur(7px);
+}
