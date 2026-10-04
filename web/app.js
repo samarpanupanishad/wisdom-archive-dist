@@ -14406,6 +14406,124 @@ function dhyanProgressEl(fmtMins, dayLabel) {
 //
 // `opts.past` adds a day wheel, for the Add/Remove page. Without it the record
 // lands now, which is what the tile on the diary wants.
+// ---- Granth Pathan notes: "What did I learn?" ------------------------------
+// An optional note on a granth record, kept in the record's own `note` field
+// (plus `star` for a key teaching). Nothing new is stored about WHERE in the
+// book it belongs: the pages are derived, like pages-read, from the bookmark
+// before it. `prev` is SADHANA.granthPrev() (null = the book's first record).
+//
+// ⚠ A record that moved the bookmark BACK (re-reading, or starting the granth
+// again) has no start of its own, so it is labelled by the page reached alone.
+// My Learnings groups it with the earlier note that covers the same page.
+function granthSpan(prev, to) {
+  if (prev == null) return { from: to, to, label: to ? `up to p. ${to}` : "p. 0" };
+  if (to > prev) return { from: prev + 1, to, label: prev + 1 === to ? `p. ${to}` : `p. ${prev + 1} – ${to}` };
+  return { from: to, to, label: `p. ${to}` };
+}
+
+// ONE note box: the entry sheet and the edit sheet both draw and wire it from
+// here, so the two cannot drift. `nt` is {text, star}, mutated as the member
+// types; the caller reads it back on Save.
+function granthNoteBoxHtml(nt) {
+  const max = SADHANA.MAX_NOTE;
+  return `
+    <textarea class="dd-gn-ta" data-gn-text maxlength="${max}" rows="6"
+      placeholder="What did this reading teach you? Write in Hindi or English."
+      >${escapeHtml(nt.text)}</textarea>
+    <div class="dd-gn-foot">
+      <button type="button" class="dd-gn-star${nt.star ? " on" : ""}" data-gn-star
+        aria-pressed="${nt.star ? "true" : "false"}">${nt.star ? "★" : "☆"} Key teaching</button>
+      <span class="dd-gn-cc" data-gn-cc>${nt.text.length} / ${max}</span>
+    </div>`;
+}
+function wireGranthNoteBox(root, nt) {
+  const ta = root.querySelector("[data-gn-text]");
+  const cc = root.querySelector("[data-gn-cc]");
+  const sb = root.querySelector("[data-gn-star]");
+  if (ta) ta.addEventListener("input", () => {
+    nt.text = ta.value;
+    if (cc) cc.textContent = `${ta.value.length} / ${SADHANA.MAX_NOTE}`;
+  });
+  if (sb) sb.addEventListener("click", () => {
+    nt.star = !nt.star;
+    sb.classList.toggle("on", nt.star);
+    sb.setAttribute("aria-pressed", nt.star ? "true" : "false");
+    sb.textContent = `${nt.star ? "★" : "☆"} Key teaching`;
+    hapticTickHook();
+  });
+  return ta;
+}
+// Granth records that carry a note, for one book or for all of them.
+const granthNotes = (bookId) => SADHANA.all()
+  .filter((s) => s.kind === "granth" && s.note && (!bookId || s.book === bookId));
+
+// Add, change or remove the note on a granth record that already exists:
+// insight often comes a day after the reading. `onSaved` repaints the caller.
+function openGranthNote(id, onSaved) {
+  const s = SADHANA.get(id);
+  if (!s || s.kind !== "granth") return;
+  const book = SADHANA.bookOf(s.book);
+  const span = granthSpan(SADHANA.granthPrev(s), s.toPage || 0);
+  const had = !!s.note;
+  const nt = { text: s.note || "", star: !!s.star };
+  const when = new Date(s.day + "T12:00:00Z").toLocaleDateString(undefined,
+    { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+
+  const ov = el(`
+    <div class="dd-sheet-ov">
+      <div class="dd-sheet dd-granth dd-gn-sheet" role="dialog" aria-label="What did I learn?">
+        <div class="dd-sheet-h">What did I learn?</div>
+        <div class="dd-gn-head">
+          <span class="dd-gn-range">${escapeHtml(book ? book.name : "Granth")} · ${escapeHtml(span.label)}</span>
+          <span class="dd-gn-when">${escapeHtml(when)}</span>
+        </div>
+        ${granthNoteBoxHtml(nt)}
+        ${had ? `<button type="button" class="dd-gn-del" data-gn-del>Remove this note</button>` : ""}
+        <div class="dd-sheet-btns">
+          <button class="btn" data-cancel>Cancel</button>
+          <button class="btn primary" data-save>Save</button>
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(ov);
+  const ta = wireGranthNoteBox(ov, nt);
+
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  // ⚠ Words typed are never thrown away by a stray tap or a back press.
+  const dirty = () => nt.text !== (s.note || "") || nt.star !== !!s.star;
+  const leave = () => {
+    if (dirty() && !confirm("Leave without saving? What you wrote will be lost.")) return;
+    close();
+  };
+  const onKey = (e) => { if (e.key === "Escape") leave(); };
+  document.addEventListener("keydown", onKey);
+  ddOverlay(ov, leave);
+  ov.addEventListener("click", (e) => { if (e.target === ov) leave(); });
+  ov.querySelector("[data-cancel]").addEventListener("click", leave);
+
+  const del = ov.querySelector("[data-gn-del]");
+  if (del) del.addEventListener("click", () => {
+    if (!confirm("Remove this note? The page you recorded stays in your diary.")) return;
+    SADHANA.update(id, { note: "", star: false });
+    close();
+    toast("Note removed.");
+    if (onSaved) onSaved();
+  });
+
+  ov.querySelector("[data-save]").addEventListener("click", () => {
+    const text = nt.text.trim();
+    const rec = SADHANA.update(id, { note: text, star: !!(nt.star && text) });
+    if (!rec) { toast("Couldn't save that note."); return; }
+    close();
+    toast(text ? "Note kept." : had ? "Note removed." : "Nothing written, so nothing changed.");
+    if (onSaved) onSaved();
+  });
+
+  if (ta && !had) { try { ta.focus(); } catch (_) {} }
+}
+
+// `opts.past` adds the day row, for Add/Remove. `opts.onLearnings(bookId)`, when
+// given, opens My Learnings; without it the link is not shown.
 function openGranthEntry(onSaved, opts) {
   const past = !!(opts && opts.past);
   const DAYS_BACK = 365, dayMs = 86400000;
@@ -14418,6 +14536,16 @@ function openGranthEntry(onSaved, opts) {
   let page = bookId ? SADHANA.lastPage(bookId) : 0;
   let offset = 0;
   let adding = false;
+  // The optional "What did I learn?" note. Closed by default, so a normal day
+  // stays: open, move the page, Record. It survives switching back to the page
+  // row ("Change page") and is saved on the record itself.
+  let noteOpen = false;
+  const nt = { text: "", star: false };
+  // The pages the note will be about, from the bookmark this entry moves on.
+  const spanNow = () => {
+    const was = SADHANA.lastPage(bookId);
+    return granthSpan(was ? was : null, page);
+  };
 
   // ⚠ ONE definition, used by the first paint AND by the repaint-as-you-type.
   // It was written twice and the two copies immediately disagreed.
@@ -14488,6 +14616,30 @@ function openGranthEntry(onSaved, opts) {
     const book = SADHANA.bookOf(bookId) || list[0];
     bookId = book.id;
 
+    // ⚠ The page row FOLDS AWAY while the note is open, so the phone keyboard
+    // cannot push Record off the screen. "Change page" brings it back, and the
+    // words typed so far are kept.
+    if (noteOpen) {
+      body.innerHTML = `
+        <div class="dd-gn-head">
+          <span class="dd-gn-range">${escapeHtml(book.name)} · ${escapeHtml(spanNow().label)}</span>
+          <button type="button" class="dd-gn-change" data-gn-back>Change page</button>
+        </div>
+        <div class="dd-g-lab">What did I learn?</div>
+        ${granthNoteBoxHtml(nt)}`;
+      const ta = wireGranthNoteBox(body, nt);
+      body.querySelector("[data-gn-back]").addEventListener("click", () => {
+        noteOpen = false; hapticTickHook(); paint();
+      });
+      if (ta) {
+        try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {}
+      }
+      return;
+    }
+
+    const noteCount = granthNotes(bookId).length;
+    const hasText = !!nt.text.trim();
+
     body.innerHTML = `
       <div class="dd-g-books">
         ${list.map((b) => `<button class="dd-g-book${b.id === bookId ? " on" : ""}" data-book="${escapeHtml(b.id)}">${escapeHtml(b.name)}</button>`).join("")}
@@ -14502,7 +14654,18 @@ function openGranthEntry(onSaved, opts) {
         <input class="dd-g-page" data-page inputmode="numeric" value="${page}">
         <button class="dd-step" data-pg="1" aria-label="one page on">+</button>
       </div>
-      <div class="dd-note dd-g-note">${noteHtml()}</div>`;
+      <div class="dd-note dd-g-note">${noteHtml()}</div>
+      <button type="button" class="dd-gn-open${hasText ? " has" : ""}" data-gn-open>
+        <span class="dd-gn-open-i" aria-hidden="true">✎</span>
+        <span class="dd-gn-open-w">
+          <span class="dd-gn-open-t">${hasText ? (nt.star ? "★ " : "") + escapeHtml(nt.text.trim()) : "What did I learn?"}</span>
+          <span class="dd-gn-open-s" data-gn-span>${hasText ? "your note · " : "optional · for "}${escapeHtml(spanNow().label)}</span>
+        </span>
+      </button>
+      ${opts && opts.onLearnings && noteCount && !hasText ? `
+      <button type="button" class="dd-gn-nb" data-learn>
+        <span>📓 My learnings from ${escapeHtml(book.name)}</span><span class="dd-gn-cnt">${noteCount}</span>
+      </button>` : ""}`;
     wireRest();
   }
 
@@ -14542,6 +14705,8 @@ function openGranthEntry(onSaved, opts) {
         page = Math.max(0, Math.min(100000, parseInt(inp.value, 10) || 0));
         const note = body.querySelector(".dd-g-note");
         if (note) note.innerHTML = noteHtml();
+        const sp = body.querySelector("[data-gn-span]");
+        if (sp) sp.textContent = (nt.text.trim() ? "your note · " : "optional · for ") + spanNow().label;
       };
       inp.addEventListener("input", sync);
       body.querySelectorAll("[data-pg]").forEach((b) => b.addEventListener("click", () => {
@@ -14550,14 +14715,29 @@ function openGranthEntry(onSaved, opts) {
         sync();
       }));
     }
+
+    const op = body.querySelector("[data-gn-open]");
+    if (op) op.addEventListener("click", () => { noteOpen = true; hapticTickHook(); paint(); });
+    const lb = body.querySelector("[data-learn]");
+    if (lb) lb.addEventListener("click", () => {
+      const id = bookId;
+      close();
+      opts.onLearnings(id);
+    });
   }
 
   const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
-  const onKey = (e) => { if (e.key === "Escape") close(); };
+  // ⚠ A note is the one thing on this sheet that costs effort to type, so a
+  // stray tap outside, Esc or the back button never throws it away unasked.
+  const leave = () => {
+    if (nt.text.trim() && !confirm("Leave without recording? The note you wrote will be lost.")) return;
+    close();
+  };
+  const onKey = (e) => { if (e.key === "Escape") leave(); };
   document.addEventListener("keydown", onKey);
-  ddOverlay(ov, close);   // Android back here means exactly this popup's Cancel
-  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
-  ov.querySelector("[data-cancel]").addEventListener("click", close);
+  ddOverlay(ov, leave);   // Android back here means exactly this popup's Cancel
+  ov.addEventListener("click", (e) => { if (e.target === ov) leave(); });
+  ov.querySelector("[data-cancel]").addEventListener("click", leave);
 
   saveBtn.addEventListener("click", () => {
     if (!bookId) { toast("Add a granth first."); return; }
@@ -14568,16 +14748,18 @@ function openGranthEntry(onSaved, opts) {
     const at = past
       ? new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), now.getHours(), now.getMinutes(), 0, 0)
       : now;
+    const text = nt.text.trim();
     const rec = SADHANA.add({
       kind: "granth", book: bookId, toPage: page,
       startedAt: at.toISOString(), actualSec: 0,
       source: past ? "manual" : "timer",
+      note: text, star: !!(nt.star && text),
     });
     if (!rec) { toast("Couldn't save that entry."); return; }
     const read = SADHANA.granthDelta(rec);
     close();
-    toast(read ? `${read} page${read === 1 ? "" : "s"} recorded — now on page ${page}.`
-               : `Recorded — on page ${page}.`);
+    toast((read ? `${read} page${read === 1 ? "" : "s"} recorded — now on page ${page}.`
+                : `Recorded — on page ${page}.`) + (rec.note ? " Note kept." : ""));
     if (onSaved) onSaved();
   });
 
@@ -16069,7 +16251,11 @@ async function mountDhyanDiary(node) {
   let pendingJapaId = null;    // a japa just stopped, awaiting its mala count
   let ticker = null;
   let aartiTimer = null;       // paints the lamp, and the aarti line on the tile
-  let view = "home";           // "home" | "japa" | "aarti" | "entries" | "reports" | "remind"
+  let view = "home";           // "home" | "japa" | "aarti" | "entries" | "reports" | "remind" | "learnings"
+  // My Learnings: which granth's notebook is open, the search text, and the
+  // ★-only filter. Kept across repaints, so editing a note returns you to the
+  // same place in the same list.
+  let lbook = null, lq = "", lstar = false;
   let rtab = "d7";             // reports: "d7" | "d15" | "d30" | "progress" | "backup"
   // Which of the five reports (or the full day list) is open on top of the
   // report page. null = the report page itself. It deliberately SURVIVES a tab
@@ -16353,6 +16539,14 @@ async function mountDhyanDiary(node) {
 
   // One row shape everywhere a sitting is listed, so Today and Add/Remove can
   // never drift apart. `del` decides whether it can be removed from here.
+  //
+  // A Granth row also carries its note, or the offer to write one: insight
+  // often comes a day after the reading, so the note must not be a chance that
+  // closes with the entry sheet. Both open openGranthNote().
+  const granthNoteHtml = (s) => s.kind !== "granth" ? "" : s.note
+    ? `<button type="button" class="dd-gn-has" data-gnote="${escapeHtml(s.id)}"><span class="dd-gn-txt">${
+        s.star ? "★ " : "📝 "}${escapeHtml(s.note)}</span></button>`
+    : `<button type="button" class="dd-gn-add" data-gnote="${escapeHtml(s.id)}">✎ What did I learn?</button>`;
   const rowHtml = (s, del, withDay) => `
     <div class="dd-row" data-id="${escapeHtml(s.id)}">
       <div class="dd-row-main">
@@ -16360,6 +16554,7 @@ async function mountDhyanDiary(node) {
           detailOf(s) ? ` · <span class="dd-row-d">${escapeHtml(detailOf(s))}</span>` : ""}</div>
         <div class="dd-row-s">${withDay ? escapeHtml(shortDay(s.day)) + " · " : ""}${
           escapeHtml(timeOf(s.startedAt))}${s.source === "manual" ? " · by hand" : ""}</div>
+        ${granthNoteHtml(s)}
       </div>
       <div class="dd-row-dur">${escapeHtml(amountOf(s))}</div>
       ${del ? `<button class="dd-del" data-del aria-label="Delete this entry">✕</button>` : ""}
@@ -16615,7 +16810,7 @@ async function mountDhyanDiary(node) {
     const newestFirst = (a) =>
       a.slice().sort((x, y) => (x.startedAt < y.startedAt ? 1 : -1));
     const cell = (c, v) => `<td class="${c}">${escapeHtml(v)}</td>`;
-    let head, rows, sumS, sumB, note, longest = null;
+    let head, rows, sumS, sumB, note, longest = null, learnBtn = "";
 
     if (kind === "guru" || kind === "maun") {
       const list = newestFirst(kind === "guru" ? st.guru : st.maun);
@@ -16655,13 +16850,21 @@ async function mountDhyanDiary(node) {
       // timer anywhere in this app for it — so those three columns would print
       // an identical clock and a flat 0 on every row for ever.
       head = `<tr><th>Date</th><th>Time</th><th class="r">Pages</th><th class="r">Reached</th></tr>`;
-      rows = list.map((s) => `<tr>${cell("d", slashDay(s.day))}${
+      // A row with a note gets a second row under it holding the note. Only
+      // existing notes: an "add" offer on every row would double the table,
+      // and Today / Add-Remove already make that offer.
+      rows = list.map((s) => `<tr${s.note ? ` class="dd-rt-hasn"` : ""}>${cell("d", slashDay(s.day))}${
         cell("t", timeOf(s.startedAt))}<td class="n r">${SADHANA.granthDelta(s)}</td>${
-        cell("t r", `p. ${s.toPage || 0}`)}</tr>`).join("");
+        cell("t r", `p. ${s.toPage || 0}`)}</tr>${s.note ? `
+        <tr class="dd-rt-nrow"><td colspan="4">${granthNoteHtml(s)}</td></tr>` : ""}`).join("");
       sumS = `${list.length} reading${list.length === 1 ? "" : "s"}`;
       sumB = `${st.pages} page${st.pages === 1 ? "" : "s"}`;
       note = "Granth Pathan records the page you reached, not a length of time — so this "
            + "report counts pages instead of minutes.";
+      learnBtn = granthNotes().length ? `
+        <button class="dd-gn-nb dd-gn-nb-r" data-lopen>
+          <span>📓 My Learnings</span><span class="dd-gn-cnt">${granthNotes().length}</span>
+        </button>` : "";
 
     } else {
       const list = newestFirst(st.aarti);
@@ -16695,6 +16898,7 @@ async function mountDhyanDiary(node) {
 
     return `
       <div class="dd-rt-note">${escapeHtml(spanLabel(st))} · ${escapeHtml(note)}</div>
+      ${learnBtn}
       ${rows ? `
         <div class="dd-rt-sum"><span>${escapeHtml(sumS)}</span><b>${escapeHtml(sumB)}</b></div>
         <div class="dd-rt-scroll"><table class="dd-rt"><thead>${head}</thead><tbody>${rows}</tbody></table></div>
@@ -16766,6 +16970,141 @@ async function mountDhyanDiary(node) {
           so read them out as they are if you report this.</div>
       </details>`;
   }
+
+  // ---- My Learnings: the notebook of one granth --------------------------
+  // ⚠ Ordered by PAGE, not by date: it reads like notes in the margin of the
+  // book. Notes about the same pages (a second reading) are grouped, newest on
+  // top and the earlier ones under it, so a member can see how their
+  // understanding has grown. Nothing here is stored: the pages come from
+  // granthSpan(), the same derivation the entry sheet shows.
+  //
+  // Only books still on the list get a tab. A removed book keeps its records
+  // (removeBook() never deletes history) and they come back if it is re-added.
+  function learningsBooks() {
+    const counts = new Map();
+    granthNotes().forEach((s) => counts.set(s.book, (counts.get(s.book) || 0) + 1));
+    return SADHANA.books().filter((b) => counts.has(b.id)).map((b) => ({ ...b, n: counts.get(b.id) }));
+  }
+
+  function learningsClusters(bookId) {
+    const notes = granthNotes(bookId).map((s) => ({ s, sp: granthSpan(SADHANA.granthPrev(s), s.toPage || 0) }));
+    notes.sort((a, b) => a.sp.from - b.sp.from || a.sp.to - b.sp.to
+      || (a.s.startedAt < b.s.startedAt ? -1 : 1));
+    const out = [];
+    for (const n of notes) {
+      const last = out[out.length - 1];
+      if (last && n.sp.from <= last.maxTo) { last.items.push(n); last.maxTo = Math.max(last.maxTo, n.sp.to); }
+      else out.push({ items: [n], maxTo: n.sp.to });
+    }
+    out.forEach((c) => c.items.sort((a, b) => (a.s.startedAt < b.s.startedAt ? 1 : -1)));
+    return out;
+  }
+
+  // Case-insensitive, and Hindi and English alike: a plain substring test.
+  const lMatch = (s) => (!lstar || s.star)
+    && (!lq.trim() || s.note.toLowerCase().includes(lq.trim().toLowerCase()));
+
+  function learningsListHtml() {
+    const clusters = learningsClusters(lbook);
+    const longDay = (day) => new Date(day + "T12:00:00Z").toLocaleDateString(undefined,
+      { day: "numeric", month: "short", year: "numeric" });
+    const html = clusters.map((c) => {
+      // A group is shown if ANY of its notes matches, and then whole — an
+      // earlier reading is context for the newer note, not noise.
+      if (!c.items.some((n) => lMatch(n.s))) return "";
+      const [top, ...earlier] = c.items;
+      const again = earlier.length ? `<span class="dd-ln-again">read again</span>` : "";
+      return `
+        <div class="dd-ln">
+          <button type="button" class="dd-ln-main" data-gnote="${escapeHtml(top.s.id)}">
+            <span class="dd-ln-h">
+              <span class="dd-ln-p">${escapeHtml(top.sp.label)}</span>
+              <span class="dd-ln-d">${escapeHtml(longDay(top.s.day))}</span>
+              ${again}${top.s.star ? `<span class="dd-ln-st" aria-label="key teaching">★</span>` : ""}
+            </span>
+            <span class="dd-ln-x">${escapeHtml(top.s.note)}</span>
+          </button>
+          ${earlier.map((n) => `
+          <button type="button" class="dd-ln-then" data-gnote="${escapeHtml(n.s.id)}">
+            <span class="dd-ln-then-h">Earlier · ${escapeHtml(n.sp.label)} · ${escapeHtml(longDay(n.s.day))}${
+              n.s.star ? " · ★" : ""}</span>
+            <span class="dd-ln-x">${escapeHtml(n.s.note)}</span>
+          </button>`).join("")}
+        </div>`;
+    }).join("");
+    return html || `<div class="dd-empty">${lq.trim() || lstar
+      ? "No note matches. Clear the search or the ★ filter."
+      : "No notes for this granth yet."}</div>`;
+  }
+
+  function learningsHtml() {
+    const bs = learningsBooks();
+    if (!bs.length) {
+      return `
+        <div class="dd-empty dd-ln-none">
+          <b>Your learnings will collect here.</b><br>
+          When you record your page in Granth Pathan, tap <i>What did I learn?</i> and write what the
+          reading taught you. You can also add a note to any Granth entry later, from Today or
+          Add / Remove.
+        </div>`;
+    }
+    if (!bs.some((b) => b.id === lbook)) lbook = bs[0].id;
+    const book = bs.find((b) => b.id === lbook);
+    const pg = SADHANA.lastPage(book.id);
+    const first = granthNotes(book.id).reduce((m, s) => (!m || s.day < m ? s.day : m), "");
+    const pct = book.pages ? Math.min(100, Math.round((pg / book.pages) * 100)) : 0;
+    const stars = granthNotes(book.id).filter((s) => s.star).length;
+    return `
+      ${bs.length > 1 ? `<div class="dd-g-books dd-ln-books">${bs.map((b) => `
+        <button class="dd-g-book${b.id === lbook ? " on" : ""}" data-lbook="${escapeHtml(b.id)}">${
+          escapeHtml(b.name)}</button>`).join("")}</div>` : ""}
+      <div class="dd-ln-head">
+        <div class="dd-ln-t">${escapeHtml(book.name)}</div>
+        ${book.pages ? `<div class="dd-ln-prog"><i style="width:${pct}%"></i></div>` : ""}
+        <div class="dd-ln-s">
+          <span>${pg ? `p. ${pg}${book.pages ? ` of ${book.pages}` : ""}` : "not started"}</span>
+          <span>${book.n} note${book.n === 1 ? "" : "s"}${first ? ` · since ${escapeHtml(shortDay(first))}` : ""}</span>
+        </div>
+      </div>
+      <input class="dd-g-in dd-ln-q" data-lq type="search" autocomplete="off"
+        placeholder="Search my notes…" value="${escapeHtml(lq)}">
+      <div class="dd-ln-chips">
+        <button class="dd-ln-chip${lstar ? "" : " on"}" data-lstar="0">All ${book.n}</button>
+        <button class="dd-ln-chip${lstar ? " on" : ""}" data-lstar="1"${stars ? "" : " disabled"}>★ Key teachings ${stars}</button>
+      </div>
+      <div class="dd-ln-list" data-llist>${learningsListHtml()}</div>
+      <div class="dd-foot">Tap a note to change it. Kept privately on this device.</div>`;
+  }
+
+  // ⚠ The search box is NEVER repainted while typing — only the list under it
+  // is. Repainting the input would close the phone keyboard after each letter.
+  function wireLearnings() {
+    node.querySelectorAll("[data-lbook]").forEach((b) => b.addEventListener("click", () => {
+      lbook = b.dataset.lbook; lq = ""; lstar = false; hapticTickHook(); render();
+    }));
+    node.querySelectorAll("[data-lstar]").forEach((b) => b.addEventListener("click", () => {
+      lstar = b.dataset.lstar === "1"; hapticTickHook(); render();
+    }));
+    const q = node.querySelector("[data-lq]");
+    const list = node.querySelector("[data-llist]");
+    if (q && list) q.addEventListener("input", () => {
+      lq = q.value;
+      list.innerHTML = learningsListHtml();
+      wireNoteButtons(list);
+    });
+  }
+
+  function wireNoteButtons(root) {
+    root.querySelectorAll("[data-gnote]").forEach((b) => b.addEventListener("click", () => {
+      openGranthNote(b.dataset.gnote, () => render());
+    }));
+  }
+
+  const openLearnings = (bookId) => {
+    lbook = bookId || null; lq = ""; lstar = false;
+    goTo("learnings");
+    try { window.scrollTo({ top: 0, behavior: "auto" }); } catch (_) {}
+  };
 
   function render() {
     const st = SADHANA.settings();
@@ -16919,6 +17258,11 @@ async function mountDhyanDiary(node) {
             : `<div class="dd-empty">Nothing recorded yet.</div>`}</div>
         </div>`));
       wire(); return;
+    }
+
+    if (view === "learnings") {
+      node.replaceChildren(el(`<div class="dd-wrap">${backHtml("My Learnings")}${learningsHtml()}</div>`));
+      wire(); wireLearnings(); return;
     }
 
     if (view === "remind") {
@@ -17163,7 +17507,7 @@ async function mountDhyanDiary(node) {
     node.querySelectorAll("[data-add]").forEach((b) => b.addEventListener("click", () => {
       const k = b.dataset.add;
       // Granth has its own screen — it records a page, not a duration.
-      if (k === "granth") { openGranthEntry(() => render(), { past: true }); return; }
+      if (k === "granth") { openGranthEntry(() => render(), { past: true, onLearnings: openLearnings }); return; }
       openDhyanManual(() => render(),
         k === "japa" ? { kind: "japa" }
         : k === "aarti" ? { kind: "aarti" }
@@ -17171,7 +17515,10 @@ async function mountDhyanDiary(node) {
     }));
 
     const gr = node.querySelector("[data-granth]");
-    if (gr) gr.addEventListener("click", () => openGranthEntry(() => render()));
+    if (gr) gr.addEventListener("click", () => openGranthEntry(() => render(), { onLearnings: openLearnings }));
+    const lo = node.querySelector("[data-lopen]");
+    if (lo) lo.addEventListener("click", () => openLearnings(null));
+    wireNoteButtons(node);
 
     // ⚠ THE AUDIO IS STARTED STRAIGHT OUT OF THE TAP, before anything is awaited
     // or repainted — armSilent() is the first statement, and the haptic and the
@@ -17491,6 +17838,12 @@ const SADHANA = (() => {
   const MAX_SESSION_SEC = 12 * 3600;
   const MAX_COUNT = 200000;          // ~1850 malas; far past any real day
   const MAX_PAGE = 100000;           // granth: far past any real granth
+  // A note on a record: in practice the Granth Pathan "What did I learn?" box.
+  // ⚠ It was 500 until 2026-10-04. A build older than that still clamps to
+  // 500, so restoring a newer backup into one shortens a long note (the record
+  // and its first 500 characters survive). Members update over the air, so
+  // that window is short, but it is real.
+  const MAX_NOTE = 2000;
   const MAX_TOMBSTONES = 500;
   // ⚠ THE list of record kinds — cleanSession() reads it to decide what is a
   // record, and normalise() reads it to tell "a record from a newer app" apart
@@ -17574,7 +17927,7 @@ const SADHANA = (() => {
       createdAt: num(s.createdAt, 0, 8.64e15, t),
       updatedAt: num(s.updatedAt, 0, 8.64e15, num(s.createdAt, 0, 8.64e15, t)),
     };
-    if (typeof s.note === "string" && s.note.trim()) out.note = s.note.slice(0, 500);
+    if (typeof s.note === "string" && s.note.trim()) out.note = s.note.slice(0, MAX_NOTE);
 
     if (kind === "dhyan") {
       out.mode = s.mode === "maun" ? "maun" : "guru";
@@ -17589,6 +17942,9 @@ const SADHANA = (() => {
       out.book = (typeof s.book === "string" && s.book) ? s.book.slice(0, 40) : "";
       out.toPage = num(s.toPage, 0, MAX_PAGE, 0);
       if (!out.book) return null;      // a page with no book is not a record
+      // ★ "key teaching" belongs to the note, so it is only kept beside one.
+      // Clearing the note clears the star with it.
+      if (s.star === true && out.note) out.star = true;
     } else if (kind === "aarti") {
       // Nothing of its own to store. The aarti has one length — its file's —
       // so `actualSec` (already set above) is the whole record, and there is
@@ -17873,6 +18229,16 @@ const SADHANA = (() => {
     const prev = i > 0 ? g[i - 1] : null;
     return Math.max(0, (sess.toPage || 0) - (prev ? (prev.toPage || 0) : 0));
   }
+  // The page the previous record for this book reached, i.e. where this
+  // sitting STARTED. null for the book's first record, which is not page 0:
+  // the member may have begun the granth before the diary existed. A Granth
+  // note is about the pages between the two (granthSpan()).
+  function granthPrev(sess) {
+    if (!sess || sess.kind !== "granth") return null;
+    const g = granthOf(sess.book);
+    const i = g.findIndex((x) => x.id === sess.id);
+    return i > 0 ? (g[i - 1].toPage || 0) : null;
+  }
   const pagesOn = (day) => byDay(day)
     .filter((s) => s.kind === "granth")
     .reduce((a, s) => a + granthDelta(s), 0);
@@ -18097,14 +18463,14 @@ const SADHANA = (() => {
     ready, dayOf, today,
     all: sorted, byDay, range, malasOf, get: (id) => state.sessions.find((s) => s.id === id) || null,
     add, update, remove,
-    books, bookOf, addBook, removeBook, lastPage, granthDelta, pagesOn,
+    books, bookOf, addBook, removeBook, lastPage, granthDelta, granthPrev, pagesOn,
     settings, setSettings,
     start, active, activeState, setBeads, stop, discard,
     exportText, exportName, exportPayload, inspectImport, applyImport,
     // Diagnostics — the cache write is the one that can fail silently (quota),
     // and a Settings screen should be able to say so.
     health: () => ({ cacheOk: _lsOk, diskOk: _diskOk, count: state.sessions.length, savedAt: state.savedAt }),
-    FORGOT_SEC, BEADS_PER_MALA: 108,
+    FORGOT_SEC, BEADS_PER_MALA: 108, MAX_NOTE,
   };
 })();
 

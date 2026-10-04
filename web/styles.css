@@ -5589,6 +5589,144 @@ table.dd-rt {
 .dd-g-empty { text-align: center; color: var(--muted); font-size: 13px; padding: 18px 0 14px; }
 .dd-g-first { width: 100%; justify-content: center; }
 
+/* ---- Granth Pathan notes: "What did I learn?" (2026-10-04) ----
+   Green is Granth's own colour on the home tile (.dd-do-granth, the Anubhuti
+   Sharing ground), so everything that belongs to a note wears it too. The
+   orange stays for things you are about to DO: opening the box, adding one.
+   The sheet scrolls inside itself so a long note and the phone keyboard can
+   never push Record off the screen. */
+.dd-sheet.dd-granth { max-height: 100%; overflow-y: auto; }
+.dd-gn-open {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+  margin: 0 0 12px; padding: 10px 12px; border-radius: 12px;
+  border: 1px dashed #e3b597; background: #fffaf6; color: var(--text);
+}
+.dd-gn-open.has { border-style: solid; border-color: #dfeee9; background: #eef7f4; }
+.dd-gn-open-i { font-size: 17px; color: var(--accent); flex: none; }
+.dd-gn-open-w { display: flex; flex-direction: column; min-width: 0; }
+.dd-gn-open-t {
+  font-size: 13px; font-weight: 600; color: var(--accent); line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.dd-gn-open.has .dd-gn-open-t { color: #2d5f50; font-weight: 500; }
+.dd-gn-open-s { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.dd-gn-nb {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: -4px 0 12px; padding: 8px 4px 2px; border: 0; border-top: 1px solid var(--border-soft);
+  background: transparent; font-size: 12px; color: #2d6a58; text-align: left;
+}
+.dd-gn-nb-r {
+  margin: 12px 0 0; padding: 10px 12px; border: 1px solid #dfeee9; border-radius: 12px;
+  background: #eef7f4; font-weight: 600;
+}
+.dd-gn-cnt {
+  flex: none; font-size: 11px; font-weight: 650; color: #2d6a58; background: #eef7f4;
+  border: 1px solid #dfeee9; border-radius: 999px; padding: 0 8px;
+}
+.dd-gn-nb-r .dd-gn-cnt { background: #fff; }
+.dd-gn-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.dd-gn-range {
+  font-size: 12px; font-weight: 600; color: #2d6a58; background: #eef7f4;
+  border: 1px solid #dfeee9; border-radius: 8px; padding: 3px 9px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.dd-gn-when { font-size: 11.5px; color: var(--muted); }
+.dd-gn-change {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  border: 0; background: transparent; color: var(--accent); font-size: 12px; font-weight: 600; padding: 4px 2px;
+}
+.dd-gn-ta {
+  -webkit-appearance: none; appearance: none; font-family: inherit; display: block;
+  width: 100%; min-height: 130px; max-height: 40vh; resize: vertical;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 12px; padding: 10px 12px; font-size: 14.5px; line-height: 1.6;
+}
+.dd-gn-sheet .dd-gn-ta { margin-top: 12px; }
+.dd-gn-ta:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.dd-gn-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 12px; }
+.dd-gn-star {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  border-radius: 999px; padding: 5px 12px; font-size: 12px;
+}
+.dd-gn-star.on { color: #8a5f00; background: #fff6dd; border-color: #f1dc9e; font-weight: 600; }
+.dd-gn-cc { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dd-gn-del {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  display: block; margin: -4px auto 12px; border: 0; background: transparent;
+  color: #a6412f; font-size: 12px; padding: 4px 8px;
+}
+/* On a row in Today / Add-Remove, and under a row of the Granth report. */
+.dd-gn-add, .dd-gn-has {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  display: block; text-align: left; margin-top: 7px; max-width: 100%;
+}
+.dd-gn-add {
+  border: 1px dashed #e3b597; background: #fffaf6; color: var(--accent);
+  border-radius: 8px; padding: 3px 9px; font-size: 11.5px; font-weight: 600;
+}
+.dd-gn-has {
+  width: 100%; border: 0; background: #eef7f4; color: #2d5f50; border-radius: 8px;
+  padding: 5px 9px; font-size: 12.5px; line-height: 1.5; white-space: normal;
+}
+/* ⚠ The two-line clamp sits on the SPAN, not the padded button: clamped on
+   the button, the next line shows through its bottom padding as a sliver. */
+.dd-gn-txt {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.dd-rt tr.dd-rt-hasn td { border-bottom: 0; padding-bottom: 2px; }
+.dd-rt tr.dd-rt-nrow td { white-space: normal; padding: 0 0 9px; }
+.dd-rt tr.dd-rt-nrow .dd-gn-has { margin-top: 0; }
+
+/* ---- My Learnings: one granth's notebook, ordered by page ---- */
+.dd-ln-books { margin: 12px 0 2px; }
+.dd-ln-head {
+  margin-top: 12px; padding: 12px 14px; border-radius: 16px;
+  background: #eef7f4; border: 1px solid #dfeee9;
+}
+.dd-ln-t { font-size: 17px; font-weight: 650; color: var(--text); }
+.dd-ln-prog { height: 5px; border-radius: 3px; background: #d6e9e2; margin-top: 8px; overflow: hidden; }
+.dd-ln-prog i { display: block; height: 100%; background: #2d6a58; border-radius: 3px; }
+.dd-ln-s {
+  display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 6px;
+  font-size: 11.5px; color: #2d6a58; font-variant-numeric: tabular-nums;
+}
+.dd-ln-q { margin: 12px 0 0; }
+.dd-ln-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 6px; }
+.dd-ln-chip {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  border-radius: 999px; padding: 5px 12px; font-size: 12px;
+}
+.dd-ln-chip.on { background: var(--text); border-color: var(--text); color: #fff; font-weight: 600; }
+.dd-ln-chip:disabled { opacity: .45; cursor: default; }
+.dd-ln { border-bottom: 1px solid var(--border-soft); padding: 4px 0; }
+.dd-ln-main, .dd-ln-then {
+  -webkit-appearance: none; appearance: none; cursor: pointer; font-family: inherit;
+  display: block; width: 100%; text-align: left; border: 0; background: transparent;
+  color: var(--text); padding: 8px 2px;
+}
+.dd-ln-main:hover, .dd-ln-then:hover { background: var(--border-soft); border-radius: 10px; }
+.dd-ln-h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.dd-ln-p { font-size: 12.5px; font-weight: 700; color: #2d6a58; font-variant-numeric: tabular-nums; }
+.dd-ln-d { font-size: 11.5px; color: var(--muted); }
+.dd-ln-again {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: #fff; background: #2d6a58; border-radius: 4px; padding: 1px 6px;
+}
+.dd-ln-st { margin-left: auto; color: #c79300; font-size: 14px; }
+.dd-ln-x {
+  display: block; margin-top: 3px; font-size: 14px; line-height: 1.6; white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dd-ln-then { margin: 0 0 4px 10px; width: calc(100% - 10px); padding: 4px 2px 6px 10px; border-left: 2px solid #dfeee9; border-radius: 0; }
+.dd-ln-then-h { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: var(--muted); }
+.dd-ln-then .dd-ln-x { font-size: 13px; color: var(--muted); }
+.dd-ln-none { line-height: 1.6; margin-top: 14px; }
+.dd-ln-none b { color: var(--text); }
+
 /* The one button in the diary that destroys a record says so in its colour. */
 .dd-danger { color: #a6412f; }
 
