@@ -18590,6 +18590,13 @@ const MOBILE_UI = (() => {
       <button class="m-vback" id="m-panel-back" type="button" aria-label="Back" hidden>‹</button>
       <button class="m-vdate m-datepill" id="m-panel-date" type="button"></button>
       <div class="m-vacts">
+        <!-- Letterhead ONLY: flip between the guru's handwriting and the typed
+             transcript of it.  Hidden on every other screen, and greyed on a
+             letter whose transcript has not been typed up yet (215 of 394 are
+             still scans alone).  ⚠ ONE shared panel node, so setChrome()
+             hides it again on every route -- the same rule that resets the
+             "Download as text" label further down. -->
+        <button class="m-vact m-vact-trans" id="m-panel-trans" type="button" hidden></button>
         <button class="m-vact m-vact-fav" id="m-panel-fav" title="Add to Favorites" aria-label="Add to Favorites">${HEART_ICON}</button>
         <button class="m-vact m-vact-share" id="m-panel-share" title="Share" aria-label="Share">${SHARE_ICON}</button>
         <a class="m-vact m-vact-dl" id="m-panel-dl" title="Download image" aria-label="Download image">${DOWNLOAD_ICON}</a>
@@ -18886,6 +18893,9 @@ const MOBILE_UI = (() => {
   const goBack = () => { if (_pageBackHook && _pageBackHook()) return; history.back(); };
   $("m-back").addEventListener("click", goBack);
   $("m-panel-back").addEventListener("click", goBack);
+  // Letterhead's handwriting ⇄ transcript toggle.  No haptic call of its own --
+  // the whole panel buzzes on pointerdown (see the delegated listener above).
+  $("m-panel-trans").addEventListener("click", () => applyTransToReader(!prefTrans));
 
   // ---- the soft keyboard, and the height it leaves behind -------------------
   // FIRST, the part that does the real work (added 2026-08-20 after 9.32 was
@@ -20025,6 +20035,11 @@ const MOBILE_UI = (() => {
     document.body.classList.remove("m-libpage");
     $("m-back").style.visibility = mode === "home" ? "hidden" : "visible";
     $("m-title").textContent = title || "Samarpan Upanishad";
+    // …and Letterhead's handwriting/transcript toggle, which only the message
+    // reader turns back on (wirePanel).  Without this, opening a transcript and
+    // then walking to the daily message leaves the button sitting over a screen
+    // that has no transcript behind it.
+    setTranscriptAvailable(false);
     setTopAction(null);   // pages that want one re-set it after pageFrame()
     setTopDate(null);     // …same for the left-hand date pill
     setJoinDate(null);    // …and the Join Satsang card's "for dd/mm/yyyy" line
@@ -20807,6 +20822,10 @@ const MOBILE_UI = (() => {
   // Non-feed pages that also render per-language (Special Messages) register
   // here to repaint when the bottom-bar toggle flips; cleared on every route.
   let _pageLangHook = null;
+  // Letterhead's transcript mode does the same for the ✍️ / अ toggle: the open
+  // reader registers here so flipping the mode repaints it.  Cleared on every
+  // route, like _pageLangHook.
+  let _pageTransHook = null;
   // Page-supplied BACK behaviour, honoured by both the Android back button and
   // the panel's own chevron; return true to say "handled, don't walk history".
   // The message reader uses it to send back to its list first (see
@@ -20854,6 +20873,58 @@ const MOBILE_UI = (() => {
     // Already reading in English? Fall back to Hindi so the bar and the page
     // can't disagree about what is being shown.
     if (!ok && prefLang === "en") applyLangToFeed("hi", false);
+  }
+
+  // ---- transcript mode (Letterhead only) ---------------------------------
+  // The letters are scans of the guru's handwriting; 179 of the 394 also have a
+  // typed transcript (body_hi / body_en in letterpad_source).  This flag is what
+  // the reader panel's ✍️ / अ button flips, and the reader hands it to
+  // MSG_SECTIONS.letterpad.norm(): in transcript mode the letter comes back with
+  // `pages: null`, which is what routes it into the SAME text machinery Special
+  // Telegram messages use -- CSS-column paging, the dots, and double-tap into the
+  // reflowing text zoom.  There is no second renderer here.
+  //
+  // ⚠ Session-sticky and deliberately NOT stored, exactly like prefLang: the
+  // app opens on the handwriting every time (that is what the section is for),
+  // but reading one letter's transcript carries into the next letter you swipe
+  // to, so a reader of transcripts is not re-tapping it ~390 times.
+  //
+  // ⚠ It is passed as an ARGUMENT, never read inside norm() itself.  norm() has
+  // five callers and only one is the reader: the index row builds its thumbnail
+  // and page count from `v.pages` (msgIndexRowHtml), and two Anushthan href tests
+  // read `!v.pages` to mean "a literal row with nothing to open".  A mode read
+  // from inside norm() would empty every thumbnail in the Letterhead list and
+  // make borrowed Anushthan rows unclickable while transcript mode was on.
+  let prefTrans = false;
+  const transMode = () => prefTrans;
+  function paintTrans() {
+    const b = $("m-panel-trans");
+    if (!b) return;
+    // The glyph shows what a tap GIVES you, not what is on screen.
+    b.textContent = prefTrans ? "✍️" : "अ";
+    b.classList.toggle("on", prefTrans);
+    const t = prefTrans ? "Show the handwriting" : "Read the typed text";
+    b.title = t;
+    b.setAttribute("aria-label", t);
+  }
+  // Shown only by a reader that has a transcript to offer (wirePanel), hidden
+  // everywhere else.  Same shape as setEnglishAvailable above, and the same
+  // reason: a control that is lit on the 215 letters with no transcript, and
+  // silently does nothing, reads as a bug.
+  function setTranscriptAvailable(ok) {
+    const b = $("m-panel-trans");
+    if (!b) return;
+    b.hidden = !ok;
+    if (ok) paintTrans();
+  }
+  // The flip. Repaints the button at once (so the tap feels answered even while
+  // the reader remounts) and then lets the open page rebuild itself, exactly as
+  // applyLangToFeed does through _pageLangHook.
+  function applyTransToReader(on) {
+    if (on === prefTrans) return;
+    prefTrans = on;
+    paintTrans();
+    if (_pageTransHook) _pageTransHook(on);
   }
   function applyLangToFeed(l, animate) {
     // Language toggle is a page-flip too — play the same flip sound, but only
@@ -22557,21 +22628,41 @@ const MOBILE_UI = (() => {
       lastSeen: () => LETTERPAD.lastSeen(),
       isNew: (m, seen) => (m.posted_at || "") > (seen || ""),
       subscribe: null,
-      // Scanned pages → real image pages for the carousel; the OCR text rides
-      // along behind a "Read text" toggle (selectable/copyable, and the
-      // accessible fallback for handwriting).
-      norm(m, lang) {
+      // Scanned pages → real image pages for the carousel.  The typed transcript
+      // rides along in `text`, reached on the phone through the reader panel's
+      // ✍️ / अ toggle and in the browser through each card's "Read text" strip
+      // (selectable/copyable, and the accessible fallback for handwriting).
+      // `opts.asText` = the reader panel's transcript toggle (see transMode).
+      // Only the READER passes it; every other caller of norm() gets the scans,
+      // which is what keeps the index thumbnails and the Anushthan hrefs intact.
+      norm(m, lang, opts) {
         const useEn = lang === "en" && m.pages_en.length;
         const pages = useEn ? m.pages_en : (m.pages_hi.length ? m.pages_hi : m.pages_en);
         const title = useEn ? (m.title_en || m.title_hi) : (m.title_hi || m.title_en);
         const body = useEn ? (m.body_en || m.body_hi) : (m.body_hi || m.body_en);
+        // `pages: null` is the whole trick -- it is what the reader reads as
+        // "this is a text message", so the transcript arrives in the CSS-column
+        // pager with the reflowing double-tap zoom and no new renderer.
+        const asText = !!(opts && opts.asText) && !!body;
+        const scans = pages.map((p) => LETTERPAD.imgUrl(p));
         return {
           id: m.id, date: m.date,
           title: (title || "").replace(/\n/g, " · "),
-          pages: pages.map((p) => LETTERPAD.imgUrl(p)),
+          pages: asText ? null : scans,
+          // ⚠ The handwriting, kept reachable THROUGH transcript mode: share and
+          // download go on acting on the scan and never on the transcript
+          // (operator, 2026-08-31 -- see shareText below).
+          scans,
           text: body || "",
+          hasText: !!body,             // gates the panel's transcript button
           hasEn: !!m.pages_en.length,  // gates the bottom-bar English toggle
-          hiTag: lang === "en" && !m.pages_en.length,
+          // Reading in English, but what is actually on screen is Hindi.  For a
+          // scan that is a letter with no English pages; for a transcript it is
+          // a letter with English pages whose transcript is Hindi -- exactly one
+          // letter in the archive, which is still one letter that would otherwise
+          // have the bar and the words disagreeing in silence.
+          hiTag: asText ? (lang === "en" && !m.body_en)
+                        : (lang === "en" && !m.pages_en.length),
           shareCaption: [title, body].filter(Boolean).join("\n\n"),
         };
       },
@@ -23216,7 +23307,9 @@ const MOBILE_UI = (() => {
     const rowsSig = (l) => l.length + ":" + (l.length ? sec.idOf(l[0]) + "|" + sec.idOf(l[l.length - 1]) : "");
 
     function build(row) {
-      const v = sec.norm(row, prefLang);
+      // The third argument is the panel's transcript toggle.  Harmless to the
+      // sections that ignore it; Letterhead is the only one that reads it.
+      const v = sec.norm(row, prefLang, { asText: transMode() });
       // `sec.textHtml` lets a section render its body as HTML rather than as
       // escaped plain text — currently only Important Updates, which turns
       // http(s) links into anchors. ⚠ A section that supplies this is
@@ -23288,9 +23381,18 @@ const MOBILE_UI = (() => {
       // read receipt from here — fire-and-forget by contract, never blocking a
       // render on it (see MSG_SECTIONS.broadcast.onFocus).
       if (sec.onFocus) { try { sec.onFocus(art._row, v); } catch (_) {} }
+      // ⚠ In Letterhead's transcript mode `v.pages` is null -- that is what makes
+      // the reader paginate words -- but the letter still HAS scans, and share +
+      // download go on acting on the handwriting, never on the transcript
+      // (operator, 2026-08-31; see MSG_SECTIONS.letterpad.shareText).  `v.scans`
+      // is that fallback.  In text mode the carousel is paging WORDS, so the page
+      // it sits on says nothing about which scan: page one goes, and pageNo() of
+      // 1 against a `pages` length of 0 is also what makes shareText caption it
+      // as a single-page letter (heading only, no "4/8").
       const page = () => (v.pages && v.pages.length
-        ? v.pages[Math.min(v.pages.length - 1, art._car ? art._car.page() : 0)] : null);
-      const pageNo = () => (art._car ? art._car.page() + 1 : 1);
+        ? v.pages[Math.min(v.pages.length - 1, art._car ? art._car.page() : 0)]
+        : (v.scans && v.scans.length ? v.scans[0] : null));
+      const pageNo = () => (v.pages && v.pages.length && art._car ? art._car.page() + 1 : 1);
       const fileName = () => `${sec.filePrefix || "MSG"}_${v.date ? fmtDateFile(v.date) : v.id}` +
         `${v.pages && v.pages.length > 1 ? "_p" + pageNo() : ""}.jpg`;
 
@@ -23312,6 +23414,7 @@ const MOBILE_UI = (() => {
       });
       setJoinDate(v.date || null);                     // bottom bar: which satsang this card opens
       setEnglishAvailable(!!v.hasEn);                  // Hindi-only post → English toggle off
+      setTranscriptAvailable(!!v.hasText);             // no typed transcript → no toggle
       // Bind the Community button to this message (see _chatCtx). Re-published
       // on every scroll, so the discussion always follows what's on screen.
       _chatCtx = {
@@ -23528,6 +23631,7 @@ const MOBILE_UI = (() => {
       .then(remountIfChanged)
       .catch(() => remountIfChanged(sec.cached()));   // scope() is applied inside
     _pageLangHook = () => mount(rows, focusNow());    // language flip always repaints
+    _pageTransHook = () => mount(rows, focusNow());   // …and so does the transcript flip
     if (sec.subscribe) {
       _specialStream = sec.subscribe(() => sec.refresh()
         .then((list) => { remountIfChanged(list); sec.markSeen(); })
@@ -25719,6 +25823,7 @@ const MOBILE_UI = (() => {
       // here, which is why it keeps him listed.
       leaveChatPresence();
       _pageLangHook = null;
+      _pageTransHook = null;
       _pageBackHook = null;        // …the page we land on re-arms it if it wants one
       setEnglishAvailable(true);   // any per-message gating belongs to the page we're leaving
       // Leaving the Search By flow for anywhere except a result's detail page
@@ -25792,6 +25897,7 @@ const MOBILE_UI = (() => {
       closeDrawer();
       exitZoom();
       _pageLangHook = null;
+      _pageTransHook = null;
       setEnglishAvailable(true);
       _feedCards = [];
       setChrome("page", PAGE_TITLES[seg[0]] || "Samarpan Upanishad", null);

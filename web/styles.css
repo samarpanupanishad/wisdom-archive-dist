@@ -2621,6 +2621,20 @@ body.m-mode.m-libpage .content {
 .m-vact-dl { color: #4fa6e8; border-color: #4fa6e8; }      /* light-blue glyph + ring */
 .m-vact-fav.on { color: #e53935; }
 .m-vact-fav.on svg { fill: #e53935; }
+/* Letterhead's handwriting ⇄ transcript toggle.  Its glyph is TEXT, not an svg,
+   so it needs its own size; the ring is green to stay apart from favourite red,
+   share pink and download blue.  Tinted while the transcript is the thing being
+   shown, so the button also reports which of the two you are reading -- a tint
+   and an inset ring rather than a solid fill, because the ✍️ glyph is an emoji
+   and would not take a colour against one. */
+.m-vact-trans {
+  color: #2e8b57; border-color: #2e8b57;
+  font: 700 17px/1 var(--serif); padding-bottom: 1px;
+}
+.m-vact-trans.on {
+  background: #e8f3ec;
+  box-shadow: 0 1px 6px rgba(40, 30, 60, .18), inset 0 0 0 1px #2e8b57;
+}
 /* overflow: clip — mid-rotation the 3D perspective bulges the plane ~75px
    taller than the box; unclipped, that transient bulge became scrollable
    overflow in the slide (an overflow-y:auto scroller), flashing a scrollbar
