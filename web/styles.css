@@ -2621,18 +2621,17 @@ body.m-mode.m-libpage .content {
 .m-vact-dl { color: #4fa6e8; border-color: #4fa6e8; }      /* light-blue glyph + ring */
 .m-vact-fav.on { color: #e53935; }
 .m-vact-fav.on svg { fill: #e53935; }
-/* Letterhead's handwriting ⇄ transcript toggle.  Its glyph is TEXT, not an svg,
-   so it needs its own size; the ring is green to stay apart from favourite red,
-   share pink and download blue.  Tinted while the transcript is the thing being
-   shown, so the button also reports which of the two you are reading -- a tint
-   and an inset ring rather than a solid fill, because the ✍️ glyph is an emoji
-   and would not take a colour against one. */
-.m-vact-trans {
-  color: #2e8b57; border-color: #2e8b57;
-  font: 700 17px/1 var(--serif); padding-bottom: 1px;
-}
+/* Letterhead's handwriting / transcript toggle. ONE icon, and only the colour
+   moves: neutral while the handwriting is showing, green while the transcript
+   is, so what is lit is what you are reading. Green keeps it apart from
+   favourite red, share pink and download blue.
+   ⚠ Neutral must NOT read as disabled -- this button is pressable in both
+   states (see paintTrans; greying it would strand a reader in the transcript).
+   So "off" is a full-strength neutral outline, the same treatment the heart
+   gets above, and never the .m-vact-disabled opacity. */
+.m-vact-trans { color: var(--text); border-color: var(--border); }
 .m-vact-trans.on {
-  background: #e8f3ec;
+  color: #2e8b57; border-color: #2e8b57; background: #e8f3ec;
   box-shadow: 0 1px 6px rgba(40, 30, 60, .18), inset 0 0 0 1px #2e8b57;
 }
 /* overflow: clip — mid-rotation the 3D perspective bulges the plane ~75px

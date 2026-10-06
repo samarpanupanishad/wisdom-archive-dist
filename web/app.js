@@ -1398,6 +1398,11 @@ const DOWNLOAD_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="non
 const COPY_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 const HEART_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20S4 14.5 4 9a4 4 0 0 1 8-1 4 4 0 0 1 8 1c0 5.5-8 11-8 11z"/></svg>`;
 const SHARE_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="2.4"/><circle cx="17.5" cy="6" r="2.4"/><circle cx="17.5" cy="18" r="2.4"/><path d="M8.2 11 15.3 7.1M8.2 13l7.1 3.9"/></svg>`;
+// Lines of text — Letterhead's transcript toggle (see setTranscriptAvailable).
+// Deliberately a picture of TEXT and not a letter: a letter has to be read, and
+// a Devanagari one had no name the operator could say to a member ("press the
+// अ button" is not a sentence). This needs no language at all.
+const TEXT_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 7h14"/><path d="M5 12h14"/><path d="M5 17h9"/></svg>`;
 
 // Reflect an entry's favorite state everywhere it shows at once: the list-rail
 // hearts, the detail bar button, and the fav buttons on BOTH original images.
@@ -18962,7 +18967,7 @@ const MOBILE_UI = (() => {
              still scans alone).  ⚠ ONE shared panel node, so setChrome()
              hides it again on every route -- the same rule that resets the
              "Download as text" label further down. -->
-        <button class="m-vact m-vact-trans" id="m-panel-trans" type="button" hidden></button>
+        <button class="m-vact m-vact-trans" id="m-panel-trans" type="button" hidden>${TEXT_ICON}</button>
         <button class="m-vact m-vact-fav" id="m-panel-fav" title="Add to Favorites" aria-label="Add to Favorites">${HEART_ICON}</button>
         <button class="m-vact m-vact-share" id="m-panel-share" title="Share" aria-label="Share">${SHARE_ICON}</button>
         <a class="m-vact m-vact-dl" id="m-panel-dl" title="Download image" aria-label="Download image">${DOWNLOAD_ICON}</a>
@@ -19259,7 +19264,7 @@ const MOBILE_UI = (() => {
   const goBack = () => { if (_pageBackHook && _pageBackHook()) return; history.back(); };
   $("m-back").addEventListener("click", goBack);
   $("m-panel-back").addEventListener("click", goBack);
-  // Letterhead's handwriting ⇄ transcript toggle.  No haptic call of its own --
+  // Letterhead's handwriting / transcript toggle.  No haptic call of its own --
   // the whole panel buzzes on pointerdown (see the delegated listener above).
   $("m-panel-trans").addEventListener("click", () => applyTransToReader(!prefTrans));
 
@@ -21188,7 +21193,7 @@ const MOBILE_UI = (() => {
   // Non-feed pages that also render per-language (Special Messages) register
   // here to repaint when the bottom-bar toggle flips; cleared on every route.
   let _pageLangHook = null;
-  // Letterhead's transcript mode does the same for the ✍️ / अ toggle: the open
+  // Letterhead's transcript mode does the same for the text-icon toggle: the open
   // reader registers here so flipping the mode repaints it.  Cleared on every
   // route, like _pageLangHook.
   let _pageTransHook = null;
@@ -21244,7 +21249,7 @@ const MOBILE_UI = (() => {
   // ---- transcript mode (Letterhead only) ---------------------------------
   // The letters are scans of the guru's handwriting; 179 of the 394 also have a
   // typed transcript (body_hi / body_en in letterpad_source).  This flag is what
-  // the reader panel's ✍️ / अ button flips, and the reader hands it to
+  // the reader panel's text-icon button flips, and the reader hands it to
   // MSG_SECTIONS.letterpad.norm(): in transcript mode the letter comes back with
   // `pages: null`, which is what routes it into the SAME text machinery Special
   // Telegram messages use -- CSS-column paging, the dots, and double-tap into the
@@ -21266,8 +21271,16 @@ const MOBILE_UI = (() => {
   function paintTrans() {
     const b = $("m-panel-trans");
     if (!b) return;
-    // The glyph shows what a tap GIVES you, not what is on screen.
-    b.textContent = prefTrans ? "✍️" : "अ";
+    // ONE icon in both states; only the colour moves (operator, 2026-10-04).
+    // Neutral = you are on the handwriting, green = you are on the transcript,
+    // so the thing that is lit is the thing you are reading.
+    //
+    // ⚠ It stays PRESSABLE in both states, and must. Greying it out while the
+    // transcript shows would leave no control that returns you to the guru's
+    // handwriting — and since the mode is sticky, the next letter would open as
+    // text with the button dead there too. One tap would strand a reader in the
+    // transcript for the rest of the session, in the one section that exists
+    // for the handwriting.
     b.classList.toggle("on", prefTrans);
     const t = prefTrans ? "Show the handwriting" : "Read the typed text";
     b.title = t;
@@ -22996,7 +23009,7 @@ const MOBILE_UI = (() => {
       subscribe: null,
       // Scanned pages → real image pages for the carousel.  The typed transcript
       // rides along in `text`, reached on the phone through the reader panel's
-      // ✍️ / अ toggle and in the browser through each card's "Read text" strip
+      // text-icon toggle and in the browser through each card's "Read text" strip
       // (selectable/copyable, and the accessible fallback for handwriting).
       // `opts.asText` = the reader panel's transcript toggle (see transMode).
       // Only the READER passes it; every other caller of norm() gets the scans,
