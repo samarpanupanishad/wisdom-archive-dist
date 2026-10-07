@@ -9590,6 +9590,7 @@ const MSG_CORPUS = (() => {
   const ANUSHTHAN_MESSAGES = [
   ];
   const ANUSHTHAN_FROM_LETTERPAD = [
+    { from: "2025-01-12", to: "2025-02-26" },
     { from: "2026-01-01", to: "2026-02-15" },
   ];
   // Rows in the shape the Letterpad section already normalises (MSG_SECTIONS
